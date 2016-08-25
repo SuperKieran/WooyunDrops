@@ -1,0 +1,52 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Smalidea无源码调试 android 应用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2015/07/22 16:52" ui-time="" datetime="2015/07/22 16:52" class="published ng-binding ng-isolate-scope">2015/07/22 16:52</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>smalidea是一款 IntelliJ IDEA/Android Studio的 smali 插件</p><h3>已有功能</h3><hr><ul><li>语法高亮/错误提示</li><li>字节码级别调试<ul><li>断点</li><li>单步调试</li><li>寄存器查看</li><li>本地窗口 java 语法支持,debug 模式下同样支持</li></ul></li><li>支持跳转,方便追踪变量/函数/类.(Xref也支持)</li><li>查找用法</li><li>重命名</li><li>从 java 代码引用 smali 类</li><li>错误反馈...</li></ul><h3>安装</h3><hr><ul><li>下载插件<a href="https://bitbucket.org/JesusFreke/smali/downloads">smalidea</a></li><li>进入IntelliJ IDEA/Android Studio开始安装插件,进入Settings->Plugins点击<code>Install plugin from disk</code>选中下载好的压缩包.</li><li>点击 <code>apply</code></li></ul><h3>开启应用调试</h3><hr><p>要调试一个apk里面的dex代码，必须满足以下两个条件中的任何一个:</p><ul><li>apk中的AndroidManifest.xml文件中的Application标签包含属性android:debuggable=”true”</li><li>/default.prop中ro.debuggable的值为1</li></ul><p>可选方案:</p><ul><li>apktool 反编译app 后在AndroidManifest.xml文件中插入android:debuggable=”true”</li><li>hook system debug (Xinstaller)</li><li>修改boot.img</li></ul><p>个人觉得改 boot.img和二次打包比较麻烦,所以这里采用 hook 方式达到开启所有应用调试的目的,xposed 插件代码如下</p><pre><code>#!java
+public class Debug implements IXposedHookLoadPackage {
+
+    public boolean debugApps = true ;
+    public static final int DEBUG_ENABLE_DEBUGGER = 0x1;
+    public String tag = "IDG";
+
+    @Override
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+
+        if(lpparam.appInfo == null ||
+                (lpparam.appInfo.flags &amp; (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) !=0){
+            return;
+        }
+
+        tag = tag + lpparam.packageName;
+
+        XposedBridge.hookAllMethods(Process.class, "start", new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+
+                int id = 5;
+                int flags = (Integer) param.args[id];
+
+                Log.d(tag,"flags is : "+flags);
+
+                if (debugApps) {
+                    if ((flags &amp; DEBUG_ENABLE_DEBUGGER) == 0) {
+                        flags |= DEBUG_ENABLE_DEBUGGER;
+                    }
+                }
+
+                param.args[id] = flags;
+                Log.d(tag,"flags changed : "+flags);
+
+            }
+        });
+    }
+
+}
+</code></pre><p>效果如下图</p><p><img alt="" img-src="b2766683eb0513ab75e90d49b511f37dbf3f41db.jpg"></p><p>如果遇到如下错误</p><pre><code>Adb rejected connection to client
+</code></pre><p>可以使用重启 adb server 来解决</p><pre><code>adb kill-server
+
+adb start-server
+</code></pre><p>如果调试中遇到如下错误,确保关闭了其他 IDE 或者 DDMS,解除端口占用</p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/07/error1.png"><img alt="" title="error1" class="alignnone size-full wp-image-7466" img-src="2015072710025976770.png"></a></p><h3>调试应用</h3><hr><p>注意:IDEA 14.1及以上版本才支持单步调试</p><ul><li><p>使用 baksmali 反编译应用</p><pre><code>baksmali myapp.apk -o ~/projects/myapp/src
+</code></pre></li><li><p>转到 IDEA 中,导入新工程,选中之前的目录</p><pre><code>~/projects/myapp
+</code></pre><p><img alt="" img-src="b05159cea465619232a3ceef12173b863f33d31f.jpg"></p></li><li><p>导入时选择<code>Create project from existing sources</code></p><p><img alt="" img-src="47ecb74d6d6be9253471b2fdf0918dbe1b358b9c.jpg"></p></li><li><p>成功导入工程后右键点击 src 目录,设定<code>Mark Directory As-&gt;Sources Root</code></p><p><img alt="" img-src="a82aae1d93dd41f6b9eb1f8c44499aa2cd1d520d.jpg"></p></li><li><p>打开<code>Module setting</code>设置对应的 JDK</p><p><img alt="" img-src="5cd6338f37188f07d64932ba6fd443bdbdcb429e.jpg"></p></li><li><p>安装debug应用</p><pre><code>adb install com.zkj.guimi.apk
+</code></pre></li><li><p>找到debug应用进程,启动应用</p><p><img alt="" img-src="2067f6ff422395e5e1af2531754f1ef3c899c26f.jpg"></p><p>如果不用 ddms 可以使用如下步骤:</p><pre><code>» adb shell am start -D -W -n com.zkj.guimi/.ui.SplashScreen
+» adb shell ps |grep guimi                                                                                                         1 ↵
+u0_a157   9879  242   883420 36360 ffffffff 00000000 S com.zkj.guimi
+» adb forward tcp:8700 jdwp:9879
+</code></pre></li><li><p>在 IDEA 配置远程调试(Run->Edit Configurations),更改debug端口为8700</p><p><img alt="" img-src="8e665bf25d0de16fd6857ff0674a26bb6cd73798.jpg"></p></li><li><p>Run->Debug</p><p>Connected to the target VM, address: 'localhost:8700', transport: 'socket'</p></li><li><p>断点触发后就可以单步调试</p><p><img alt="" img-src="21eb7caad332ea794989a5b054ef6af84535579c.jpg"></p></li></ul><h3>reference</h3><hr><p><a href="http://www.kanxue.com/bbs/showthread.php?p=1338639">http://www.kanxue.com/bbs/showthread.php?p=1338639</a></p><p><a href="https://github.com/JesusFreke/smali/wiki/smalidea">https://github.com/JesusFreke/smali/wiki/smalidea</a></p><p><a href="https://github.com/pylerSM/XInstaller">https://github.com/pylerSM/XInstaller</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7488" rel="bookmark" id="re1">Android.Hook框架xposed篇(Http流量监控)</a></li><li><a href="http://drops.wooyun.org/tips/3812" rel="bookmark" id="re2">Android Logcat Security</a></li><li><a href="http://drops.wooyun.org/tips/3936" rel="bookmark" id="re3">Android Activtity Security</a></li><li><a href="http://drops.wooyun.org/tips/12122" rel="bookmark" id="re4">Android Linker学习笔记</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">soFree</span> <span class="reply-time">2016-06-02 19:19:33</span></div><p></p><p>@mark 你debug启动apk后，在idea或android Studio右下角会有一个Watches窗口，选择“+”，添加你想监控的接触器和其他变量：p0-pN,v0-vN（注意大小写敏感）<br>继续调试，Watches窗口中的监控数据会实时更新</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mark</span> <span class="reply-time">2016-04-27 16:58:12</span></div><p></p><p>请问如何查看到寄存器的值？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大和尚</span> <span class="reply-time">2016-03-15 16:23:18</span></div><p></p><p>呵呵呵呵呵呵，xposed框架里面的Process应该指定为android.os.Process.class;否则会默认为java.lang.Process.class；代码执行就达不到修改ro.debuggable的效果啦！<br>幸亏看了下android源代码，否则上当了还。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">imesong</span> <span class="reply-time">2016-02-04 09:35:06</span></div><p></p><p>不使用 smaliidea ，IDEA也支持 断点调试吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-07-27 18:24:52</span></div><p></p><p>@MayIKissYou 这个爱心捐赠有些坑....没有一个长期的项目...都是募集到一定金额就关闭了.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MayIKissYou</span> <span class="reply-time">2015-07-27 18:18:22</span></div><p></p><p>打赏扫出来竟然是爱心捐助 你也是人才</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MayIKissYou</span> <span class="reply-time">2015-07-27 18:13:28</span></div><p></p><p>啧啧 终于搞定了 用起来还不错哦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-07-23 16:45:52</span></div><p></p><p>@SADASD 没遇到过,有 crash 日志么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">qhwlpg</span> <span class="reply-time">2015-07-22 22:43:52</span></div><p></p><p>明日试试</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-07-22 22:02:07</span></div><p></p><p>@夸父追日 正准备洗了~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夸父追日</span> <span class="reply-time">2015-07-22 20:46:20</span></div><p></p><p>洗干净了么?瘦瘦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2015-07-22 19:14:28</span></div><p></p><p>mark 感谢楼主</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,63 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">HttpOnly 隐私嗅探器</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">EtherDream</a> <span class="bull">·</span> <time title="2014/08/19 11:29" ui-time="" datetime="2014/08/19 11:29" class="published ng-binding ng-isolate-scope">2014/08/19 11:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 前言</h2><hr><p>终于赶上个想写点东西的日子，原本打算继续更新那拖了好久的流量劫持系列的博客和工具。不过中午闲来无事去乌云逛了圈，发现百度的漏洞又双叒叕上头条了！而且还是那个 BDUSS 泄露的问题，记不得这已经是第几回了。尽管这事和咱没啥关系，但本着拯救世界和平的目的，还是打算去研究下：）</p><p>既然是 cookie 泄露，无非就两种。要么就是硬伤，例如之前 Apache 就会因为太多的请求头，导致 HttpOnly 也被输出到错误页里，当然这种严重的漏洞，随着补丁的更新很快就能解决；另一个当然就是内伤，由于程序猿的粗心大意，把重要的数据不加掩盖就放到页面里了。</p><p>前者很好解决，把在线的服务器都扫描一遍，修复一个就少一个。而后者就不那么容易了，产品经常更新迭代，谁也不能保证每次升级之后是否出现新的隐患。</p><p>既然找不到一劳永逸的方案，不如就用最简单最原始的土办法 —— 暴力穷举：把网页一个个抓回来，看看里面是否出现隐私数据了。当然你会说这也太挫太低效了，不过事实上这种方案还是有意义的，至少能很快的找出一些明显的问题。而且在此基础上，我们还可以再做优化和改进，让它变得更完善。</p><p>说到抓网页，大家总是先想到蜘蛛。虽然全自动化的流程是我们的终极目标，但在目前遐想阶段，就开始搞这么复杂的一套系统，还是不合适。而且如今遍地都是 AJAX 的交互网页，蜘蛛也很难爬到一些动态数据。</p><p>所以，不如先从最简单的开始：Chrome 插件。在我们平时看网页的时候，同时对页面进行分析。这样既节省了蜘蛛服务，而且还充分利用了真实的用户行为，覆盖到更多的动态交互内容。</p><h2>0x01 获取隐私数据</h2><hr><p>使用 Chrome 插件来实现这个基本功能，是非常简单的。只要得到了带 HttpOnly 的 cookie 值，在浏览页面时扫描下 HTML 字符就可以了。</p><p>首先得获取浏览器的 cookie 数据库，得到我们想要的。例如，我们获取所有百度域下的 cookie：</p><pre><code>#!js
+chrome.cookies.getAll({domain: 'baidu.com'}, function(cookies) {
+    console.dir(cookies);
+});
+</code></pre><p><img alt="chrome_cookie.png" img-src="80ef1e6441104e35e10f1d214fcbffdcbec42f41.jpg"></p><p>稍加过滤即可获得 HttpOnly 的数据。</p><p>详细 API 可以<a href="https://developer.chrome.com/extensions/cookies">参考这里</a>。关于 Chrome 插件开发这里就不详细介绍了。</p><p>值得注意的是，有些 cookie 值很简单，例如 1、true、ok 之类的；或者很常见，例如用户名、日期数字等，这些都得排除掉，否则会有太多的匹配。</p><h2>0x02 扫描页面内容</h2><hr><p>有了关键字列表，我们就可以对页面内容做分析了。</p><p>我们新建一个 content 脚本，向 background 脚本获取列表。之后在页面的 DOMContentLoaded 事件里，即可对文档的 HTML 进行关键字扫描了：</p><pre><code>#!js
+// content.js
+chrome.extension.sendRequest('GET_LIST', function(list) {
+
+    window.addEventListener('DOMContentLoaded', function() {
+        var html = document.documentElement.outerHTML;
+
+        list.forEach(function(item) {
+            if (html.indexOf(item) &gt;= 0) {
+                alert('found: ' + item);
+            }
+        });
+    });
+});
+
+// background.js
+chrome.extension.onRequest.addListener(function(message, sender, sendResponse) {
+    if (message == 'GET_LIST') {
+        sendResponse(list);
+    }
+});
+</code></pre><p>到此，一个最简易的隐私嗅探器完成了。我们马上就来试验下，看看是否有效果。</p><p>先试试百度首页上的几个产品。不到 10 秒钟，就逮到了一个：</p><p><img alt="demo.png" img-src="530b6143bf2bb380c319eafe47021f810cf5d287.jpg"></p><p>打开源文件一搜，果然看见了传说中带 HttpOnly 的 BDUSS：</p><p><img alt="demo_src_1.png" img-src="02cc99a024172e7566949157f7b8f7daf1153521.jpg"></p><p>赶紧测试其他页面。开始的几分钟时间里，不断发现新的泄漏点：</p><p><img alt="demo_src_2.png" img-src="412bf4cba9a6eece1e79b29bf8aa138ce22b50d1.jpg"></p><p><img alt="demo_src_3.png" img-src="fb922e528db9ab516ec9ac33013e0aff0ee820fb.jpg"></p><p><img alt="demo_src_4.png" img-src="d3fbed2c81336c5847bddb691694d25fcd4572a5.jpg"></p><p>。。。</p><p>不过十分钟后，出现的越来越少了。我们是不是漏了些什么东西？</p><h2>0x03 扩大扫描范围</h2><hr><p>显然，如果只扫描 HTML 内容，这和爬虫有什么区别？</p><p>我们之所以做成浏览器插件，就是为了能得到真实的用户行为操作。要是放弃了那些通过交互产生的动态数据，意义就大幅下降了。</p><p>遗憾的是，Chrome API 里并没有获得网络数据的接口。即使是 HTML，我们也是通过</p><html>元素的 outerHTML 勉强得到的。</html><p></p><p>不过对于 AJAX 这类请求，我们有很简单的解决方案：钩子程序。</p><p>我们向页面中里注入一段脚本，覆盖原生 XMLHttpRequest 的方法，即可监控动态的数据了：</p><pre><code>#!js
+var _xhr_open = XMLHttpRequest.prototype.open;
+
+function handlerXhrReady() {
+    check(this.responseText, 'XHR: ' + this._url);
+}
+
+XMLHttpRequest.prototype.open = function(method, url) {
+    if (!this._url) {
+        this._url = url;
+        this.addEventListener('readystatechange', handlerXhrReady);
+    }
+    _xhr_open.apply(this, arguments);
+};
+</code></pre><p>当页面使用 AJAX 加载数据时，我们即可监控其中的数据了。</p><p>类似的，我们还可以跟踪 URL 的变化，监控 HttpOnly 的数据有没有输出到地址栏里：</p><pre><code>#!js
+var address = location.href;
+
+window.addEventListener('hashchange', function(e) {
+    check(location.hash, 'location.hash');
+});
+
+var _pushState = History.prototype.pushState,
+    _replaceState = History.prototype.replaceState;
+
+History.prototype.pushState = function(data, title, url) {
+    check(url, 'pushState');
+    _pushState.apply(this, arguments);
+};
+
+History.prototype.replaceState = function(data, title, url) {
+    check(url, 'replaceState');
+    _replaceState.apply(this, arguments);
+};
+
+function scanAddress() {
+    check(location.href, 'location.href');
+}
+</code></pre><p>对于这些调用 DOM API 的接口，我们都可以通过事件监听，或者钩子程序进行捕捉。</p><p>我们再来测试下，很快就发现刚才遗漏的一例：</p><p><img alt="demo_src_5.png" img-src="8580b57d68ae3bbb41794a4c37e2d4821a065a91.jpg"></p><p>对于其他网站，同样也存在这类问题：</p><p><img alt="demo2.png" img-src="b4f59b14f9fde67fbdb7e3c00c63f050253612ff.jpg"></p><p><img alt="demo2_src.png" img-src="e301f39e62bd701a537ecfd4c23b621ab726dbd2.jpg"></p><p>多的不计其数。。。</p><p>由于 Chrome 插件以及 DOM 规范的限制，另一种常见的内容仍无法轻易获取，那就是 JSONP 脚本。外链脚本的 text 内容是无法获得的，而且使用 JSONP 大多是为了跨域，因此通过 xhr 去代理自然不可行。如果使用纯前端解决这个问题的话，可以尝试分析 JSONP 的回调接口，并勾住它。</p><h2>0x04 更智能的分析</h2><hr><p>到目前为止，我们只是用最简单的字符串匹配，来检验是否泄露。现实中，泄露点的字符稍有转义，我们就无法识别了。因此，我们需要更智能的匹配算法。</p><p>例如某个 HttpOnly 的值为 hello|1234567，现实中很有可能是以 hello%7C1234567 的形式存在的。脚本转义、URL 转义、HTML 实体转义...所以无论在哪，符号往往是不靠谱的，但字母和数字则相对稳定的多。</p><p>因此，我们可以提取数据中的字符数字(\w) 部分，作为扫描项。隐私数据虽然很长，但大多都是冗余的，因此提取其中部分作为特征，仍然不会有错失。</p><p>即使有少量误报，也没什么事。宁可误报，也不漏报。</p><p>除了转义，还有可能将隐私数据经过简单的编码之后输出了，例如 Base64。这些弱算法可以轻易还原出原始数据，但通常很难发现。</p><p>因此，我们可以将所有的数据，事先做一些简单的算法，同时将它们也作为检测目标，这样就能更深层次的挖掘泄漏点了。</p><h2>0x05 深度嗅探</h2><hr><p>事实上，除了 HttpOnly 的 cookie，我们还可以将其他数据也作为侦测目标。</p><p>我们可以创建一个测试账号，将其手机号，密码，身份证等各种私密信息都作为待检测的隐私数据，这样就能全方位的分析出，哪些信息遭到了泄露。</p><p>例如，曾经有网站为了偷懒，将找回密码的答案直接输出到了页面脚本变量里，而不是在后端判断。这时，我们就能很快追踪到泄漏点。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re1">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/papers/12645" rel="bookmark" id="re2">中间人攻击 -- Cookie喷发</a></li><li><a href="http://drops.wooyun.org/tips/12681" rel="bookmark" id="re3">关于被动式扫描的碎碎念</a></li><li><a href="http://drops.wooyun.org/web/10636" rel="bookmark" id="re4">360护心镜脚本分析及N种绕过方式</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thanatos</span> <span class="reply-time">2016-01-25 19:19:51</span></div><p></p><p>不明觉厉啊！好文！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">th000</span> <span class="reply-time">2015-07-15 17:28:11</span></div><p></p><p>能安装，应该能做更多的事情了。至少gmailxss都有了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">EtherDream</span> <span class="reply-time">2014-09-16 15:09:24</span></div><p></p><p>绕开 chrome 的 sandbox，注入代码到页面运行。</p><p>function page_module() {<br>//....<br>}<br>var spt = document.createElement('script');<br>spt.innerHTML = '(' + page_module + ')()';<br>document.documentElement.appendChild(spt);</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">withdrawn</span> <span class="reply-time">2014-09-12 14:04:39</span></div><p></p><p>我在content.js里<br>XMLHttpRequest.prototype.open=null;<br>alert(XMLHttpRequest.prototype.open);<br>弹出的是null 但回到页面里的 XMLHttpRequest.prototype.open 还是没变？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SarahCla</span> <span class="reply-time">2014-09-04 14:42:35</span></div><p></p><p>：）能共享一下源码吗？谢谢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aNsSe</span> <span class="reply-time">2014-08-26 21:47:37</span></div><p></p><p>让我学到了很多</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phithon</span> <span class="reply-time">2014-08-24 22:11:46</span></div><p></p><p>好思路啊！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pangshenjie</span> <span class="reply-time">2014-08-21 20:35:15</span></div><p></p><p>楼主这么屌，厂长知道么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">latershow</span> <span class="reply-time">2014-08-21 14:35:36</span></div><p></p><p>原来度娘可以被如此N连插</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ceason</span> <span class="reply-time">2014-08-20 10:34:41</span></div><p></p><p>赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-08-20 09:06:00</span></div><p></p><p>我擦啊我擦啊 太多猪一样队友了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小森森</span> <span class="reply-time">2014-08-19 20:35:44</span></div><p></p><p>想法不错，写好插件然后随便上网就能找cookie泄露了。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zj1244</span> <span class="reply-time">2014-08-19 19:00:55</span></div><p></p><p>不错的想法，赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-08-19 16:37:03</span></div><p></p><p>洞主 写成插件吧，貌似chrome得开发版 才有 getAll ?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">玉林嘎</span> <span class="reply-time">2014-08-19 12:48:33</span></div><p></p><p>感觉很牛逼的样子</p><p></p></div></div></div></div></div></main>

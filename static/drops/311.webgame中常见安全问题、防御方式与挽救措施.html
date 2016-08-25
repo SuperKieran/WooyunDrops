@@ -1,0 +1,151 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">webgame中常见安全问题、防御方式与挽救措施</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">cfc4n</a> <span class="bull">·</span> <time title="2014/07/29 13:38" ui-time="" datetime="2014/07/29 13:38" class="published ng-binding ng-isolate-scope">2014/07/29 13:38</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>from:http://www.cnxct.com/experience-with-webgame-of-security-and-defense/</strong></p><h2>0x01 背景</h2><hr><p>十一的假期间，在知乎上看到一个问题《<a href="http://www.zhihu.com/question/21753755">网页游戏都有哪些安全问题？</a>》，我是一个网页游戏开发者，对这个问题非常感兴趣，印象比较深刻。当时是在游玩，也没时间细看这个问题。后来，在微博上，有一位朋友的转发，又让我看到这个问题，冥冥中，有种想回答的冲动。上周六时，研发部门内部周会时，听到其他项目组的一个整型溢出问题，导致刷钱的bug，又让我想起这个问题，更加坚定我要回答这个问题的决心，总结一下这项目中，所有经历过的webgame安全问题的经验，以加固当前项目安全壁垒，避免损失。亦可分享给其他做webgame研发的朋友，做交流探讨。</p><p>知乎中的原问题是『网页游戏都有哪些安全问题？』，我觉得不妥，我给改成了『网页游戏都有哪些安全问题？如何做得更安全？』，同时，问题也从『大家来研究探讨一下，网页游戏攻防技术。必定，这个话题很敏感。目前，网页游戏已经很多了，会不会被黑产盯上？网页游戏会不会被黑，数据库会不会被拖库』改成了『大家来研究探讨一下，网页游戏攻防技术。必定，这个话题很敏感。目前，网页游戏已经很多了，会不会被黑产盯上？网页游戏会不会被入侵？入侵方式有哪些？如何做好网页游戏的入侵防御？挽救措施有哪些？如何才能最小化减少厂商损失？入侵方式有哪些？如何做好网页游戏的入侵防御？挽救措施有哪些？如何才能最小化减少厂商损失？』，更改的理由是『本文原提问者开篇提到「大家来研究探讨一下，网页游戏攻防技术。」，那么应该不光提到如何入侵，更应该提到如何防御，应该细心描述漏洞形成原理，规避方式，以提高研发者技能水平；应该详细讲解安全事件发生后，如何最小化减少厂商损失，减少用户损失，保护游戏平衡。』，幸运的是，这个修改，被知乎通过了。对此，表示感谢。</p><p>在后来阅读这篇提问以及回答时，已经有几位网友回答了，多数是站在安全工作者角度上回答了这个问题。在这篇日志里，我将以webgame研发者角度，切合游戏业务模块逻辑，从业务需求，数据库设计，程序编写，操作方式上来讲解漏洞形成原理，规避方案，也欢迎大家讨论。</p><h2>0x02 登录认证</h2><hr><p>近几年，网页游戏几乎都是以联运方式运营，意味着游戏服务器本身不保存用户密码，用户登录在平台，通过平台跟游戏服务器的接口对接登录。接口做加密认证。故webgame的帐号密码安全问题，这里不提了。但登录认证的hash字符串安全，也还是要注意的。比如登录hash字符串的生效时间，hash字符串的加密参数来源，比如包括用户名、登录IP，浏览器user-agent等数据，以防止改hash被泄漏了，也是很难通过服务器的验证。</p><h2>0x03 游戏充值</h2><hr><p>webgame的游戏充值流程，跟普通网页充值流程一致，没有特殊的地方，其不同点就是跟其他众多平台做联合运营时，势必要每个公司做接口对接，且接口规范各式各样，且游戏厂商没有话语权，必须按照他们的接口规范来，这实在棘手。腾讯的充值接口的验证方式，安全性做的较为突出，大约代码：</p><pre><code>// 返回参数列表
+$signKey = array('openid','appid','ts','payitem','token','billno','version','zoneid','providetype','amt','payamt_coins','pubacct_payamt_coins');
+$sign = array();
+//从GET参数中，对比找出上面参数的值
+foreach($signKey as $key ) {
+    if (isset($data[$key]))
+    {
+    $sign[$key] = $data[$key];  //只有 GET里有的参数，才参与sig的计算
+    }
+}
+######开始生成签名############
+//1: URL编码 URI
+$url = rawurlencode($url);
+//2:按照key进行字典升序排列
+ksort($sign);
+//3: &amp;拼接，并URL编码
+$arrQuery = array();
+foreach ($sign as $key =&gt; $val ) 
+{ 
+    $arrQuery[] = $key . '=' . str_replace('-','%2D',$val);
+}   
+$query_string = join('&amp;', $arrQuery);
+//4 以POST方式拼接 1、3 以及URL
+$src = 'GET&amp;'.$url.'&amp;'.rawurlencode($query_string);
+// ## 构造密钥
+$key = $this-&gt;config-&gt;get('qq_appkey').'&amp;';
+//### 生成签名
+$sig = base64_encode(hash_hmac("sha1", $src, strtr($key, '-_', '+/'), true));
+if ( $sig != $data['sig'] ) {
+    $return['ret'] = 4;
+    $return['msg'] = '请求参数错误：（sig）';
+    $this-&gt;output-&gt;set(json_encode($return));
+    return ;
+}
+</code></pre><p>在此基础上，还可以做的严谨点：</p><p>1, 增加随机参数名、参数值。随机参数名、参数值由联运方随机生成，按照参数名的字符串所属ASCII码顺序排序，参数名、参数值均参与sign的计算，增加暴力破解密钥(app key)难度。</p><p>2, 增加回调验证订单号，金额信息。游戏充值服务器接收到充值请求时，反向到该平台回调接口，确认此笔订单有效性，以防止加密密钥泄漏的问题。</p><h2>0x04 远程文件引入</h2><hr><p>在网页游戏的研发中，多数都是使用框架来做，即使用REQUEST来的参数，作为请求文件名的一部分，来使用，那么很容易形成远程文件引入的漏洞。在我们之前的游戏中，曾出现过一例这样的漏洞问题。</p><pre><code>// Load the local application controller
+// Note: The Router class automatically validates the controller path.  If this include fails it
+// means that the default controller in the Routes.php file is not resolving to something valid.
+if ( ! file_exists(APPROOT.'controllers/'.load('Router')-&gt;getDirectory().load('Router')-&gt;getClass().EXT))
+{
+    load('Errors')-&gt;show404('Unable to load your default controller.  Please make sure the controller specified in your Routes.php file is valid.');
+}
+include(APPROOT.'controllers/'.load('Router')-&gt;getDirectory().load('Router')-&gt;getClass().EXT);
+load('Benchmark')-&gt;mark('load_basic_class_time_end');
+</code></pre><p><img alt="webgame中的远程文件引入" img-src="33f57a7912de1952478d59a3f7c189100ec003a1.jpg"></p><p>从代码以及案例图中，可以看到对于REQUEST的参数没有过滤处理，直接作为文件名来include引入的，故导致这种问题，类似上页图中，若PHP version &lt; 5.3.4 ，还会发生Null(%00) 截断的问题，带来更大的安全问题。在我们新的项目中，我们更改了实现方式，我们游戏所有接口都会走gateway，gateway里，对控制器名做类名规范的检测处理，再在指定几个目录下做autoload加载文件，且还会对REQUEST的类名、方法用ReflectionClass反射类的处理，检测到类、方法、参数是否合法。一来避免『远程文件引入』漏洞问题，二来便于前后端联调时，抛出更详细的异常，方便调试。下面为参考代码：</p><pre><code>require_once CONFIG_PATH . "/auto.php";
+spl_autoload_register("__autoload");
+
+……
+
+//默认消息格式
+$view-&gt;clear();
+$view-&gt;error(MLanguages::COM__INVALID_REQUST);
+$msg = new Afx_Amf_plugins_AcknowledgeMessage($val-&gt;data[0]-&gt;$messageIdField);
+$msg-&gt;setBody($view-&gt;get());
+$message-&gt;data = $msg;
+…
+
+$a = new Yaf_Request_Simple();
+$a-&gt;setControllerName($method[0]);
+$a-&gt;setActionName($method[1]);
+$objC = new ReflectionClass($method[0]."Controller");
+$arrParamenter = $objC-&gt;getMethod($method[1]."Action")-&gt;getParameters();
+$arrRequest = isset($val-&gt;data[0]-&gt;body[0]) ? (array)$val-&gt;data[0]-&gt;body[0] : array();
+$bCanCall = true;
+foreach ($arrParamenter as $objParam)
+{
+    $parm = $objParam-&gt;getName();
+    $bIsOption = $objParam-&gt;isOptional();    //是否为可选参数
+    if (isset($arrRequest[$parm]))
+    {
+        $a-&gt;setParam($parm , $arrRequest[$parm]);
+    }
+    elseif ($objParam-&gt;isOptional())
+    {
+        //可选参数
+    }
+    else
+    {
+        $bCanCall = false;
+    }
+}
+if ($bCanCall)
+{
+    $rp = $app-&gt;getDispatcher()-&gt;dispatch($a);
+    $msg = new Afx_Amf_plugins_AcknowledgeMessage($val-&gt;data[0]-&gt;$messageIdField);
+    $msg-&gt;setBody($view-&gt;get());
+    $message-&gt;data = $msg;
+}
+</code></pre><h2>0x05 SQL 注入</h2><hr><p>SQL注入原理、方式，跟普通web应用一样，没什么特别的，在使用REQUEST来的参数时，过滤处理即可。可能在消息格式，以及注入操作简便上，会蒙蔽研发人员的眼睛，被忽略掉了。比如我们项目的AMF消息格式，在前端界面没出来之前，我们后端程序员一般使用<a href="https://code.google.com/p/pinta/">Pinta</a>来模拟操作，调试程序。前端界面出来之后，会使用Charles proxy来捕捉http请求。在这些过程中，请求接口、参数的构造，没有普通web那么简单。研发人员也容易忽略对请求参数的过滤，故很容易形成这种问题。形成原理见：《<a href="http://www.cnxct.com/web-development-security-ppt/">WEB开发安全与运维安全浅见</a>》，防御方式做过滤处理，或SQL预编译。</p><p><img alt="AMF消息格式的WEBGAME中的SQL注入" img-src="d25e3a6ea1d4819dd2bc3df4089216438646c3e8.jpg"></p><p><img alt="AMF消息格式的WEBGAME中的SQL注入" img-src="0d2c32dc341560d9c583f91b897139ac11163723.jpg"></p><p>为了提高游戏服务器的吞吐能力，网页游戏的架构也是一直在演变的。在之前以Mysql作为数据存储的webgame架构中，其他节点都是可以水平扩展，或者说依赖简单粗暴的增加服务器来解决，单单作为唯一数据存储中心，不能这么做。为此，很多webgame的数据存储改用Nosql来代替，甚至java、C/C++的游戏数据，直接在内存中操作，游戏关服时，才写入到DB中。故SQL注入的问题，也会越来越少。</p><h2>0X06 通讯协议与消息格式</h2><hr><p>网页游戏虽然名字叫网页游戏，但通讯协议并非全是http，也有很多使用socket，以及http+socket并用的做法。我们是http协议+amf消息格式，以及socket并用来实现。在http与https的取舍上，我们考虑到ssl的启用后，大量的ssl解密加密运算，势必会增加服务器大量的CPU计算压力。而传输的内容，多数是游戏业务的操作，响应，是能接受被监听嗅探的行为的(认证信息除外)。站在安全角度，这不能理解。但站在产品角度，考虑一下 投入产出，然后选择http通讯，也是可以理解的。socket在我们游戏中，除了在聊天应用上使用外，在一些组队、帮派战之类需要多个玩家之间同步数据信息时，我们也会使用socket来推送数据。在使用socket作为所有业务传输的协议时，协议格式一般都是开源协议，比如msgpack、protobuf之类，或者自定义的协议。使用自定义协议时，务必检测整个消息包的每一个参数，类型范围，避免个别超大数值、边界数值出现，导致主程序内存越界，以至于服务宕机，无法正常服务的情况发生。</p><h2>0x07 金币复制-整型溢出</h2><hr><p>上周周六开周会时，听到其他项目组的一个关于整型溢出导致产生刷金币的问题。在这里，我抽象该案例，分享一下。商城出售开启背包格子的所需道具『梧桐木』。在游戏中，用户包裹格子数量一般都会作为一个收费点，一款游戏的格子大约为每行7格子，一共8行这样。比如前面3行是默认开放的，第4行是收费的，而且第一个格子所需品梧桐木的价格1个银子，第二个梧桐木是2个银子，第三个是4个银子。依次类推，意味着这些梧桐木的价格总和其实就是一个第一项为1，公比为2，项为35的等比数列。 当用户选择购买梧桐木数量大于31时，比如32-36中这些数字时，这些等比数列的和就是大于2147483647。(只是举例，实际上不会以这样的价格出售物品)</p><p>在java中，4字节的存放int型变量的范围是-2147483648至2147483647。在java、c的有符号int型中存储时，数的最高位描述符号位，4字节共32位，除去最高位的符号位，剩下31位，每个位上能表示2个数字，4字节的有符号的整数表示范围为:负整数2^31个，范围为『-1至-2147483648』；正整数2^31个，范围为『2147483647至1』。 比如下图(注意十进制数字跟二进制表示的变化顺序)：</p><p><img alt="4字节有符号整型溢出" img-src="04715b93effd909a184b4c39f44a103a2ede38a8.jpg"></p><p>当开启格子数字为大于31时，比如32，那么所需费用就是2147483647个银两，再买点其他物品，凑成超过2147483647的数字，比如又买了3个银子的其他道具，总共花费2147483650个银子，在4字节的有符号int中表示出来的结果，变成符号位为1，即负整数。数值位为0000000 00000000 00000000 00000010，也就是10000000 00000000 00000000 00000010，对应十进制的-2147483646。程序逻辑上，再判断现有银两是否足够支付此笔花费时，是通过的。当使用当前余额减去这笔花费时，将变成减去一个负数，那么实际上就是加上一个正整数。变成了自己银两账户余额的增长。而余额字段类型是long，则正确的存储了这些余额，溢出漏洞被利用。在C中，使用无符号的数值类型，即可完成数值类型溢出刷钱的行为，但在java中，好像没有无符号的类型。这也可以先确定所有参与计算的数值必须为正整数作为必要条件(游戏业务特性，游戏内所有数字，肯定全为正整数，甚至都不包括零)，先做大小判断，再做正正相加，不能得负；负负相加，不能得正。来判断是否发生了溢出问题。在PHP中，不用担心溢出问题。 更多信息参考：《<a href="http://www.mouseos.com/arch/Overflow.html">溢出,符号与进位</a>》</p><p>不光是程序中，整型变量类型得需要注意，使用unsigned int在存储数据的DB中也要做同样的处理，对于存储整型数字的字段，均设置为unsigned int/tinyint/...。在游戏中，数字几乎全是自然数，几乎不会出现负整数的情况。</p><h2>0x08 道具复制-逻辑错误</h2><hr><p>在我的新款webgame中，又发生了一起刷道具的问题，问题发生在背包内道具移动的业务上，业务需求如下：</p><p>当从A位置移动到B位置时，若两者是同一类型，且可叠加(两者都是绑定或不绑定)，则叠加数量到其中一个上，并销毁另外一个。 若不是同一类型，或不可叠加，则两者呼唤位置。 若目标位置为空，则把物品从A移动到B。 如果这个功能由你看写，你如何写？ 程序员的全部代码在 <a href="https://gist.github.com/cfc4n/b7d794d3cb663dd86aad">gist:b7d794d3cb663dd86aad</a> 可能比较长，其实这次出问题的在下面的代码中</p><pre><code>/**
+     * 
+     * 背包内道具移动
+     * @param string $former  源位置格子号
+     * @param int $target    目标位置格子号
+     */
+    public function MoveItemAction($former, $target)
+    {
+        $former = trim($former);
+        $target = intval($target);
+        if(!$former || $target &lt; 1)
+        {
+            return $this-&gt;_view-&gt;error(MLanguages::COM__PARAMETERS_NOT_LEGAL);                  //参数异常;
+        }
+
+        //获取道具信息
+        $former_item = $this-&gt;__mItems-&gt;getNumberItem($former);
+        if(!$former_item)
+        {
+            return $this-&gt;_view-&gt;error(MLanguages::PACK__NOT_EXIST);                  //使用道具不存在;
+        }
+
+        $former_md5id = $former_item['md5_id'];
+        $former_num = $former_item['number'];
+        $former_base = $former_item['item_id'];
+        $former_sup = $former_item['superpose'];
+
+
+        //开启事务
+        $this-&gt;__mRole-&gt;beginTrans();
+        $target_item = $this-&gt;__mItems-&gt;getNumberItem($target);
+        ......
+</code></pre><p>其出现问题部分就是如上这些，大家看代码时，会认为这前期的判断都是正确的，符合业务逻辑的，问题却发生了“来源格子”跟“目标格子”的判断，没有判断这两个参数是不是同一个位置，若是同一个位置，那么上面的所有业务逻辑判断都是合法的，下面的代码中，将根据这“两个”道具的属性进行堆叠，然后就发生了道具复制的问题.....</p><p>修复方法想必大家都会，就是判断来源位置目标位置是否相同</p><pre><code>if(!$former || $target &lt; 1 || ($former == $target)) //判断来源位置目标位置是否相同
+</code></pre><p>如果是你，你会犯这样的错误吗？我想.....呵呵...</p><h2>0x09 金币复制-并发请求</h2><hr><p>Rpg类型的网页游戏中，多数都有道具出售的功能，直接卖到商店，以及道具材料从商店买入功能。当玩家同时针对买入、卖出两个操作，瞬间大量并发请求时，在服务器的处理逻辑一般有分别的两个进程处理，共享数据分别数据库中的对应账户余额表，如下图：</p><p><img alt="webgame买入、卖出并发请求处理" img-src="6a30669db4cdd13737caf526de633f43c61d10bd.jpg"></p><pre><code>//卖出
+// startTrans
+$iBalance = $obj-&gt;getBalance('user1');  //余额50
+
+//UPDATE `role_gold` SET gold = 150 WHERE role_id = 1
+if(!$obj-&gt;setBalance('user1',$iBalance + 100))
+{
+    //rollback
+}
+//扣除物品
+if (!$obj-&gt;delItems($items))
+{
+    //rollback
+}
+//commit
+
+//买入
+// startTrans
+$iBalance = $obj-&gt;getBalance('user1');    //余额50
+//UPDATE `role_gold` SET gold = 0 WHERE role_id = 1
+if(!$obj-&gt;setBalance('user1',$iBalance - 50))
+{
+    //rollback
+}
+//发放物品
+if (!$obj-&gt;addItems($items))
+{
+    //rollback
+}
+//commit
+</code></pre><p>卖出请求的处理进程为1，买入请求的处理进程为2。在进程1还没将结果写入到DB时，进程2也从DB读取到余额为50。这是，两个进程拿到的余额信息都是50。进程1按照逻辑代码，计算出剩余余额是150；进程2计算出的剩余余额是0。最后，不管那个进程最后写入余额，都是错误的结果。(注：这里的代码逻辑操作，跟mysql事务无任何关系，事务只能保证单个进程的事务范围内多条语句都正确执行，或回滚。比如能保证扣钱成功，且物品删除掉的两个语句都正确执行。能保证其中之一的语句执行失败时，都正确回滚。) 其实，在事物开启时候，SELECT语句是否可以取到最新的数据，或者是否需要等待锁释放，取决于MYSQL的事务隔离级别。在MYSQL的事务隔离级别中，有一下几种隔离级别：</p><p><img alt="mysql transaction isolation level" img-src="87b1044a3110c1466f1f8b0bcf0efee6629fb0e6.jpg"></p><p>READ-UNCOMMITTED(读取未提交内容)级别</p><p>READ-COMMITTED（读取提交内容</p><p>REPEATABLE-READ(可重读)</p><p>SERIERLIZED(可串行化)</p><p>对于READ-UNCOMMITTED，可以读取其他事务中未提交的数据，而且据说性能还高不到哪里去，几乎没有在实际应用中使用；对于READ-COMMITTED，在同一事务中，会因为其他事务随时可能有新的commit，导致同一select可能返回不同结果。这个也不适合游戏业务；再说第四个SERIERLIZED，只要事务开启，所有其他查询，均排队等待该事务提交之后，对于上面提到的卖出买入情况，第二个事务的SELECT操作，不会立刻返回，会处于锁等待状态，一直到前一个事务结束。这个隔离级别，虽然能避免上面的问题，但性能较差，一般不会去使用。而REPEATABLE-READ隔离级别，也是mysql默认的隔离级别，从功能上，比较符合游戏业务需要，也应该是广大webgame架构中mysql的默认隔离级别。在使用REPEATABLE-READ隔离级别时，select的数据，都是事务未提交之前的数据，而每个事务都能正常成功执行，故错误的结果被执行出现。</p><p>对于这个问题，你可能很快就给出解决办法，把UPDATE语句改为<code>UPDATE</code>role_gold<code>SET gold = gold + 100 WHERE role_id = 1或者UPDATE</code>role_gold<code>SET gold = 150 WHERE role_id = 1 AND gold =</code> 100来解决，但这种多个事务同时操作修改多个表的多条记录时，还容易引发死锁问题，比如《<a href="http://www.cnxct.com/error-1213-40001-deadlock-found-when-trying-to-get-lock-try-restarting-transaction/">webgame中Mysql Deadlock ERROR 1213 (40001)错误的排查历程</a>》。而且，当条件为跨表内数据是否存在，或者另外条件不在MYSQL中，而在其他网络接口的响应中时，如何做呢？</p><h2>0x10 金币复制--逻辑漏洞</h2><hr><p>引用DNF的漏洞新闻 《利用网游漏洞狂刷游戏币赚钱 玩家自曝3天赚17万》</p><p>玩家曝出刷币漏洞 一个游戏道具可刷400人民币 该漏洞到底是什么?原来游戏中“云幂袖珍罐”这个道具，可以开出2件一样的游戏装备，还有极少几率开出游戏币，开出的装备不值钱，但如果开出金币了，则分为5000万、8000万以及1亿游戏币。而1亿游戏币，按正常市场行情，可在交易网上卖400多元人民币。据玩家称，在游戏中，角色的装备是需要用包裹来存放的，不过目前角色的包裹最多只有48格，也就是只能存放最多48件装备。漏洞就是利用包裹的有限空间，存放47件装备(存放满了又无法开罐子)，只留下一格空位，而在开“云幂袖珍罐”出装备时，就会因包裹空间不足，而导致开罐失败，而罐子还存在。玩家继续开罐，直到出现金币，但金币不会占据包裹的空间，因此开罐成功，然后罐子消失。发现这个漏洞后，部分玩家狂刷游戏币，然后马上在第三方交易平台出售游戏币，兑换成现金。</p><p>这种问题，都是研发人员逻辑不严谨导致，这种问题，也较难发现。规避方式可以依赖下面提到的『运营数据监控』。</p><h2>0x11 道具复制--背包整理</h2><hr><p>跟上面的卖出、买入一样，同时穿装备、整理包裹。在设计时，可能会将身上装备设计在装备表中；将不在身上的装备，设计到背包表中。当同时进行穿装备跟整理包裹的请求并发时，也会发生跟上面卖出，买入的情况，线程1读取DB，发现包裹里有这装备，然后准备删除背包表的这条记录，当准备写入到装备表时，另外一个整理包裹请求的线程来了，读取了整个背包表，进行道具的合并、排序。这时，之前的线程将这个装备写入到装备表，并删除了背包表里的数据，并提交事务。这个穿装备的所有操作都是合理、正常，且正确执行的。但另外一个整理背包的线程读取了之前的背包表里的数据，包括那件被穿上的装备。在游戏中，整理背包需要对可堆叠道具做堆叠操作的，意味着需要合并多个道具，删除部分道具。这意味着这里的操作，当前cgi线程的内存中的数据，将都会以覆盖的形式，写入到DB中，那么意味着，之前被穿到身上的那件装备，也会重新被写入到背包中。那就变成两张表里出现了两个相同唯一ID的相同属性的道具。玩家就可以把背包中的这个道具出售给其他玩家。</p><p>在java或者C之类程序中，数据放内存中的游戏，也会存在这个问题，除非做读锁，但读锁会带来锁等待，锁等待会导致线程被占用，阻塞后面请求的处理，堆积大量请求。导致系统负载升高，服务器繁忙，以至于无法响应。好了，大约理解道具复制的形成原因了吗？这个问题，我们从根本原因想想，问题到底出现在哪里？如何规避呢？细心的同学不难发现，对于穿装备的操作结果，会对下一个请求产生影响的，当前操作未得到服务端响应之前，服务端是不能处理下一个响应的。对此，我们做了响应处理锁--『用户并发请求锁』。</p><p>用户并发请求锁的实现，php中session以文件形式存储时，php会对session文件加锁，不释放(如果不特意执行session&#95;write&#95;close)，知道当前响应完成。另外一个线程才可以正常读取，这简介的形成了单个用户的并发请求锁，但是，后面的进程一直处于等待状态，也会占用一个php-fpm进程，阻塞其他用户的正常请求对php线程的使用。为此，我们使用NOSQL的K-V形式结构，以user_name为key的形式，实现用户并发请求锁，比如 redis的setnx接口，原子性判断操作有则返回false，，没有就添加一个，返回true。那么，对于下一个请求，setnx时，返回false，有这个key了，那么立刻抛出异常，结束响应，FLASH根据异常内容，提醒用户不要进行恶意操作。即不会发生并发请求，又不会阻塞请求处理。同时，在请求结束的析构函数里，对这个锁进行删除操作，不影响下一个正常请求。若因为程序异常，发生语法错误，导致析构函数没法执行，没有删除用户锁时，可以在生成锁的时候，设置过期时间，比如5秒，甚至2秒，利用nosql的过期机制，实现用户解锁，避免用户长时间无法正常游戏。</p><h2>0x12 类CC攻击-多用户共享资源锁的timebomb</h2><hr><p>我们现在研发的项目，是以NOSQL Redis作为DB，来存储数据的，redis并没有成熟的事务处理机制，watch甚至算不上关系型数据库中的事务处理。对此，更需要对表进行加锁解锁。java之类语言的项目，很多都是直接操作内存的，更是需要资源锁，来解决并发问题，解决多个请求操作同一份数据的问题。公司有另外一个项目，出现过一次因为锁的颗粒度较大，带来的锁等待timebomb的问题，也导致了线程繁阻塞忙，请求堆积，系统负载上升，导致宕机的问题。这个项目的锁是针对所有用户的锁，每个用户的请求发来时，当前线程会对所有用户的数据加锁，直到响应完成，才释放掉。这么做，是为了解决因当前操作，会影响到其他用户数据，比如多人PK，多个玩家之间的交互。</p><p><img alt="timebomb" img-src="081b7216f66108985ab74c133cefceba945a20a4.jpg"></p><p>当其他请求一并发来时，那么资源会立刻被锁住，直到上一个请求结束，才释放锁，那么其他线程都处于等待状态。用户基数小时，是看不出来锁带来的影响的，内存操作都比较快。当用户基数大时，或者说请求数增大时，后面的请求的等待时间会越来越长，超过webserver的等待时间，直接返回timeout，不能正常提供服务。</p><p>这种问题的发生，是因为锁的颗粒太大了，不应该将所有用户都锁住，最好细化到当前请求所影响到的单个用户，只锁住单个用户的数据。这样，才减少timebomb的发生。</p><h2>0x13 其他</h2><hr><p>知乎里的朋友提到，很多webgame 的前端做了判断，而后端没做判断的问题，这种问题，实属不该存在。在我们的项目中，后端做的验证判断，远比前端多的多。有时候，为了界面上的动画表现，前端flash一般会在用户操作之后，立刻渲染，然后，再根据后端响应，决定是否继续做界面元素改动。比如脱装备，玩家操作时，会先渲染装备从角色面板，跳到背包里的动画，然后，再根据后端响应结果，决定是否回滚动画。这样，避免显得操作后，一定时间的反映迟钝假象，以提高用户体验。当然，后端是一定会做判断的，判断角色背包是否有空格之类。现在的webgame研发，一般都不会存在前端判断，而后端不判断的做法了。如果有，也应该是个别遗漏情况。</p><p>比如去年的time33算法的hash dos的问题，使用json消息格式的webgame一定要注意，php只是在接收请求时，做了最大数量的限制。但在json解码之后的数据中，是没有处理的。这里千万别忘记了。</p><h2>0x14 运营数据异常监控</h2><hr><p>再完善的防御措施，都仍会有安全漏洞。适当的监控措施，也一定要有，监控等级、金币、游戏币、经验、珍贵物品的变化等等，一旦发现，立刻报警，在漏洞未扩散之前，第一时间去修复漏洞，以减少损失，维护游戏平衡。</p><h2>0x15 日志系统</h2><hr><p>日志系统一定不能漏掉，所有操作，必须写入日志，当安全事件发生后，可以作为各种数据回滚，交易纠纷处理的可靠数据。也是作为数据监控的最准确的数据来源。</p><p>一个真实的故事。去年6月份，我们项目新上线一个系统，以及腾讯充值接口V2升级V3，涉及充值代码改动，研发测试、策划测试、QA测试完毕之后，上线到个别服务区，观察情况。每次新版本上线，整个项目组都会持续观察数据情况，尤其是充值总额， 10、50、100的涨，突然，总额下降了。充值总额下降了，这可是总额啊，只能增加，是不会下降的。肯定哪里有BUG，DBA直接看binlog，查充值记录相关的SQL语句，最后发现充值系统的sql语句为UPDATE table set gold&#95;num = $num,is&#95;pay =1 ，没有WHERE，没有WHERE啊，多么弱智的BUG，这尼玛能容忍么？肯定要拉出来，弹JJ弹到死。当我从SVN日志中看到涉及这个文件的修改者时，我立刻石化了，悄悄的修了bug，默默的上传......</p><p><img alt="UPDATE操作，忘记写where" img-src="32410da0fbfdafdb8c28937960def3d237324485.jpg"></p><p>事情是发生了，原因很弱智。是我自己，忘记写where条件，由于框架封装了，问题并不容易被发现。而且自己测试充值都是正确的，包括后来的策划测试、QA测试，都没有发现问题。所属功劳，就是“数据监控系统“，所以，我们游戏开发商，第一时间，比用户还早的发现了问题所在。数据监控，一定必不可少。</p><p>至于修复方案，那要感谢日志系统。每笔充值，都有双份日志，一是各个游戏大区自己的DB中。二是充值中心中。充值中心负责跟其他各大平台对接。这次的事故，影响游戏大区的数据，并未影响到充值中心数据，故可以有据可查。这样，伟大的DBA可以更便捷、放心的修复数据了。对此，不管发生其他刷钱、刷装备、盗号之后的交易纠纷，都可以依赖日志来做处理。日志系统，也一定必不可少。</p><p>从新功能发布，到发现BUG，到修复BUG，总共历时不到1小时(svn时间可以看出来，16：30对外的)，可想而知，数据监控的效果多么值得称赞。新功能上线时，各个测试环节要去做。按大区服务器，做灰度发布也可以更小的减少bug影响范围，减少损失。</p><p>如果你用了我画的小清新般的插图，请记得为图片写上署名来源，画图是最花费我时间的一件事。对了，看转载的同学，建议过来看原文，一来原文的排版格式会更适合阅读，二来原文会持续修正文中错误，增加内容。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2015-03-03 19:12:44</span></div><p></p><p>http://www.cnxct.com/experience-with-webgame-of-security-and-defense/ 好像附有原文的链接了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-07-30 16:22:25</span></div><p></p><p>游戏学真有爱,当初玩封包的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小秦</span> <span class="reply-time">2014-07-30 00:26:15</span></div><p></p><p>sinaapp.com 的图片 裂了.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">AK-47</span> <span class="reply-time">2014-07-29 17:27:30</span></div><p></p><p>是指日志系统告警吧……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Anymous</span> <span class="reply-time">2014-07-29 16:19:48</span></div><p></p><p>"…一旦发现，立即报警。。。"<br>你也太狠了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">noob</span> <span class="reply-time">2014-07-29 15:39:22</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">艾斯比</span> <span class="reply-time">2014-07-29 15:35:55</span></div><p></p><p>记得很久很久很久之前看过这个帖子，一模一样</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">v0dga</span> <span class="reply-time">2014-07-29 13:58:13</span></div><p></p><p>Perfect</p><p></p></div></div></div></div></div></main>

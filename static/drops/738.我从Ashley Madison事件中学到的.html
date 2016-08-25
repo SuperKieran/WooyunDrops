@@ -1,0 +1,122 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">我从Ashley Madison事件中学到的</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/09/01 11:21" ui-time="" datetime="2015/09/01 11:21" class="published ng-binding ng-isolate-scope">2015/09/01 11:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x01 事件回顾</h1><hr><p>黑客团队Impact Team在8月18日公布了偷情网站Ashley Madison的数据（<a href="http://www.wired.com/2015/08/happened-hackers-posted-stolen-ashley-madison-data/">Link</a>），多名用户确认了数据的真实性。泄露数据通过BitTorrent被广泛传播，还有人已经设立一个网站<code>ashley.cynic.al</code>，让Ashley Madison用户验证自己的账号是否在里面。黑客泄露的数据容量多达9.7GB，包括了电子邮件，哈希密码，用户资料描述，体重，身高，不完整的信用卡交易数据，等等。泄露事件导致已有2名Ashley Madison用户自杀，该偷情网站的母公司Avid Life Media提供50万赏金（<a href="http://www.bbc.com/zhongwen/simp/world/2015/08/150824_world_ashley_madison">Link</a>）追捕黑客。目前已经公布的线索有2条，一条线索是最早公布了Ashley Madison服务器源代码地址的twitter用户Thadeus Zu (@deuszu)；另一条线索是Ashley Madison的黑客在公布第二批数据后可能不小心留下了足迹(<a href="http://arstechnica.com/security/2015/08/ashley-madison-hackers-leave-footprints-that-may-help-investigators/">Link</a>)。</p><h1>0x02 泄露的主要文件说明</h1><hr><ul><li><p><code>CreditCardTransactions.7z</code><br>该文件保存了过去7年所有信用卡交易记录，包含姓名，地址，EMAIL地址，压缩包里包含2600个EXCEL文件，包含有超过 9.600.000条交易记录。</p></li><li><p><code>am_am.dump.gz</code><br>这个mysql的dump文件包含大概有3200万的用户数据，其中有姓，名，地址，电话号码，关系等，也包括用户是否喝酒？抽烟？生日，别名等信息。</p></li><li><p><code>aminno_member_email.dump.gz</code><br>包含有3200万邮箱地址</p></li><li><p><code>member_details.dump.gz</code><br>人员的详细描述，眼睛颜色，体重，身高，头发颜色等信息</p></li><li><p><code>member_login.dump.gz</code><br>这个文件夹包含3000万的用户名和HASH密码，其中HASH密码采用bcrypt算法加密。</p></li><li><p><code>ashleymadisondump.7z</code>里的<code>swappernet_User_Table.7z</code><br>QA数据库服务器的dump文件，但不是标准的mysql dump格式，是csv格式的。这里的userpassword字段没有使用bcrpt算法加密</p></li><li><p><code>ashleymadison.tgz</code><br>包含相关网站的所有gitlab repositories</p></li></ul><p>泄露的数据里还包含大概13G的Ashley Madison CEO的邮件内容，但是文件似乎损坏了，需要后续进一步的确认。</p><h1>0x03 数据库导入</h1><hr><p>解压后，通过<code>grep</code>看<code>dump</code>的文件，可以看到是标准的<code>mysqldump</code>文件</p><pre><code>#!bash
+$ grep 'MySQL dump' *.dump
+am_am.dump:-- MySQL dump 10.13  Distrib 5.5.33, for Linux (x86_64)
+aminno_member.dump:-- MySQL dump 10.13  Distrib 5.5.40-36.1, for Linux (x86_64)
+aminno_member_email.dump:-- MySQL dump 10.13  Distrib 5.5.40-36.1, for Linux (x86_64)
+member_details.dump:-- MySQL dump 10.13  Distrib 5.5.40-36.1, for Linux (x86_64)
+member_login.dump:-- MySQL dump 10.13  Distrib 5.5.40-36.1, for Linux (x86_64)
+</code></pre><p>然后建立相关数据库以及用户，尝试导入。</p><pre><code>#!sql
+--As root MySQL user
+CREATE DATABASE aminno;
+CREATE DATABASE am;
+CREATE USER 'am'@'localhost' IDENTIFIED BY 'loyaltyandfidelity';
+GRANT ALL PRIVILEGES ON aminno.* TO 'am'@'localhost';
+GRANT ALL PRIVILEGES ON am.* TO 'am'@'localhost';
+</code></pre><p>按照老外的文档。依次执行</p><pre><code>#!bash
+$ mysql -D aminno -uam -ployaltyandfidelity &lt; aminno_member.dump
+$ mysql -D aminno -uam -ployaltyandfidelity &lt; aminno_member_email.dump
+$ mysql -D aminno -uam -ployaltyandfidelity &lt; member_details.dump
+$ mysql -D aminno -uam -ployaltyandfidelity &lt; member_login.dump
+$ mysql -D am -uam -ployaltyandfidelity &lt; am_am.dump
+</code></pre><p><img alt="pic1" img-src="3706264285469da71d376ea75eb99e3cc544a7bb.jpg"></p><p>操作如上图，这里坑就来了，他数据库引擎默认是<code>innodb</code>的，导入巨慢。我不知道老外是怎么导的，但是如果你按照他的方法搞，几天也导入不完。我耽误了一个晚上的时间，请教了A神。他告诉我转<code>MYISAM</code>导入速度就快了。依照<a href="http://www.jb51.net/article/48946.htm">文档</a>，禁用<code>innodb</code>，新建数据库，表，再次导入，还是慢。因为有些数据在导入的时候，会建索引。所以，需要改造下，思路如下：以<code>member_details.dump.gz</code>为例：</p><pre><code>#!bash
+$ gunzip member_details.dump.gz  #解压
+
+$ wc -l member_details.dump   #计算member_details.dump文件总行数
+2425 member_details.dump
+
+$ head -n 48 member_details.dump #获取create的sql语句
+
+CREATE TABLE `member_details` (
+  `pnum` int(11) unsigned NOT NULL,
+  `eye_color` int(11) unsigned NOT NULL DEFAULT '0',
+  `hair_color` int(11) unsigned NOT NULL DEFAULT '0',
+  `dob` date DEFAULT NULL,
+  `profile_caption` varchar(64) DEFAULT NULL,
+  `profile_ethnicity` int(11) unsigned DEFAULT NULL,
+  `profile_weight` int(11) unsigned DEFAULT NULL,
+  `profile_height` int(11) unsigned DEFAULT NULL,
+  `profile_bodytype` int(11) unsigned DEFAULT NULL,
+  `profile_smoke` int(11) unsigned DEFAULT NULL,
+  `profile_drink` int(11) unsigned DEFAULT NULL,
+  `profile_initially_seeking` int(11) unsigned DEFAULT NULL,
+  PRIMARY KEY (`pnum`),
+  KEY `dob` (`dob`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+</code></pre><p>把这里的<code>ENGINE=InnoDB</code>改为<code>ENGINE=MYISAM</code>,如果是其他的表，也可以适当的删除相应SQL里建立索引的语句，提高导入速度。</p><p>然后计算<code>2425 - 48 = 2377</code>，执行</p><pre><code>#!bash
+$ tail -n 2377 member_details.dump &gt;member_details.new.dump #删除create相关的sql语句
+</code></pre><p>最后回到<code>MYSQL</code>里，使用<code>source</code>导入数据。</p><pre><code>#!sql
+soucre member_details.new.dump
+</code></pre><p>如下图所示：</p><p><img alt="pic2" img-src="b8279551e1932c432b13a7afbb68bef01ebc8a63.jpg"></p><p><img alt="pic3" img-src="9cd58c712f2d289e1ebb62ad438a1f35fd26a1c3.jpg"></p><h1>0x04 简单数据分析</h1><hr><p>首先分析<code>ashleymadisondump.7z</code>里的<code>swappernet_User_Table.7z</code>,解压后，显示这个数据库包含765607条记录，仅仅有4条是空密码，387974条密码是唯一的。分析语句如下：</p><pre><code>#!bash
+$ cut -d, -f4 &lt; swappernet_QA_User_Table.txt |wc -l
+765607
+$ cut -d, -f4 &lt; swappernet_QA_User_Table.txt | sed '/^\s*$/d' |wc -l
+765603
+$ cut -d, -f4 &lt; swappernet_QA_User_Table.txt | sed '/^\s*$/d' |sort -u |wc -l
+387974
+</code></pre><p><img alt="pic4" img-src="f2d368440088c09a642473d1fcf9e69838119ff1.jpg"></p><p>如上图，因为这个数据库的密码是明文的，所以很有价值，我们计算下最常使用的50个密码，语句如下：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="394b56564d7952585550">[email&#160;protected]</a>:~# cut -d, -f4 &lt;swappernet_QA_User_Table.txt |sort|uniq -c |sort -rn|head -50 
+5882 123456
+2406 password
+950 pussy
+948 12345
+943 696969
+917 12345678
+902 fuckme
+896 123456789
+818 qwerty
+746 1234
+734 baseball
+710 harley
+699 swapper
+688 swinger
+647 football
+645 fuckyou
+641 111111
+538 swingers
+482 mustang
+482 abc123
+445 asshole
+431 soccer
+421 654321
+414 1111
+408 hunter
+400 sexy
+388 michael
+381 lovers
+379 threesome
+375 sunshine
+375 monkey
+367 hello
+339 jennifer
+338 master
+336 biteme
+335 sexsex
+334 fucker
+332 shadow
+331 shithead
+330 123123
+327 swappernet
+327 fuck
+326 6969
+325 tigger
+325 iloveyou
+314 robert
+312 george
+305 buster
+302 statueofliberty
+300 1234567
+</code></pre><p>我这里资源有限,没有用这里统计出来的密码去跑<code>member_logindump</code>里的加密密码，但是有个老外用<code>rockyou</code>字典去暴力跑，跑出来了4000多个明文密码，下载地址为 <a href="https://drive.google.com/folderview?id=0B5SdbPp8F5RVflhkWW16aUtkM2xzd0s3VG5veXRQeHJOMDNfend2LVlITkxVT2JGbG1aU28&amp;usp=sharing">Link</a></p><p>接下来分析下Ashley Madison里的3700万用户里，通过过滤<code>reply_mail_last_time</code>，<code>bc_chat_last_time</code>，<code>bc_mail_last_time</code>以及个人属性页没有上传图片的（<code>photos_public</code>字段），没有验证邮箱地址的（<code>aminno_member_email.isvalid</code>)猜测有多少是真实用户。SQL语句如下</p><pre><code>#!sql
+SELECT 
+COUNT(*)
+FROM 
+aminno_member
+LEFT JOIN
+aminno_member_email
+ON
+aminno_member.pnum = aminno_member_email.pnum
+WHERE 
+(aminno_member.bc_mail_last_time != ‘0000-00-00 00:00:00’ OR 
+aminno_member.bc_chat_last_time != ‘0000-00-00 00:00:00’ OR 
+aminno_member.reply_mail_last_time != ‘0000-00-00 00:00:00’) AND
+photos_public != 0 AND
+aminno_member_email.isvalid = 1
+</code></pre><p>返回<strong>2,528,767</strong>，大概有250万真实的用户，用户群还是挺庞大的。</p><h1>0x05 参考文档</h1><hr><ul><li><a href="http://www.solidot.org/story?sid=45300">分析显示Ashley Madison上的女性极其罕见</a></li><li><a href="http://arstechnica.com/security/2015/08/cracking-all-hacked-ashley-madison-passwords-could-take-a-lifetime/">从破解的4000 Ashley Madison密码中，我们能学到什么</a></li><li><a href="http://krebsonsecurity.com/2015/08/who-hacked-ashley-madison/">是谁黑了 Ashley Madison ? (通过twitter和facebook调查)</a></li><li><a href="https://yuc3i3hat65rpl7t.onion.to/stuff/impact-team-ashley-release.html">Aug 21 2015: New torrent from Impact Team!</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/132" rel="bookmark" id="re1">waf 绕过的技巧</a></li><li><a href="http://drops.wooyun.org/news/1011" rel="bookmark" id="re2">回顾历史上那些因为一行代码出现问题的bug</a></li><li><a href="http://drops.wooyun.org/papers/4578" rel="bookmark" id="re3">Kippo蜜罐指南</a></li><li><a href="http://drops.wooyun.org/web/8024" rel="bookmark" id="re4">基于BIGINT溢出错误的SQL注入</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Cici云溪公主</span> <span class="weibo"></span> <span class="reply-time">2015-09-08 15:48:39</span></div><p></p><p>哈哈，这个国内也有类似的平台啊，叫more，做婚后社交的，貌似很火的</p><p></p></div></div></div></div></div></main>

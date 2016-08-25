@@ -1,0 +1,55 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">用Burpsuite 来处理csrf token</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">c4bbage</a> <span class="bull">·</span> <time title="2014/06/28 12:15" ui-time="" datetime="2014/06/28 12:15" class="published ng-binding ng-isolate-scope">2014/06/28 12:15</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from: http://labs.asteriskinfosec.com.au/fuzzing-and-sqlmap-inside-csrf-protected-locations-part-1/</p><p>http://labs.asteriskinfosec.com.au/fuzzing-and-sqlmap-inside-csrf-protected-locations-part-2/</p><hr><p>问题：http://drops.wooyun.org/tips/2444</p><p>附加其他案例(--eval): <a href="https://gist.github.com/McSimp/2602fd7ee7203e34268b">https://gist.github.com/McSimp/2602fd7ee7203e34268b</a></p><p>当在测试某些网站注入时我们会遇到token，只能手工或者写工具之后进行自动化处理,就sqlmap和burpsuite而言各有各的方法。</p><h3>Sqlmap如下：</h3><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0645415f464e67686d2b5645">[email&#160;protected]</a> /pentest/databases/sqlmap
+$ python sqlmap.py -u "http://192.168.83.117/2.php" --data="token=123&amp;id=root" --eval="import urllib2;import re;a=urllib2.build_opener();a.addheaders.append(('Cookie', 'PHPSESSID=72u0q0sem6tbnrqq4bmqs4an05'));token=re.search(r'\w{32}',a.open('http://192.168.83.117/2.php').read()).group(0);print token;" -p id --dbs --cookie="PHPSESSID=72u0q0sem6tbnrqq4bmqs4an05" --current-user
+</code></pre><h3>Burpsuite如下：</h3><p>在burpsuite 里提供了一个session handler 机制，可以让我们更好的去自动化处理这些。 事例代码如下：</p><pre><code>#!php
+&lt;?php
+/*
+* PHP简单利用token防止表单重复提交
+* 此处理方法纯粹是为了给初学者参考
+*/
+session_start();
+var_dump($_REQUEST);
+function set_token() {
+    $_SESSION['token'] = md5(microtime(true));
+}
+
+function valid_token() {
+    $return = $_REQUEST['token'] === $_SESSION['token'] ? true : false;
+    set_token();
+    return $return;
+}
+
+//如果token为空则生成一个token
+if(!isset($_SESSION['token']) || $_SESSION['token']=='') {
+    set_token();
+}
+
+error_reporting(E_USER_ERROR | E_USER_WARNING | E_USER_NOTICE);
+@mysql_connect("127.0.0.1".':'."3306",root,'123')
+or die("数据库服务器连接失败");   
+@mysql_select_db('mysql')
+or die("数据库不存在或不可用");
+
+if(isset($_POST['id'])){
+    if(!valid_token()){
+        echo "token error";
+    }else{
+        //echo '成功提交，Value:'.$_POST['test'];
+        $id=$_REQUEST[id];
+        $sql='select user,password,host from mysql.user where user='."'".$id."'".' limit 0,1;';
+        echo $sql;
+        mysql_query('$sql');
+        $set_result = mysql_query($sql); 
+        while($row =mysql_fetch_array($set_result)){
+            $result[]=$row;
+        }
+        var_dump($result);
+    }
+}
+//echo "SESSION ".$_SESSION['token'];
+?&gt;
+&lt;form method="post" action=""&gt;
+    &lt;input type="hidden" name="token" value="&lt;?php echo $_SESSION['token']?&gt;"&gt;
+    &lt;input type="text" name="id" value="root"&gt;
+    &lt;input type="submit" value="提交" /&gt;
+&lt;/form&gt;
+</code></pre><p>在options 栏目的sessions标签里 添加 session handling rules，调出 session handling rule editor：rule description 规则的描述；rule actions 规则的主体部分。 在rule actions 添加 run a macro 类型的调用，调出 session handling action editor ，选择 select macro 下的add ，用于添加macro ,出现两个对话框： macro editor和macro recorder ，前者是用于macro 的分析和设定，后者对于请求的一个录制。 在macro recoder 里 设定intercept is off (右上角位置)，切换到浏览器 先请求一次 127.0.0.1/2.php 之后对于表单内容进行提交。切到macro recorder 里，用ctrl选中这两次请求，点击 OK 。就此回到了macro editor 窗口，点击test macro 观看请求和响应数据包中的token 是否正确。 <img alt="enter image description here" img-src="7530da1fc7c6c00fbb12967c2da28b5b61c63621.jpg"></p><p>如果不正确，单击分析re-analyze macro或者选择configure item 进行修正，如下图。 <img alt="enter image description here" img-src="653f9258fd05c8df2408a3cc062e8423e95ebd3e.jpg"></p><p>Macro Editor 配置完之后，窗口回到了 session handling action editor。 在sqlmap->burpproxy 测试时， marco 会把我的id参数只指定为root1（marco录制时id指定的是root1,至于这样的原因有待测试），不会发送我的payload，而在intruder 则不出现此问题 。设置只替换token参数即可,设置如下图：</p><p><img alt="enter image description here" img-src="9890f86463689cba6e737e6540a151a60331c6b8.jpg"></p><p>在select macro 里选定刚才录制的 macro，确定。回到session hand rule editor ，在其子标签scope里，：设置作用域（根据自己的实际情况再定）：</p><p><img alt="enter image description here" img-src="fde514f3bda9060a2a6eee22c222afa2c044cab2.jpg"></p><p>运行结果如下:</p><p><img alt="enter image description here" img-src="c326bce55b58542c8ecb9652b6ce276d737d53e1.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3909" rel="bookmark" id="re1">PHP Session 序列化及反序列化处理器设置使用不当带来的安全隐患</a></li><li><a href="http://drops.wooyun.org/web/3910" rel="bookmark" id="re2">关于重复发包的防护与绕过</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re3">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/2504" rel="bookmark" id="re4">Burp Suite使用介绍（四）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rand0m</span> <span class="reply-time">2015-10-04 21:46:29</span></div><p></p><p>为毛我的Token没有变。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vf3ng</span> <span class="reply-time">2014-07-04 16:25:41</span></div><p></p><p>不错！关键在最后一步，得走本地代理</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-06-30 12:54:15</span></div><p></p><p>么么哒</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2014-06-30 10:06:01</span></div><p></p><p>注释第七行</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Net Fly</span> <span class="reply-time">2014-06-29 03:01:29</span></div><p></p><p>Good</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2014-06-28 21:18:58</span></div><p></p><p>么么哒</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xfkxfk</span> <span class="reply-time">2014-06-28 15:35:11</span></div><p></p><p>@c4bbage 我太爱你！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">不告诉你</span> <span class="reply-time">2014-06-28 15:13:52</span></div><p></p><p>赞</p><p></p></div></div></div></div></div></main>

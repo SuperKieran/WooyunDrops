@@ -1,0 +1,283 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android应用安全开发之源码安全</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">gh0stbo</a> <span class="bull">·</span> <time title="2016/01/21 10:24" ui-time="" datetime="2016/01/21 10:24" class="published ng-binding ng-isolate-scope">2016/01/21 10:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>Android apk很容易通过逆向工程进行反编译，从而是其代码完全暴露给攻击者，使apk面临破解，软件逻辑修改，插入恶意代码，替换广告商ID等风险。我们可以采用以下方法对apk进行保护.</p><h1>0x01 混淆保护</h1><hr><p>混淆是一种用来隐藏程序意图的技术，可以增加代码阅读的难度，使攻击者难以全面掌控app内部实现逻辑，从而增加逆向工程和破解的难度，防止知识产权被窃取。</p><p>代码混淆技术主要做了如下的工作：</p><ol><li>通过对代码类名，函数名做替换来实现代码混淆保护</li><li>简单的逻辑分支混淆</li></ol><p>已经有很多第三方的软件可以用来混淆我们的Android应用，常见的有：</p><ul><li>Proguard</li><li>DashO</li><li>Dexguard</li><li>DexProtector</li><li>ApkProtect</li><li>Shield4j</li><li>Stringer</li><li>Allitori</li></ul><p>这些混淆器在代码中起作用的层次是不一样的。Android编译的大致流程如下：</p><pre><code>#!bash
+Java Code(.java) -&gt; Java Bytecode(.class) -&gt; Dalvik Bytecode(classes.dex)
+</code></pre><p>有的混淆器是在编译之前直接作用于java源代码，有的作用于java字节码，有的作用于Dalvik字节码。但基本都是针对java层作混淆。</p><p>相对于Dalvik虚拟机层次的混淆而言，原生语言（C/C++）的代码混淆选择并不多，Obfuscator-LLVM工程是一个值得关注的例外。</p><p>代码混淆的优点是使代码可阅读性变差，要全面掌控代码逻辑难度变大；可以压缩代码，使得代码大小变小。但也存在如下缺点：</p><ol><li>无法真正保护代码不被反编译；</li><li>在应对动态调试逆向分析上无效；</li><li>通过验证本地签名的机制很容易被绕过。</li></ol><p>也就是说，代码混淆并不能有效的保护应用自身。</p><p><a href="http://www.jianshu.com/p/0c23e0a886f4">http://www.jianshu.com/p/0c23e0a886f4</a></p><h1>0x02 二次打包防护</h1><hr><h3>2.1 Apk签名校验</h3><p>每一个软件在发布时都需要开发人员对其进行签名，而签名使用的密钥文件时开发人员所独有的，破解者通常不可能拥有相同的密钥文件，因此可以使用签名校验的方法保护apk。Android SDK中PackageManager类的getPackageInfo()方法就可以进行软件签名检测。</p><pre><code>#!java
+public class getSign {
+    public static int getSignature(PackageManager pm , String packageName){
+    PackageInfo pi = null;
+    int sig = 0;
+    Signature[]s = null;
+    try{
+        pi = pm.getPackageInfo(packageName, PackageManager.GET_SIGNATURES);
+        s = pi.signatures;
+        sig = s[0].hashCode();//s[0]是签名证书的公钥，此处获取hashcode方便对比
+    }catch(Exception e){
+        handleException();
+    }
+    return sig;
+    }
+}
+</code></pre><p>主程序代码参考：</p><pre><code>#!java
+pm = this.getPackageManager();
+int s = getSign.getSignature(pm, "com.hik.getsinature");
+if(s != ORIGNAL_SGIN_HASHCODE){//对比当前和预埋签名的hashcode是否一致
+    System.exit(1);//不一致则强制程序退出
+}
+</code></pre><h3>2.2 Dex文件校验</h3><p>重编译apk其实就是重编译了classes.dex文件，重编译后，生成的classes.dex文件的hash值就改变了，因此我们可以通过检测安装后classes.dex文件的hash值来判断apk是否被重打包过。</p><ol><li>读取应用安装目录下<code>/data/app/xxx.apk</code>中的classes.dex文件并计算其哈希值，将该值与软件发布时的classes.dex哈希值做比较来判断客户端是否被篡改。</li><li>读取应用安装目录下<code>/data/app/xxx.apk</code>中的META-INF目录下的MANIFEST.MF文件，该文件详细记录了apk包中所有文件的哈希值，因此可以读取该文件获取到classes.dex文件对应的哈希值，将该值与软件发布时的classes.dex哈希值做比较就可以判断客户端是否被篡改。</li></ol><p>为了防止被破解，软件发布时的classes.dex哈希值应该存放在服务器端。</p><pre><code>#!java
+private boolean checkcrc(){
+    boolean checkResult = false;
+    long crc = Long.parseLong(getString(R.string.crc));//获取字符资源中预埋的crc值
+    ZipFile zf;
+    try{
+        String path = getApplicationContext().getPackageCodePath();//获取apk安装路径
+        zf = new ZipFile(path);//将apk封装成zip对象
+        ZipEntry ze = zf.getEntry("classes.dex");//获取apk中的classes.dex
+        long CurrentCRC = ze.getCrc();//计算当前应用classes.dex的crc值
+        if(CurrentCRC != crc){//crc值对比
+            checkResult = true;
+        }
+    }catch(IOException e){
+        handleError();
+        checkResult = false;
+    }
+    return checkResult;
+}
+</code></pre><p>另外由于逆向c/c++代码要比逆向Java代码困难很多，所以关键代码部位应该使用Native C/C++来编写。</p><h1>0x03 SO保护</h1><hr><p>Android so通过C/C++代码来实现，相对于Java代码来说其反编译难度要大很多，但对于经验丰富的破解者来说，仍然是很容易的事。应用的关键性功能或算法，都会在so中实现，如果so被逆向，应用的关键性代码和算法都将会暴露。对于so的保护，可以才有编译器优化技术、剥离二进制文件等方式，还可以使用开源的so加固壳upx进行加固。</p><p><strong>编译器优化技术</strong></p><p>为了隐藏核心的算法或者其它复杂的逻辑，使用编译优化技术可以帮助混淆目标代码，使它不会很容易的被攻击者反编译，从而让攻击者对特定代码的理解变得更加困难。如使用LLVM混淆。</p><p><strong>剥离二进制文件</strong></p><p>剥离本地二进制文件是一种有效的方式，使攻击者需要更多的时间和更高的技能水平来查看你的应用程序底层功能的实现。剥离二进制文件，就是将二进制文件的符号表删除，使攻击者无法轻易调试或逆向应用。在Android上可以使用GNU/Linux系统上已经使用过的技术，如sstriping或者UPX。</p><p>UPX对文件进行加壳时会把软件版本等相关信息写入壳内，攻击者可以通过静态反汇编可查看到这些壳信息，进而寻找对应的脱壳机进行脱壳，使得攻击难度降低。所以我们必须在UPX源码中删除这些信息，重新编译后再进行加壳，步骤如下：</p><ol><li>使用原始版本对文件进行加壳。</li><li>使用IDA反汇编加壳文件，在反汇编文件的上下文中查找UPX壳特征字符串。</li><li>在UPX源码中查找这些特征字符串，并一一删除。</li></ol><p><a href="https://www.nowsecure.com/resources/secure-mobile-development/coding-practices/code-complexity-and-obfuscation/">https://www.nowsecure.com/resources/secure-mobile-development/coding-practices/code-complexity-and-obfuscation/</a></p><h1>0x04 资源文件保护</h1><hr><p>如果资源文件没有保护，则会使应用存在两方面的安全风险：</p><ol><li>通过资源定位代码，方便应用破解 反编译apk获得源码，通过资源文件或者关键字符串的ID定位到关键代码位置，为逆向破解应用程序提供方便.</li><li>替换资源文件，盗版应用 "if you can see something, you can copy it"。Android应用程序中的资源，比如图片和音频文件，容易被复制和窃取。</li></ol><p>可以考虑将其作为一个二进制形式进行加密存储，然后加载，解密成字节流并把它传递到BitmapFactory。当然，这会增加代码的复杂度，并且造成轻微的性能影响。</p><p>不过资源文件是全局可读的，即使不打包在apk中，而是在首次运行时下载或者需要使用时下载，不在设备中保存，但是通过网络数据包嗅探还是很容易获取到资源url地址。</p><h1>0x05 反调试技术</h1><hr><h3>5.1 限制调试器连接</h3><p>应用程序可以通过使用特定的系统API来防止调试器附加到该进程。通过阻止调试器连接，攻击者干扰底层运行时的能力是有限的。攻击者为了从底层攻击应用程序必须首先绕过调试限制。这进一步增加了攻击复杂性。Android应用程序应该在manifest中设置<code>Android:debuggable=“false”</code>，这样就不会很容易在运行时被攻击者或者恶意软件操纵。</p><h3>5.2 Trace检查</h3><p>应用程序可以检测自己是否正在被调试器或其他调试工具跟踪。如果被追踪，应用程序可以执行任意数量的可能攻击响应行为，如丢弃加密密钥来保护用户数据，通知服务器管理员，或者其它类型自我保护的响应。这可以由检查进程状态标志或者使用其它技术，如比较ptrace附加的返回值，检查父进程，黑名单调试器进程列表或通过计算运行时间的差异来反调试。</p><ul><li><a href="https://github.com/obfuscator-llvm/obfuscator/wiki">https://github.com/obfuscator-llvm/obfuscator/wiki</a></li><li><a href="https://www.nowsecure.com/resources/secure-mobile-development/coding-practices/code-complexity-and-obfuscation/">https://www.nowsecure.com/resources/secure-mobile-development/coding-practices/code-complexity-and-obfuscation/</a></li></ul><p><strong>a.父进程检测</strong></p><p>通常，我们在使用gdb调试时，是通过gdb<target>这种方式进行的。而这种方式是启动gdb，fork出子进程后执行目标二进制文件。因此，二进制文件的父进程即为调试器。我们可通过检查父进程名称来判断是否是由调试器fork。示例代码如下</target></p><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+ 
+int main(int argc, char *argv[]) {
+   char buf0[32], buf1[128];
+   FILE* fin;
+ 
+   snprintf(buf0, 24, "/proc/%d/cmdline", getppid());
+   fin = fopen(buf0, "r");
+   fgets(buf1, 128, fin);
+   fclose(fin);
+ 
+   if(!strcmp(buf1, "gdb")) {
+       printf("Debugger detected");
+       return 1;
+   }  
+   printf("All good");
+   return 0;
+}
+</code></pre><p>这里我们通过getppid获得父进程的PID，之后由/proc文件系统获取父进程的命令内容，并通过比较字符串检查父进程是否为gdb。实际运行结果如下图所示：</p><p><img alt="p1" img-src="655f2c27363be8c6f5ad6272ba6e1822fe3a68b0.jpg"></p><p><strong>b.当前运行进程检测</strong></p><p>例如对<code>android_server</code>进程检测。针对这种检测只需将<code>android_server</code>改名就可绕过</p><pre><code>#!java
+pid_t GetPidByName(const charchar *as_name) {  
+        DIR *pdir = NULL;  
+        struct dirent *pde = NULL;  
+        FILEFILE *pf = NULL;  
+        char buff[128];  
+        pid_t pid;  
+        char szName[128];  
+        // 遍历/proc目录下所有pid目录    
+        pdir = opendir("/proc");  
+        if (!pdir) {  
+                perror("open /proc fail.\n");  
+                return -1;  
+        }  
+        while ((pde = readdir(pdir))) {  
+                if ((pde-&gt;d_name[0] &lt; '0') || (pde-&gt;d_name[0] &gt; '9')) {  
+                        continue;  
+                }  
+                sprintf(buff, "/proc/%s/status", pde-&gt;d_name);  
+                pf = fopen(buff, "r");  
+                if (pf) {  
+                        fgets(buff, sizeof(buff), pf);  
+                        fclose(pf);  
+                        sscanf(buff, "%*s %s", szName);  
+                        pid = atoi(pde-&gt;d_name);  
+                        if (strcmp(szName, as_name) == 0) {  
+                                closedir(pdir);  
+                                return pid;  
+                        }  
+                }  
+        }  
+        closedir(pdir);  
+        return 0;  
+}
+</code></pre><p><strong>c.读取进程状态(/proc/pid/status)</strong></p><p>State属性值T 表示调试状态，TracerPid 属性值正在调试此进程的pid,在非调试情况下State为S或R, TracerPid等于0</p><p><img alt="p2" img-src="8e9987def5516d6d046f85c4a97646448dfe84fb.jpg"></p><p>由此，我们便可通过检查status文件中TracerPid的值来判断是否有正在被调试。示例代码如下：</p><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+int main(int argc, char *argv[]) {
+   int i;
+   scanf("%d", &amp;i);
+   char buf1[512];
+   FILE* fin;
+   fin = fopen("/proc/self/status", "r");
+   int tpid;
+   const char *needle = "TracerPid:";
+   size_t nl = strlen(needle);
+   while(fgets(buf1, 512, fin)) {
+       if(!strncmp(buf1, needle, nl)) {
+           sscanf(buf1, "TracerPid: %d", &amp;tpid);
+           if(tpid != 0) {
+                printf("Debuggerdetected");
+                return 1;
+           }
+       }
+    }
+   fclose(fin);
+   printf("All good");
+   return 0;
+}
+</code></pre><p>实际运行结果如下图所示：</p><p><img alt="p3" img-src="bfcaa0919d76ca2514fc9eb7e1426b67501989a0.jpg"></p><p>值得注意的是，/proc目录下包含了进程的大量信息。我们在这里是读取status文件，此外，也可通过/proc/self/stat文件来获得进程相关信息，包括运行状态。</p><p><strong>d.读取<code>/proc/%d/wchan</code></strong></p><p>下图中第一个红色框值为非调试状态值，第二个红色框值为调试状态：</p><p><img alt="p4" img-src="43c032693d8215b1e31dcc0071bcb9bff4edc028.jpg"></p><pre><code>#!cpp
+static int getWchanStatus(int pid)  
+{  
+      FILEFILE *fp= NULL;  
+      char filename;  
+      char wchaninfo = {0};  
+      int result = WCHAN_ELSE;  
+      char cmd = {0};  
+      sprintf(cmd,"cat /proc/%d/wchan",pid);  
+      LOGANTI("cmd= %s",cmd);  
+      FILEFILE *ptr;         
+      if((ptr=popen(cmd, "r")) != NULL)  
+      {  
+                if(fgets(wchaninfo, 128, ptr) != NULL)  
+                {  
+                        LOGANTI("wchaninfo= %s",wchaninfo);  
+                }  
+      }  
+      if(strncasecmp(wchaninfo,"sys_epoll\0",strlen("sys_epoll\0")) == 0)  
+                result = WCHAN_RUNNING;  
+      else if(strncasecmp(wchaninfo,"ptrace_stop\0",strlen("ptrace_stop\0")) == 0)  
+                result = WCHAN_TRACING;  
+      return result;  
+}  
+</code></pre><p><strong>e.ptrace 自身或者fork子进程相互ptrace</strong></p><pre><code>#!cpp
+if (ptrace(PTRACE_TRACEME, 0, 1, 0) &lt; 0) {  
+printf("DEBUGGING... Bye\n");  
+return 1;  
+}  
+void anti_ptrace(void)  
+{  
+    pid_t child;  
+    child = fork();  
+    if (child)  
+      wait(NULL);  
+    else {  
+      pid_t parent = getppid();  
+      if (ptrace(PTRACE_ATTACH, parent, 0, 0) &lt; 0)  
+            while(1);  
+      sleep(1);  
+      ptrace(PTRACE_DETACH, parent, 0, 0);  
+      exit(0);  
+    }  
+}
+</code></pre><p><strong>f.设置程序运行最大时间</strong></p><p>这种方法经常在CTF比赛中看到。由于程序在调试时的断点、检查修改内存等操作，运行时间往往要远大于正常运行时间。所以，一旦程序运行时间过长，便可能是由于正在被调试。</p><p>具体地，在程序启动时，通过alarm设置定时，到达时则中止程序。示例代码如下：</p><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;stdlib.h&gt;
+void alarmHandler(int sig) {
+   printf("Debugger detected");
+   exit(1);
+}
+void__attribute__((constructor))setupSig(void) {
+   signal(SIGALRM, alarmHandler);
+   alarm(2);
+}
+int main(int argc, char *argv[]) {
+   printf("All good");
+   return 0;
+}
+</code></pre><p>在此例中，我们通过<code>__attribute__((constructor))</code>，在程序启动时便设置好定时。实际运行中，当我们使用gdb在main函数下断点，稍候片刻后继续执行时，则触发了SIGALRM，进而检测到调试器。如下图所示：</p><p><img alt="p5" img-src="aeafdc645561165135fa655fd4eeebd8776faf91.jpg"></p><p>顺便一提，这种方式可以轻易地被绕过。我们可以设置gdb对signal的处理方式，如果我们选择将SIGALRM忽略而非传递给程序，则alarmHandler便不会被执行，如下图所示：</p><p><img alt="p6" img-src="2ac40bd1ffa6ce413d027ab54d361b2562791188.jpg"></p><p><strong>g.检查进程打开的filedescriptor</strong></p><p>如2.2中所说，如果被调试的进程是通过gdb<target>的方式启动，那么它便是由gdb进程fork得到的。而fork在调用时，父进程所拥有的fd(file descriptor)会被子进程继承。由于gdb在往往会打开多个fd，因此如果进程拥有的fd较多，则可能是继承自gdb的，即进程在被调试。</target></p><p>具体地，进程拥有的fd会在/proc/self/fd/下列出。于是我们的示例代码如下：</p><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+#include &lt;dirent.h&gt;
+int main(int argc, char *argv[]) {
+   struct dirent *dir;
+   DIR *d = opendir("/proc/self/fd");
+   while(dir=readdir(d)) {
+       if(!strcmp(dir-&gt;d_name, "5")) {
+           printf("Debugger detected");
+           return 1;
+       }
+    }
+   closedir(d);
+   printf("All good");
+   return 0;
+}
+</code></pre><p>这里，我们检查/proc/self/fd/中是否包含fd为5。由于fd从0开始编号，所以fd为5则说明已经打开了6个文件。如果程序正常运行则不会打开这么多，所以由此来判断是否被调试。运行结果见下图：</p><p><img alt="p7" img-src="3d3a4d40aa7e368db5b235e5bac8cd1a6363e7c1.jpg"></p><p><strong>h.防止dump</strong></p><p>利用Inotify机制，对/proc/pid/mem和/proc/pid/pagemap文件进行监视。inotify API提供了监视文件系统的事件机制，可用于监视个体文件，或者监控目录。具体原理可参考：<a href="http://man7.org/linux/man-pages/man7/inotify.7.html">http://man7.org/linux/man-pages/man7/inotify.7.html</a></p><p>伪代码：</p><pre><code>#!cpp
+void __fastcall anitInotify(int flag)  
+{  
+      MemorPagemap = flag;  
+      charchar *pagemap = "/proc/%d/pagemap";  
+      charchar *mem = "/proc/%d/mem";  
+      pagemap_addr = (charchar *)malloc(0x100u);  
+      mem_addr = (charchar *)malloc(0x100u);  
+      ret = sprintf(pagemap_addr, &amp;pagemap, pid_);  
+      ret = sprintf(mem_addr, &amp;mem, pid_);  
+      if ( !MemorPagemap )  
+      {  
+                ret = pthread_create(&amp;th, 0, (voidvoid *(*)(voidvoid *)) inotity_func, mem_addr);  
+                if ( ret &gt;= 0 )  
+                   ret = pthread_detach(th);  
+      }  
+      if ( MemorPagemap == 1 )  
+      {  
+                ret = pthread_create(&amp;newthread, 0, (voidvoid *(*)(voidvoid *)) inotity_func, pagemap_addr);  
+                if(ret &gt; 0)  
+                  ret = pthread_detach(th);  
+      }  
+}  
+void __fastcall __noreturn inotity_func(const charchar *inotity_file)  
+{  
+      const charchar *name;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3ffd9f1010fd9f4d0b7f0efd9ffd9f">[email&#160;protected]</a>
+      signed int fd;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="be7c1e91917c1ecc86fe8f7c1e7c1e">[email&#160;protected]</a>
+      bool flag;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="78bad85757bad8021e384bbad8bad8">[email&#160;protected]</a>
+      bool ret;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="77b5d75858b5d719113744b5d7b5d7">[email&#160;protected]</a>
+      ssize_t length;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="01c3a12e2ec3a17330314132c3a1c3a1">[email&#160;protected]</a>
+      ssize_t i;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="864426a9a94426f4bfc6b144264426">[email&#160;protected]</a>
+      fd_set readfds;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3cfe9c1313fe9c7c0efe9cfe9c">[email&#160;protected]</a>
+      char event;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8e4c2ea1a14c2ecebf4c2e4c2e">[email&#160;protected]</a>
+      name = inotity_file;  
+      memset(buffer, 0, 0x400u);  
+      fd = inotify_init();  
+      inotify_add_watch(fd, name, 0xFFFu);  
+      while ( 1 )  
+      {  
+                do  
+                {  
+                        memset(&amp;readfds, 0, 0x80u);  
+                }  
+                while ( select(fd + 1, &amp;readfds, 0, 0, 0) &lt;= 0 );  
+                length = read(fd, event, 0x400u);  
+                flag = length == 0;  
+                ret = length &lt; 0;  
+                if ( length &gt;= 0 )  
+                {  
+                        if ( !ret &amp;&amp; !flag )  
+                      {  
+                              i = 0;  
+                              do  
+                              {  
+                                        inotity_kill((int)&amp;event);  
+                                        i += *(_DWORD *)&amp;event + 16;  
+                              }  
+                              while ( length &gt; i );  
+                        }  
+                }  
+                else  
+                {  
+                        while ( *(_DWORD *)_errno() == 4 )  
+                        {  
+                              length = read(fd, buffer, 0x400u);  
+                              flag = length == 0;  
+                              ret = length &lt; 0;  
+                              if ( length &gt;= 0 )  
+                        }  
+                }  
+      }  
+}
+</code></pre><p><strong>i.对read做hook</strong></p><p>因为一般的内存dump都会调用到read函数，所以对read做内存hook，检测read数据是否在自己需要保护的空间来阻止dump</p><p><strong>j.设置单步调试陷阱</strong></p><pre><code>#!cpp
+int handler()  
+{  
+    return bsd_signal(5, 0);  
+}  
+int set_SIGTRAP()  
+{  
+    int result;  
+    bsd_signal(5, (int)handler);  
+    result = raise(5);  
+    return result;  
+}
+</code></pre><p><a href="http://www.freebuf.com/tools/83509.html">http://www.freebuf.com/tools/83509.html</a></p><h1>0x06 应用加固技术</h1><p>移动应用加固技术从产生到现在，一共经历了三代：</p><ul><li>第一代是基于类加载器的方式实现保护；</li><li>第二代是基于方法替换的方式实现保护；</li><li>第三代是基于虚拟机指令集的方式实现保护。</li></ul><p><strong>第一代加固技术：类加载器</strong></p><p>以梆梆加固为例，类加载器主要做了如下工作：</p><ol><li>classes.dex被完整加密，放到APK的资源中</li><li>采用动态劫持虚拟机的类载入引擎的技术</li><li>虚拟机能够载入并运行加密的classes.dex</li></ol><p>使用一代加固技术以后的apk加载流程发生了变化如下：</p><p><img alt="p8" img-src="eaf0da32bc2fb202f6436bfb4c19e476117d5cb7.jpg"></p><p>应用启动以后，会首先启动保护代码，保护代码会启动反调试、完整性检测等机制，之后再加载真实的代码。</p><p>一代加固技术的优势在于：可以完整的保护APK，支持反调试、完整性校验等。</p><p>一代加固技术的缺点是加固前的classes.dex文件会被完整的导入到内存中，可以用内存dump工具直接导出未加固的classes.dex文件。</p><p><strong>第二代加固技术：类方法替换</strong></p><p>第二代加固技术采用了类方法替换的技术：</p><ol><li>将原APK中的所有方法的代码提取出来，单独加密</li><li>运行时动态劫持Dalvik虚拟机中解析方法的代码，将解密后的代码交给虚拟机执行引擎</li></ol><p>采用本技术的优势为：</p><ol><li>每个方法单独解密，内存中无完整的解密代码</li><li>如果某个方法没有执行，不会解密</li><li>在内存中dump代码的成本代价很高</li></ol><p>使用二代加固技术以后，启动流程增加了一个解析函数代码的过程，如下图所示：</p><p><img alt="p9" img-src="907fa4d6c3b142717f228c491dd4efbe50544427.jpg"></p><p><strong>第三代加固技术：虚拟机指令集</strong></p><p>第三代加固技术是基于虚拟机执行引擎替换方式，所做主要工作如下：</p><ol><li>将原APK中的所有的代码采用一种自定义的指令格式进行替换</li><li>运行时动态劫持Dalvik虚拟机中执行引擎，使用自定义执行引擎执行自定义的代码</li><li>类似于PC上的VMProtect采用的技术</li></ol><p>三代技术的优点如下：</p><ol><li>具有2.0的所有优点</li><li>破解需要破解自定义的指令格式，复杂度非常高</li></ol><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7714" rel="bookmark" id="re1">格式化字符串漏洞简介</a></li><li><a href="http://drops.wooyun.org/tips/6919" rel="bookmark" id="re2">太极越狱重大安全后门</a></li><li><a href="http://drops.wooyun.org/tips/9300" rel="bookmark" id="re3">安卓动态调试七种武器之离别钩 – Hooking（上）</a></li><li><a href="http://drops.wooyun.org/papers/7073" rel="bookmark" id="re4">OpenSSL-CVE-2015-1793漏洞分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">哈哈哈</span> <span class="reply-time">2016-06-18 10:15:14</span></div><p></p><p>除了dump写的详细有用，其余的部分，完全是灌水好吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cfsego</span> <span class="reply-time">2016-05-17 20:23:21</span></div><p></p><p>请说明h中的监视/proc/pid/mem和/proc/pid/pagemap跟防止dump有什么关系？<br>另外这里的一段程序似乎有问题。最后一个if没内容</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小星星</span> <span class="reply-time">2016-03-29 17:43:34</span></div><p></p><p>好文章 赞一个.<br>虽然有些看不懂,但是我基本上全部看完了.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">LLVM</span> <span class="reply-time">2016-03-15 20:16:20</span></div><p></p><p>这么好的文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">m_tony</span> <span class="reply-time">2016-01-26 22:01:07</span></div><p></p><p>好文章 赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lester</span> <span class="reply-time">2016-01-25 11:28:35</span></div><p></p><p>c++那块好难懂，不过加密和加固能懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">whatineed</span> <span class="reply-time">2016-01-23 23:27:50</span></div><p></p><p>这是一高质量的文章。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ruby</span> <span class="reply-time">2016-01-21 20:50:19</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大梦</span> <span class="reply-time">2016-01-21 15:26:50</span></div><p></p><p>有没有搞加固开发的，出来走两步</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2016-01-21 15:24:48</span></div><p></p><p>好文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">360的人</span> <span class="reply-time">2016-01-21 15:12:55</span></div><p></p><p>http://jiagu.360.cn/1101141392.php?dtid=1101141786&amp;did=1101262105 这个也不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乐乐</span> <span class="reply-time">2016-01-21 13:49:30</span></div><p></p><p>好东西，收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2016-01-21 11:59:05</span></div><p></p><p>波妞棒棒哒</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">奶嘴</span> <span class="reply-time">2016-01-21 11:54:53</span></div><p></p><p>抱大腿</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">波叔</span> <span class="reply-time">2016-01-21 11:42:17</span></div><p></p><p>66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666波叔屌屌的。给9分。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hellojack</span> <span class="reply-time">2016-01-21 11:14:17</span></div><p></p><p>666666666666666666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">波叔</span> <span class="reply-time">2016-01-21 11:01:33</span></div><p></p><p>66666666666666666666.我给9分，还1分怕你骄傲</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">艺术家</span> <span class="reply-time">2016-01-21 10:59:20</span></div><p></p><p>波叔，66666666666666666666.我给9分，还1分怕你骄傲</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2016-01-21 10:51:00</span></div><p></p><p>好文！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">晨曦遇晓</span> <span class="reply-time">2016-01-21 10:42:31</span></div><p></p><p>好文</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,103 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">JAVA逆向&反混淆-追查Burpsuite的破解原理</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lxj616</a> <span class="bull">·</span> <time title="2014/07/30 16:19" ui-time="" datetime="2014/07/30 16:19" class="published ng-binding ng-isolate-scope">2014/07/30 16:19</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 摘要：</h2><hr><p>本系列文章通过对BurpLoader的几个版本的逆向分析，分析Burpsuite的破解原理，分析Burpsuite认证体系存在的安全漏洞。</p><h2>0x01 JD-GUI的用途与缺陷：</h2><hr><p>JD-GUI是一款从JAVA字节码中还原JAVA源代码的免费工具，一般情况下使用这款工具做JAVA逆向就足够了，但是由于其原理是从JAVA字节码中按照特定结构来还原对应的JAVA源代码，因此一旦字节码结构被打乱（比如说使用混淆器），那么JD-GUI就会失去它的作用，如图为使用JD-GUI打开Burpsuite时的显示：</p><p><img alt="enter image description here" img-src="c127d6bc907b93cd27e40b3837e7eeb6de62bc13.jpg"></p><p>显然，JD-GUI没能还原JAVA源代码出来，因为Burpsuite使用了混淆器打乱了字节码结构 所以，JD-GUI适用于‘没有使用混淆器’的JAVA字节码，而缺陷是一旦字节码结构被打乱，则无法发挥它的作用</p><h2>0x02 字节码分析：</h2><hr><p>Java的字节码并不像普通的二进制代码在计算机中直接执行，它通过JVM引擎在不同的平台和计算机中运行。</p><p><img alt="enter image description here" img-src="207695ac811e3dcdfe28af7069db0db634c76da5.jpg"></p><p>JVM是一个基于栈结构的虚拟计算机，使用的是JVM操作码（及其助记符），在这一点上和普通二进制反汇编的过程非常相似。 对Java字节码进行反编译其实非常简单，JDK内置的Javap工具即可完成这项任务。</p><p>示例：对Javar.class进行反编</p><p><img alt="enter image description here" img-src="995ef2662c85bba3784fff6eae68e8d7108562ef.jpg"></p><p>注意javap的-c参数是显示详细代码，否则只显示method，而按照java的老规矩Javar不要加后缀名 同时你也可以使用eclipse的插件Bytecode Visualizer来反编译字节码</p><p><img alt="enter image description here" img-src="e4d66dacb7e2036b95e52cbba883f02dcbf3b3d2.jpg"></p><p>注意右面的流程图，大家在上程序设计导论课时都画过吧，现在发现它的用途了吧，一眼就看出是一个if-else结构，前两句定义i变量，然后取i=2压栈常数1，比对i和1以后就都java.lang.system.out了，一个输出wooyun，一个输出lxj616。</p><h2>0x03 老版本的BurpLoader分析：</h2><hr><p>随着Burpsuite的更新，BurpLoader也在跟着进行更新，我们从老版本的BurpLoader入手，简要分析一下之前老版本的burpsuite破解原理。 本处选用了1.5.01版本的BurpLoader进行分析 首先试着用JD-GUI载入BurpLoader：</p><p><img alt="enter image description here" img-src="4f094cedb51aa8b31e68b4b3a0a40aa5a9b383b1.jpg"></p><p>成功还原了BurpLoader源代码，只可惜由于是对burpsuite的patch，所以burpsuite的混淆在burploader里仍然可读性极差，不过可以推断burploader本身没有使用混淆工具。</p><pre><code>public static void main(String[] args)
+  {
+    try
+    {
+      int ret = JOptionPane.showOptionDialog(null, "This program can not be used for commercial purposes!", "BurpLoader by <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5935382b2b200635382c19686f6a773a3634">[email&#160;protected]</a>", 0, 2, null, new String[] { "I Accept", "I Decline" }, null);
+      //显示选择对话框：这程序是出于学习目的写的，作者邮箱larry_lau(at)163.com 
+      if (ret == 0)  //选择我同意
+      {
+        //以下用到的是java反射机制，不懂反射请百度
+        for (int i = 0; i &lt; clzzData.length; i++)
+        {
+          Class clzz = Class.forName(clzzData[i]);
+          //是burpsuite的静态类（名字被混淆过了，也没必要列出了）
+          Field field = clzz.getDeclaredField(fieldData[i]);
+         //静态类中的变量也被混淆过了，也不必列出了
+          field.setAccessible(true);
+        //访问private必须先设置这个，不然会报错
+
+          field.set(null, strData[i]);
+        //把变量设置成strData（具体那一长串到底是什么暂不讨论）
+        }
+
+        Preferences prefs = Preferences.userNodeForPackage(StartBurp.class);
+        //明显preferences是用来存储设置信息的
+        for (int i = 0; i &lt; keys.length; i++)
+        {
+          // key和val能猜出是什么吧
+          String v = prefs.get(keys[i], null);
+          if (!vals[i].equals(v))
+          {
+            prefs.put(keys[i], vals[i]);
+          }
+        }
+        StartBurp.main(args);
+      }
+    }
+    catch (Exception e)
+    {
+      JOptionPane.showMessageDialog(null, "This program can only run with burpsuite_pro_v1.5.01.jar", "BurpLoader by <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1a767b68686345767b6f5a2b2c2934797577">[email&#160;protected]</a>", 
+        0);
+    }
+  }
+}
+</code></pre><p>因此，BurpLoader的原理就是伪造有效的Key来通过检测，Key的输入是通过preference来注入的，而我猜测它为了固定Key的计算方法，通过反射把一些环境变量固定成常量了</p><h2>0x04 新版本的BurpLoader分析：</h2><hr><p>以下用1.6beta版的BurpLoader进行分析： 首先用JD-GUI尝试打开BurpLoader：</p><p><img alt="enter image description here" img-src="fe55ee57c4803fda7bc990b273a773d59ffb1aa1.jpg"></p><p>看来这个版本的BurpLoader对字节码使用了混淆，这条路走不通了 于是直接读字节码吧！</p><p><img alt="enter image description here" img-src="1e7327a2c03239985a6f86bd9c02f65470a9ce33.jpg"></p><p>大家可以看到这里的字符串都是混淆过的，每一个都jsr到151去解密</p><p><img alt="enter image description here" img-src="9fd76c83db54e9eb9f8da1e0faec6987cd809b63.jpg"></p><p>这段解密代码特点非常明显，一个switch走5条路，给221传不同的解密key，这不就是Zelix KlassMaster的算法吗？ 简单的异或而已，轻松写出解密机：</p><pre><code>public class Verify {
+    private static String decrypt(String str) {
+        char key[] = new char[] {73,25,85,1,29};
+        char arr[] = str.toCharArray();
+        for (int i = 0; i &lt; arr.length; i++) {
+            arr[i] ^= key[i % 5];
+        }
+        return new String(arr);
+    }
+
+    public static void main (String args[]) {
+        System.out.println(decrypt("%x'sdgu4t3#x#`egj\"hs.7%m|/7;hp+l&amp;/S t7tn\5v:j\'}_dx%"));
+    }
+}
+</code></pre><p>里面的5个密钥就是上图bipush的传参，别忘了iconst_1的那个1 解密出来是：<code>larry.lau.javax.swing.plaf.nimbus.NimbusLook:4</code></p><p>其实这里解密出字符串没有什么用处，因为我们已经拿到老版本的源代码了，不过在别的软件逆向分析中可能会非常有用</p><h2>0x05 总结&amp;POC</h2><hr><p>以下为我修改后的BurpLoader，其中的恶意代码我已经去除，并将修改前的原值输出，大家可以在添加burpsuite jar包后编译运行这段代码</p><pre><code>package stratburp;
+
+import burp.StartBurp; 
+import java.lang.reflect.Field; 
+import java.util.prefs.Preferences; 
+import javax.swing.JOptionPane; 
+
+public class startburp 
+{ 
+
+  private static final String[] clzzData = { "burp.ecc", "burp.voc", "burp.jfc",  
+    "burp.gtc", "burp.zi", "burp.q4c", "burp.pid", "burp.y0b" }; 
+
+  private static final String[] fieldData = { "b", "b", "c", "c", "c", "b", "c", "c" }; 
+  private static final String errortip = "This program can only run with burpsuite_pro_v1.5.01.jar"; 
+  private static final String[] keys = { "license1", "uG4NTkffOhFN/on7RT1nbw==" }; 
+
+  public static void main(String[] args) 
+  { 
+    try 
+    { 
+        for (int i = 0; i &lt; clzzData.length; i++) 
+        { 
+          Class clzz = Class.forName(clzzData[i]); 
+          Field field = clzz.getDeclaredField(fieldData[i]); 
+          field.setAccessible(true); 
+
+          //field.set(null, strData[i]); 
+          System.out.println(field.get(null));
+        } 
+
+        Preferences prefs = Preferences.userNodeForPackage(StartBurp.class); 
+        for (int i = 0; i &lt; keys.length; i++) 
+        { 
+          String v = prefs.get(keys[i], null); 
+          System.out.println(prefs.get(keys[i], null));
+        } 
+        StartBurp.main(args); 
+    } 
+    catch (Exception e) 
+    { 
+      JOptionPane.showMessageDialog(null, "This program can only run with burpsuite_pro_v1.5.01.jar", "Notice",0); 
+    } 
+  } 
+}
+</code></pre><p>其效果如截图所示</p><p><img alt="enter image description here" img-src="445a1bbcd0ab988e799e9545b5d4930edf64ac60.jpg"></p><p>其中前8行输出为之前BurpLoader恶意修改的目标原值（对我的计算机而言），同一台设备运行多少遍都是不变的，后面的key由于我之前运行过BurpLoader因此是恶意修改后的值（但是由于前8行没有修改因此不能通过Burpsuite验证），可见BurpLoader其实是使用了同一个密钥来注册所有不同计算机的，只不过修改并固定了某些参与密钥计算的环境变量而已，这大概就是Burpsuite破解的主要思路了，至于最初能用的license是怎么计算出来的，我们以后再研究</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">liberty</span> <span class="reply-time">2016-01-12 16:18:01</span></div><p></p><p>写下你的评论…</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nullun</span> <span class="reply-time">2015-04-23 02:50:07</span></div><p></p><p>@lxj616 那么burploader有后门么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-08-01 19:11:37</span></div><p></p><p>我是文章作者，接到Drops管理的通知，本文章接到了burploader作者的投诉，由于我用词不当涉嫌污蔑burploader为恶意软件，导致大家产生误解。现向burploader作者公开致歉！本文实为调侃性叙述，原文中如“危害世界和平、恶意软件”等词汇本意诙谐调侃吸引读者眼球，考虑欠妥，实属失误，望larry见谅 --lxj616</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-07-31 17:09:30</span></div><p></p><p>最初能用的license可能是<br>购买的吧<br>这奉献精神太感动了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三秋</span> <span class="reply-time">2014-07-31 14:26:18</span></div><p></p><p>我也反编译过burp 和 BurpLoader， 尝试通过重编译jre，在jre代码中增加解密后还原class文件。<br>burp混淆原理使用的自定义classloader。<br>参考<br>http://neeao.com/an-obfuscated-java-class-decompiler-algorithm<br>http://www.iteye.com/topic/851544</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-07-31 13:01:43</span></div><p></p><p>可能是 Zelix KlassMaster ，至少字符串加密用的是Zelix KlassMaster的加密算法</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">凤凰</span> <span class="reply-time">2014-07-31 11:16:31</span></div><p></p><p>LZ知道Burpsuite使用的是哪款混淆器吗？谢谢！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-07-31 09:46:28</span></div><p></p><p>1.编译的时候要添加burpsuite到buildpath中<br>2.用的是burpsuite_pro_v1.5.01.jar</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">鱼中鱼</span> <span class="reply-time">2014-07-31 09:38:37</span></div><p></p><p>{ "b", "b", "c", "c", "c", "b", "c", "c" };<br>不能正常运行，总是报没有a或b或c这个字段</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F1uYu4n</span> <span class="reply-time">2014-07-30 23:23:50</span></div><p></p><p>我表达失误了，就是问lz的能不能替换掉larry_lau的burploader（1.16版），我试了下没有成功，毕竟larry_lau的用的时候略有不爽</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-07-30 22:31:17</span></div><p></p><p>Good job</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-07-30 21:40:46</span></div><p></p><p>burploader是larry_lau的作品，我改的poc只是把反射静态类输出了而已，只是对burploader本身的分析，不能破解burpsuite，要想寻找破解1.6的burploader请直接百度</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F1uYu4n</span> <span class="reply-time">2014-07-30 20:21:31</span></div><p></p><p>请问lz的代码能破pro 1.6 beta吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">饭粒重生</span> <span class="reply-time">2014-07-30 17:21:59</span></div><p></p><p>哈哈，世界和平惨遭迫害</p><p></p></div></div></div></div></div></main>

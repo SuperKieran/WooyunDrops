@@ -1,0 +1,72 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Ghost Push —— Monkey Test &amp; Time Service病毒分析报告</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">猎豹移动安全中心</a> <span class="bull">·</span> <time title="2015/09/18 19:07" ui-time="" datetime="2015/09/18 19:07" class="published ng-binding ng-isolate-scope">2015/09/18 19:07</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>2015年8月，酷派大神手机用户在安装官方提供的系统升级包后，手机便被预安装了MonkeyTest和TimeService等未知软件。截止到9月18日，该类病毒的每日感染量已经扩大到了最高70万台/天，有上万种机型收到了Ghost Push的影响，典型的有酷派、三星、MOTO等等（附件一提供了所有受影响机型列表）。</p><p>通过数据分析如图1所示，我们发现Ghost Push病毒感染用户主要分布于美国、俄罗斯、印度、中国等。相对在中国而言，云南、广东感染量最高。</p><p><img alt="" img-src="fbe40ee3d849a748aaa1e057e207cc95afc7fd07.jpg"></p><p>图1 感染分布图</p><p>我们称这类病毒为Ghost Push病毒。该类病毒软件开机自动运行，通过用户数据流量进行广告推送，并且在未经过用户允许的情况下静默下载安装应用。甚至用户无法通过手机杀毒软件、手动卸载该类病毒。手机感染之后如图2所示。</p><p><img alt="" img-src="1f94b4ea917739dabd12b21ccf004a3390247930.jpg"></p><p>图2 感染Ghost Push病毒的手机举例</p><p>Ghost Push病毒已经给安卓用户造成了巨大的困扰。本文就Ghost Push的执行流程进行详细的分析，同时也提出了针对这类病毒的解决方案及安全建议。</p><p>Ghost Push病毒在执行的过程当中，会获取Root权限，通过用户数据流量进行广告推送、静默下载安装应用。具体的流程如图3所示。</p><p><img alt="" img-src="f58e8acb2e29279146321795ff08af323cd41079.jpg"></p><p>图3 Ghost Push病毒执行流程</p><p>首先，攻击者将恶意代码注入到合法的应用当中，通过二次打包，伪装成为原本的合法应用(被感染的应用列表如附件二所示)。一旦用户下载了被注入恶意代码的“正常”应用，应用中的恶意代码便开始执行，具体执行过程如下。</p><h1>0x01 病毒释放安装流程分析</h1><hr><p><strong>1.1 获取Root权限</strong></p><p>恶意代码首先向服务器http://api.aedxdrcb.com/ggview/rsddateindex发送手机的型号等配置信息。随后从服务器端获取Root工具包http://down.upgamecdn.com/onekeysdk/tr&#95;new/rt&#95;0915_130.apk。该Root工具包利用手机存在的漏洞，获取手机的Root权限。目前可以适配上万种机型，成功执行Root提权操作。</p><p>本文列出了针对三星、MTK两家厂商的Root执行代码，如图4.a和图4.b所示。</p><p><img alt="" img-src="1093927d987911d13e9e11247d6b6cead70bace1.jpg"></p><p>图4.a 三星ROOT方案</p><p><img alt="" img-src="8e0b58e00ed4d3ac04b666ab142ff2f9e89f1909.jpg"></p><p>图4.b MTK ROOT方案</p><p>在获取了Root权限之后，恶意代码执行四类操作：1）替换debuggerd文件；2）修改install-recovery.sh文件；3)释放恶意bin文件；4）安装ROM病毒。</p><p><strong>1.2 替换debuggerd文件</strong></p><p>病毒会将原系统的debuggerd文件另存为debuggerd-test文件，并将自己的恶意bin文件保存为系统的debuggerd文件，如图5所示。</p><p><img alt="" img-src="7d785345fcf422c7343461c81b249f436c3c5450.jpg"></p><p>图5 替换debuggerd文件</p><p><strong>1.3 修改install-recovery.sh文件</strong></p><p>病毒修改系统的install-recovery.sh文件，如图6所示。</p><p><img alt="" img-src="04b33b259a79485a3c3e06508f1e8b96a07aba72.jpg"></p><p>图6 修改install-recovery.sh文件</p><p><strong>1.4 释放恶意bin文件</strong></p><p>病毒将恶意bin文件的二进制代码固定内嵌在Java代码中，并在执行的过程中，向/system/xbin目录下释放。</p><p><img alt="" img-src="2a552aea5273fe974c4add5c394e46fb15646b77.jpg"></p><p>图7 释放bin文件</p><p><strong>1.5 安装ROM病毒</strong></p><p>在恶意代码执行的过程中，会向系统目录/system/priv-app或/system/app中写入如camera_update应用的病毒母体，如图8所示。</p><p><img alt="" img-src="09b29fafd559312e76c3e850c6a07e95adb75c7f.jpg"></p><p>图8 释放病毒母体</p><p>由于获得了Root权限，恶意代码首先检查/system/priv-app目录下是否安装了camera_update病毒母体。该病毒母体会在bin文件的守护下，一直存在在手机的ROM中，防止被卸载，详见第二节分析。</p><p>病毒母体在安装完毕后，会静默安装Time Service、Monkey Test等应用。这些应用会通过短连接方式从服务器（Monkey Test对应服务器：http://massla.hdyfhpoi.com/gkview/info/801； Time Service对应服务器：http://u.syllyq1n.com/mmslow/api/821。）获取应用信息，在未经过用户允许的情况下进行下载安装，如图9、图10所示。</p><p><img alt="" img-src="7f6ebad0ff5fa9ec3ee2d2c52746937e0073cba3.jpg"></p><p>图9 Monkey Test子包从服务器获取应用信息</p><p><img alt="" img-src="b4b6087b604b48bc29fda71b741116dbefb681bc.jpg"></p><p>图10 在用户未知的情况下在ROM内安装应用</p><h1>0x02 病毒母体守护流程分析（图3中蓝色部分所示）</h1><hr><p><strong>2.1 bin文件守护ROM病毒母体</strong></p><p>在系统启动时，会执行install-recovery.sh与debuggerd文件。这两个文件会执行释放的恶意bin文件。bin文件会一直保持运行状态，守护释放在ROM中的病毒母体。并从服务器获取最新病毒安装包。</p><p><img alt="" img-src="0ab513568a949871f86762badfab7bcff6164f98.jpg"></p><p>图11 获取最新病毒包</p><p>当病毒母体被删除后，bin文件会自动再次下载并向ROM中安装病毒母体，如图12所示。</p><p><img alt="" img-src="168f0f37e1e30e3f6cf6f183ae1690040ccddde1.jpg"></p><p>图12 病毒母体守护流程</p><p><img alt="" img-src="d1db4ad5d46d89bf13b12e50166137009eade4fa.jpg"></p><p>图13 病毒母体安装流程</p><p><strong>2.2 bin文件防删除</strong></p><p>同时，在手机运行的过程中，通过图14所示的chattr +i操作，使得用户无法删除恶意bin文件。</p><p><img alt="" img-src="420b26ed2816fcd4fe2489a9926bd51f631945c6.jpg"></p><p>图14 通过chattr +i操作防止用户删除bin文件</p><p><strong>2.3 apk防卸载</strong></p><p>Ghost Push病毒通过chattr + i操作使得用户无法卸载已经安装的apk应用，如图15所示</p><p><img alt="" img-src="698eb14f326abb4d76f05d06cd1f2c398d7c7990.jpg"></p><p>图15 通过chattr + i操作防止用户卸载apk</p><h1>0x03 病毒恶意行为分析</h1><hr><p>Ghost Push病毒安装的应用软件均具有数据流量广告推送、静默安装应用软件两种恶意行为。</p><p><strong>3.1 广告推送</strong></p><p>通过Ghost Push病毒安装、释放在用户手机上的应用，会通过手机数据流量向用户推送广告。具体流程如图16所示。当用户开启屏幕时，便会触发展示推送广告推送。</p><p><img alt="" img-src="f0a676e4f44b9a2f0b36539ff6a0ad33c4be1665.jpg"></p><p>图16 开启屏幕触发广告推送</p><p>值得注意的是，Ghost Push病毒在推送广告的过程中，会首先关掉用户手机的WiFi连接，通过用户的手机流量来获取需要推送的广告内容，如图15中红色方框内容所示。在用户不知情、未得到允许的情况下盗用了大量的数据流量。</p><p><strong>3.2 应用推送</strong></p><p>Ghost Push病毒母体释放的Time Service、Monkey Test子包还会向用户推送应用并安装，如图17所示。病毒从http://m.AEDXDRCB.COM/gcview/api/910获取需要推广的应用。</p><p><img alt="" img-src="d13019b7ff502302c3e65edd8c445b6d4872ca04.jpg"></p><p>图17获取需要推广的应用</p><p>返回的结果有不同的推广类型， 比如直接后台下载，快捷图标，弹通知栏等方式。如图18所示。</p><p><img alt="" img-src="f7640f602aa35b34609ab06f7fae6db30182537b.jpg"></p><p>图18获取需要推广应用请求返回</p><p>比如以下返回直接后台下载的推广应用。病毒会在在后台下载完成后自动安装，如图19所示。</p><p><img alt="" img-src="3c206ab860b7abf72d81f3437b9c9bdb825e2a1a.jpg"></p><p>图19 后台安装应用</p><p>Ghost Push病毒中各种推广任务，会使用sqllite数据库作为中转，如图20所示。</p><p><img alt="" img-src="024fa98d5381531fa8a19bcee3ef7b95a1aac814.jpg"></p><p>图20 sqllite中转推广任务</p><p>在实际我们测试中, 可以看到以下的推广数据，如图21-24所示。</p><p><img alt="" img-src="77e72292f5acf370f11562c4126ffcf684618095.jpg"></p><p>图21 后台推送应用日志文件</p><p><img alt="" img-src="e4d87f8464444b1535a2707983b25f88faa37bf2.jpg"></p><p>图22 安装应用</p><p><img alt="" img-src="a038fa8c873f14a8bc208f7e47c8a24ec99ae994.jpg"></p><p>图23 推送应用提醒用户安装</p><p><img alt="" img-src="af8459c735a2b1138699576ce484cf17a32772c6.jpg"></p><p>图24 推送安装应用列表（测试机已装）</p><p><strong>3.3无Root静默安装</strong></p><p>为了进一步地保证成功地安装下载应用，病毒还会诱导用户开启辅助功能，如图24所示。之后如图25所示的代码，病毒通过辅助功能，模拟用户点击操作来成功地安装应用。并且图25左侧文件列表也显示出其可以适配不同系统市场（GooglePlayer、Lenovo、MIUI等）的安装方式。</p><p><img alt="" img-src="672262250be2c09746546e72b5734bed4e53ccbe.jpg"></p><p>图24 开启辅助功能</p><p><img alt="" img-src="5670a0d028c63a5903cde2282d2ffbd1da24867a.jpg"></p><p>图25 通过辅助功能静默安装</p><h1>0x04 解决方案与安全建议</h1><hr><p><strong>4.1 解决方案</strong></p><p>用户可以选择使用猎豹专杀工具<a href="https://play.google.com/store/apps/details?id=com.cleanmaster.security.stubborntrjkiller">https://play.google.com/store/apps/details?id=com.cleanmaster.security.stubborntrjkiller</a>（即将更新上线）或手动删除病毒软件。手动删除方法如下：</p><ol><li>使用刷机软件，一键获取ROOT权限。</li><li>下载安装adb工具，<a href="http://developer.android.com/tools/help/adb.html">http://developer.android.com/tools/help/adb.html</a>。</li><li>下载安装busybox工具，<a href="http://www.busybox.net/">http://www.busybox.net/</a>。</li><li>在电脑端，通过adb shell连接手机，使用su命令获取ROOT权限。</li><li>ps | grep .base #获取.base文件的pid <code>kill pid</code></li><li><p>删除恶意bin文件</p><pre><code>mount -o remount rw /system  #不同系统命令可能不同
+chattr –ia /system/xbin/.ext.base
+chattr –ia /system/xbin/.bat.base
+chattr –ia /system/xbin/.zip.base
+chattr –ia /system/xbin/.word.base
+chattr –ia /system/xbin/.look.base
+chattr –ia /system/xbin/.like.base
+chattr –ia /system/xbin/.view.base
+chattr –ia /system/xbin/.must.base
+chattr –ia /system/xbin/.team.base
+chattr –ia /system/xbin/.type.base
+chattr –ia /system/xbin/.b
+chattr –ia /system/xbin/.sys.apk
+chattr –ia /system/xbin/.df
+chattr –ia /system/bin/daemonuis 
+chattr –ia /system/bin/uis
+chattr –ia /system/bin/debuggerd
+chattr –ia /system/bin/nis
+chattr –ia /system/bin/daemonnis
+chattr –ia /system/bin/.daemon/nis
+chattr –ia /system/bin/uis
+chattr –ia /system/bin/.sr/nis
+chattr –ia /system/bin/mis
+chattr –ia /system/bin/daemonmis
+chattr –ia /system/bin/.daemon/mis
+chattr –ia /system/bin/.sc/mis        
+
+rm /system/xbin/.ext.base
+rm /system/xbin/.bat.base
+rm /system/xbin/.zip.base
+rm /system/xbin/.word.base
+rm /system/xbin/.look.base
+rm /system/xbin/.like.base
+rm /system/xbin/.view.base
+rm /system/xbin/.must.base
+rm /system/xbin/.team.base
+rm /system/xbin/.type.base
+rm /system/xbin/.b
+rm /system/xbin/.sys.apk
+rm /system/xbin/.df
+rm /system/bin/daemonuis 
+rm /system/bin/uis
+rm /system/bin/debuggerd
+rm /system/bin/nis
+rm /system/bin/daemonnis
+rm /system/bin/.daemon/nis
+rm /system/bin/uis
+rm /system/bin/.sr/nis
+rm /system/bin/mis
+rm /system/bin/daemonmis
+rm /system/bin/.daemon/mis
+rm /system/bin/.sc/mis
+cp /system/bin/debuggerd_test /system/bin/debuggerd
+</code></pre></li><li><p>使用猎豹安全大师清除恶意软件，无法清除的软件使用以下命令清除。</p><pre><code>chattr –ia /system/priv-app/cameraupdate.apk
+chattr –ia /system/priv-app/com.android.wp.net.log.apk
+rm -rf /data/data/com.android.camera.update
+rm -rf /data/data/com.android.wp.net.log
+rm  /systam/priv-app/cameraupdate.apk
+rm  /systam/priv-app/com.android.wp.net.log.apk
+</code></pre></li><li><pre><code>adb shell 
+cp /system/etc/install-revcovery.sh /sdcard/
+adb pull /sdcard/install-revcovery.sh
+adb push install-revcovery.sh /sdcard/
+cp /sdcard/install-revcovery.sh /system/etc/
+</code></pre></li><li><p>打开/system/etc/install-recovery.sh，将其中如下代码段注释或删除。</p><pre><code>/system/bin/daemonuis --auto-daemon &amp;          
+
+#!/system/bin/sh
+/system/xbin/.ext.base &amp;         
+
+#!/system/bin/sh
+/system/xbin/.ext.base &amp;
+</code></pre></li></ol><p><strong>4.2 安全建议</strong></p><p>建议用户从正规应用市场下载应用，谨慎下载安装附件二中的应用。同时，安装猎豹安全大师，验证下载应用的合法性，对手机进行实时的安全监控。</p><h1>0x05 总结</h1><hr><p>Ghost Push病毒通过广告SDK或浏览器广告进行大范围的传播，通过对病毒的跟踪分析，得知Ghost Push这类病毒软件伪装成合法的软件。用户一旦感染，恶意代码在开机时运行install-recovery，同时通过chattr + i命令防止用户通过杀毒软件建或手动卸载。恶意代码通过用户数据流量进行广告推送，并且在未经过用户允许的情况下静默下载安装应用，给众多安卓用户带来了不可避免的影响及危害。</p><p>本文在对病毒执行流程进行分析之后，提供了用户手动清除病毒的方法。最后，我们在对病毒来源进行分析之后发现病毒软件的大部分签名为C=CN/O=xinyinhe/OU=ngsteam/CN=ngsteam，来自于一家名为xinyinhe的公司。本着刨根问题的原则，我们也在附件三中对这家xinyinhe公司进行了全面的调查。</p><p>我们建议用户从正规渠道下载应用，并且安装猎豹安全大师，保证应用的合法性，实时维护用户的手机安全。</p><p><strong>[附件一] 部分受感染机型列表</strong></p><p><img alt="" img-src="6432e24ed2a0b18a5a75c7aacb3f88a5053d2de7.jpg"></p><p><strong>[附件二] 感染应用列表（39项）</strong></p><p><img alt="" img-src="3e92eee8d7c48575745dd2cb366de22645a7a68a.jpg"></p><p><strong>[附件三] 深圳市新银河技术有限公司</strong></p><p>直觉告诉我们，这家新银河技术有限公司和一键ROOT大师有着千丝万缕的联系。不要问我们直觉哪里来的~~</p><p>那么到底这两家公司有没有关系呢？我们首先百度、谷歌了一下新银河的官网，结果显示这家公司没有官网。于是——</p><p>我们上了拉钩招聘发现了该公司的链接。</p><p><img alt="" img-src="abee49d80885052884b476c4b94fe09c79a85cfa.jpg"></p><p>从招聘信息上我们得知<code>http://www.ngemob.com</code>和 <code>http://root.ngemob.com</code> 都是深圳市新银河技术有限公司的网站。</p><p><img alt="" img-src="1f09a056a7dba6e5fbdd99b8c7ef621d5a0c7c29.jpg"></p><p>找到公司官网之后，真相逐渐浮出水面！！！现在的一键ROOT大师<code>http://www.dashi.com/</code>和 <code>http://www.ngemob.com</code>  使用过同一ip。</p><p><img alt="" img-src="865ada859952575c6202a2f08b1a93e3af2ed3ea.jpg"></p><p><img alt="" img-src="5b4d03c14be8c795e1ffc304c49e0a19c3405fb6.jpg"></p><p>并且，国外的论坛上也经常出现一键ROOT大师和<code>http://root.ngemob.com</code>扯不清的关系</p><p><img alt="" img-src="6d7bfac8239f04f33d5d4234929a9086324c064a.jpg"></p><p><img alt="" img-src="9fac41fee0117dd6089d38b77a04d3d67b2b195d.jpg"></p><p>此外，我们还搜集了一些佐证。</p><p>佐证一：好搜百科。</p><p><img alt="" img-src="20e7fac831367dbaf50cf8819757949646368e7e.jpg"></p><p>佐证二：某锁屏APP，由深圳市新银河技术有限公司开发。</p><p><img alt="" img-src="5d27301aee027cd1ec6d02d083608b411934fb24.jpg"></p><p>毕竟没有官网并没有给出任何明线表示两家公司的联系。我们也是推论猜测，没有任何结论，请各位看官自行判断。</p><p>最后，希望大家一起努力，相信猎豹，会给亿万用户筑起安全防护墙！！！</p><p>病毒的清除方法视频 ：</p><p><embed src="http://player.youku.com/player.php/sid/XMTMzOTA5NzIwOA==/v.swf" allowfullscreen="true" quality="high" width="480" height="400" align="middle" allowscriptaccess="always" type="application/x-shockwave-flash"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2736" rel="bookmark" id="re1">Samsung S Voice attack</a></li><li><a href="http://drops.wooyun.org/tools/3113" rel="bookmark" id="re2">Kali Nethunter初体验</a></li><li><a href="http://drops.wooyun.org/mobile/12469" rel="bookmark" id="re3">Android应用安全开发之防范无意识的数据泄露</a></li><li><a href="http://drops.wooyun.org/tips/3812" rel="bookmark" id="re4">Android Logcat Security</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">同意</span> <span class="reply-time">2015-11-10 12:23:05</span></div><p></p><p>對就是一键ROOT大师~~我自己好幾台手機比對和朋友的狀況~~<br>只要有接觸到一键ROOT大师~~~都會有這個問題~~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Larry</span> <span class="reply-time">2015-09-19 10:51:52</span></div><p></p><p>有两个问题，第一是用户下载“正常”应用导致信任无效，第二是有没有方法修补最开始的获取手机root权限的漏洞呀（万恶之源）。最后的信息反查也是666。</p><p></p></div></div></div></div></div></main>

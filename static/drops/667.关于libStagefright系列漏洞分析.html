@@ -1,0 +1,262 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">关于libStagefright系列漏洞分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">百度安全攻防实验室</a> <span class="bull">·</span> <time title="2015/07/29 18:10" ui-time="" datetime="2015/07/29 18:10" class="published ng-binding ng-isolate-scope">2015/07/29 18:10</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>文章对应着CVE-2015-{1538,1539,3824,3826,3827,3828,3829}7个CVE，具体映射关系目前不明。此次安全漏洞号称影响“95%”安卓手机的安全。通过跟进此次漏洞的攻击面来看，这种说法毫不夸张，外界报道的关于一个彩信就直接打下机器的说法也是可信的。但这也仅仅是众多攻击面中的一条而已。</p><h1>0x01 攻击面分析</h1><hr><p>libStagefright默认会被mediaserver使用，也就是说，如果恶意的视频文件有机会被mediaserver处理到，该漏洞就有机会触发，举例：</p><p>如文件管理app，如果视频被存放在sdcard，那么打开文件管理app，下拉列表到露出视频，就会触发缩略图解析，漏洞触发。</p><p>图库app，点击本地图片会出现缩略图，如果视频在sdcard，或者download目录，这时候也会触发。</p><p>微信同样受到影响。通过微信发送的视频，点击也会导致media server崩溃。此外，收到的视频即使用户不点击，后面在微信中发送图片时，也会造成前面gallery,文件管理器同样的效果，也会触发缩略图过程并溢出。</p><p><img alt="enter image description here" img-src="ab473fcaf2acf65dbc66a9b5406c1ec77696696f.jpg"></p><p>在最新版的Chrome43版中打开一个video链接（mp4），无需点击自动触发。</p><p><img alt="enter image description here" img-src="618021ee41ef018807f83bbf02234835a8bbee3e.jpg"></p><p>开机同样是一个触发点，mediaprovider会扫描sd卡里的所有文件，并且尝试去解析，恩开机自启动</p><p><img alt="enter image description here" img-src="63b3fb373d359d0fa6f6d4d56de5df7a7fee89cc.jpg"></p><p>media framework的架构如下：基本上采用了android的media框架来开发的程序都会受到影响。</p><p><img alt="enter image description here" img-src="b4773c068aed554d835a445da019f2cc4b403974.jpg"></p><p>看到这里，想说的是，外界所谓的那些，关闭彩信功能保平安也就寻求个心理安慰吧。从根源上看大部分（有一个例外）都和整数计算的上溢/下溢相关，因为这个问题，间接导致了后续的内存破坏等相关的安全问题。</p><h3>1.1. 代码分析</h3><h4>1.1.1. No1 heap 读越界</h4><pre><code>#!c
+1. status_t MPEG4Extractor::parseChunk(off64_t *offset, int depth) {
+2. uint32_t hdr[2];
+3. uint64_t chunk_size = ntohl(hdr[0]);
+4. uint32_t chunk_type = ntohl(hdr[1]);
+5.
+6. switch(chunk_type) {
+</code></pre><p>只有下面几种chunk_type才会触发分支parse3GPPMetaData：</p><pre><code>#!c
+1. case FOURCC('t', 'i', 't', 'l'):
+2. case FOURCC('p', 'e', 'r', 'f'):
+3. case FOURCC('a', 'u', 't', 'h'):
+4. case FOURCC('g', 'n', 'r', 'e'):
+5. case FOURCC('a', 'l', 'b', 'm'):
+6. case FOURCC('y', 'r', 'r', 'c'):
+7. {
+8. *offset += chunk_size;
+9.
+10. status_t err = &lt;span style="color: #ff0000;"&gt;parse3GPPMetaData&lt;/span&gt;(data_offset, chunk_data_size, depth);
+11.
+12. if (err != OK) {
+13. return err;
+14. }
+15.
+16. break;
+17. }
+</code></pre><p>以上parse3GPPMetaData会触发两个3gp格式的漏洞。 第一个setCString heap读越界，首先从文件中offset读size数据到buffer。</p><pre><code>#!c
+status_t MPEG4Extractor::parse3GPPMetaData(off64_t offset, size_t size, int depth) {
+1. if (size &amp;lt; 4) {
+2. return ERROR_MALFORMED;
+3. }
+4.
+5. uint8_t *buffer = new (std::nothrow) uint8_t[size];
+6. if (buffer == NULL) {
+7. return ERROR_MALFORMED;
+8. }
+9. &lt;span style="color: #ff0000;"&gt;if (mDataSource-&amp;gt;readAt(&lt;/span&gt;
+10. &lt;span style="color: #ff0000;"&gt;offset, buffer, size) != (ssize_t)size) {&lt;/span&gt;
+11. delete[] buffer;
+12. buffer = NULL;
+13.
+14. return ERROR_IO;
+15. }
+</code></pre><p>然后，这个类似strcpy，所以就是 mFileMetaData->setCString(metadataKey, (const char *)buffer + 6);</p><p>https://android.googlesource.com/platform/frameworks/av/+/android-5.1.1_r8/media/libstagefright/MetaData.cpp</p><pre><code>#!c
+1. bool MetaData::setCString(uint32_t key, const char *value) {
+2. return setData(key, TYPE_C_STRING, value, &lt;span style="color: #ff0000;"&gt;strlen&lt;/span&gt;(value) + 1);
+3. }
+
+1. bool MetaData::setData(
+2. uint32_t key, uint32_t type, const void *data, size_t size) {
+3. bool overwrote_existing = true;
+4.
+5. ssize_t i = mItems.indexOfKey(key);
+6. if (i &amp;lt; 0) {
+7. typed_data item;
+8. i = mItems.add(key, item);
+9.
+10. overwrote_existing = false;
+11. }
+12.
+13. typed_data &amp;amp;item = mItems.editValueAt(i);
+14.
+15. item.setData(type, data, size);
+16.
+17. return overwrote_existing;
+18. }
+</code></pre><p>注意到size是动态的，所以这里一般不会溢出，但会出现读越界。</p><pre><code>#!c
+1. void MetaData::typed_data::setData(
+2. uint32_t type, const void *data, size_t size) {
+3. clear();
+4.
+5. mType = type;
+6. &lt;span style="color: #ff0000;"&gt;allocateStorage&lt;/span&gt;(size);
+7. memcpy(storage(), data, size);
+8. }
+</code></pre><p>读到的内容被保存到一个metadata中，或许可以泄漏（例如title, artist这些信息）</p><p><img alt="enter image description here" img-src="aff4290678cca6a526e39a0d918a20e551b58c33.jpg"></p><h4>1.1.2. No2 heap 越界写</h4><p>第二个是under flow，如果size&lt;6，那么len16会很大，会对buffer（还是刚才的heap）后面很大一片内存作bswap_16操作，写的内容不太可控</p><pre><code>#!c
+1. if (metadataKey &amp;gt; 0) {
+2. bool isUTF8 = true; // Common case
+3. char16_t *framedata = NULL;
+4. int len16 = 0; // Number of UTF-16 characters
+5.
+6. // smallest possible valid UTF-16 string w BOM: 0xfe 0xff 0x00 0x00
+7. if (size - 6 &amp;gt;= 4) {
+8. len16 = ((size - 6) / 2) - 1; // don't include 0x0000 terminator
+9. framedata = (char16_t *)(buffer + 6);
+10. if (0xfffe == *framedata) {
+11. // endianness marker (BOM) doesn't match host endianness
+12. for (int i = 0; i &amp;lt; len16; i++) {
+13. framedata[i] = &lt;span style="color: #ff0000;"&gt;bswap_16&lt;/span&gt;(framedata[i]);
+14. }
+15. // BOM is now swapped to 0xfeff, we will execute next block too
+}
+</code></pre><p>根据前面的计算，这里的size就是<code>chunk_data_size</code>，代表这个chunk中除去header外的<code>data size</code>。计算方式如下：</p><p><code>off64_t data_offset = *offset + 8;</code>在解析header过程中自然标记data开始的offset</p><pre><code>#!c
+off64_t chunk_data_size = *offset + chunk_size – data_offset;
+</code></pre><p>所以<code>chunk_size&lt;14</code>且<code>&gt;8</code>即可。<code>Chunk_size</code>来自文件tag前面4字节。</p><h4>1.1.3. No3 heap overflow</h4><p>然后是<code>mpeg tx3g tag</code>的，<code>chunk_size</code>是<code>uint</code>，与<code>size</code>之和溢出，导致实际分配比<code>size</code>小的内存。后面的<code>memcpy heap overflow</code>，写入的data应该是可控的。</p><p><img alt="enter image description here" img-src="c86ae77371214731478d7d5388685491afa66943.jpg"></p><p><img alt="enter image description here" img-src="ba8b3119480c9a7fa8950e5b483e8dce4cd5ae7f.jpg"></p><p>将trak修改为tx3g，然后前面的改为ffff</p><p><img alt="enter image description here" img-src="a3796316c4f33235c9c5581a34fb1e63b1fdf000.jpg"></p><h4>1.1.4. No4 heap 越界读</h4><p>出现在covr这个tag处理时，<code>chunk_data_size</code>小于<code>kSkipBytesOfDataBox</code>时，<code>setData</code>会读过<code>buffer</code>的边界。由于<code>setData</code>会分配内存，但多半分配失败，所以可能也会导致向地址为0的内存写入。</p><p><img alt="enter image description here" img-src="65500f4f0d881440572d4c9f17dfe7f0009cf248.jpg"></p><h4>1.1.5. No5 heap 越界写</h4><p>当<code>chunk_data_size=SIZE_MAX</code>时，+1导致分配0长度的内存，后面的<code>readAt</code>会边读文件边写入buffer，在读到文件结束之前已经导致了<code>heap write</code> 越界。由于覆盖数据来自文件，所以内容与长度都是可控的。</p><p><img alt="enter image description here" img-src="67acaa82262bbb7e130c4340738638d3cb77a16d.jpg"></p><h4>1.1.6. No6 Integer overflow</h4><p>处理<code>stsc</code>这种<code>tag</code>时，调用了<code>setSampleToChunkParams</code>方法</p><pre><code>#!c
+1. case FOURCC('s', 't', 's', 'c'):
+2. {
+3. status_t err =
+4. mLastTrack-&amp;gt;sampleTable-&amp;gt;setSampleToChunkParams(
+5. data_offset, chunk_data_size);
+6.
+7. *offset += chunk_size;
+8.
+9. if (err != OK) {
+10. return err;
+11. }
+12.
+13. break;
+14. }
+</code></pre><p>这个方法内有<code>integer overflow</code>，主要是循环过程中，在计算类似<code>mSampleToChunkEntries[i].startChunk</code>的时候，内部实际上是按照<code>i*sizeof(SampleToChunkEntry)+ offset(startChunk)</code>来计算的，这里可能<code>overflow</code>，但从这里看不一定造成内存破坏，可能会干扰执行逻辑。</p><p>https://android.googlesource.com/platform/frameworks/av/+/android-5.1.1_r8/media/libstagefright/SampleTable.cpp</p><pre><code>#!c
+1. mSampleToChunkEntries =
+2. new SampleToChunkEntry[mNumSampleToChunkOffsets];
+3.
+4. for (uint32_t i = 0; i &amp;lt; mNumSampleToChunkOffsets; ++i) {
+5. uint8_t buffer[12];
+6. if (mDataSource-&amp;gt;readAt(
+7. mSampleToChunkOffset + 8 + i * 12, buffer, sizeof(buffer))
+8. != (ssize_t)sizeof(buffer)) {
+9. return ERROR_IO;
+10. }
+11.
+12. CHECK(U32_AT(buffer) &amp;gt;= 1); // chunk index is 1 based in the spec.
+13.
+14. // We want the chunk index to be 0-based.
+15. mSampleToChunkEntries[i].startChunk = U32_AT(buffer) - 1;
+16. mSampleToChunkEntries[i].samplesPerChunk = U32_AT(&amp;amp;buffer[4]);
+17. mSampleToChunkEntries[i].chunkDesc = U32_AT(&amp;amp;buffer[8]);
+18. }
+</code></pre><p>所以补丁增加了校验</p><pre><code>#!c
++ if (SIZE_MAX / sizeof(SampleToChunkEntry) &amp;lt;= mNumSampleToChunkOffsets)
++ return ERROR_OUT_OF_RANGE;
+</code></pre><h4>1.1.7. No7 parseESDescriptor Integer overflow</h4><p>这里的主要问题是只在开始检查了size>=3，然后就-2，–，后面又继续几次-2,-length都没法保证不溢出。</p><pre><code>#!c
+1. status_t ESDS::parseESDescriptor(size_t offset, size_t size) {
+2. if (size &amp;lt; 3) {
+3. return ERROR_MALFORMED;
+4. }
+5.
+6. offset += 2; // skip ES_ID
+7. size -= 2;
+8.
+9. unsigned streamDependenceFlag = mData[offset] &amp;amp; 0x80;
+10. unsigned URL_Flag = mData[offset] &amp;amp; 0x40;
+11. unsigned OCRstreamFlag = mData[offset] &amp;amp; 0x20;
+12.
+13. ++offset;
+14. --size;
+15.
+16. if (streamDependenceFlag) {
+17. offset += 2;
+18. &lt;span style="color: #ff0000;"&gt;size -= 2;&lt;/span&gt;
+19. }
+20.
+21. if (URL_Flag) {
+22. if (offset &amp;gt;= size) {
+23. return ERROR_MALFORMED;
+24. }
+25. unsigned URLlength = mData[offset];
+26. offset += URLlength + 1;
+27. &lt;span style="color: #ff0000;"&gt;size -= URLlength + 1;&lt;/span&gt;
+28. }
+29.
+30. if (OCRstreamFlag) {
+31. offset += 2;
+32.&lt;span style="color: #ff0000;"&gt; size -= 2;&lt;/span&gt;
+33.
+34. if ((offset &amp;gt;= size || mData[offset] != kTag_DecoderConfigDescriptor)
+35. &amp;amp;&amp;amp; offset - 2 &amp;lt; size
+36. &amp;amp;&amp;amp; mData[offset - 2] == kTag_DecoderConfigDescriptor) {
+37. // Content found "in the wild" had OCRstreamFlag set but was
+38. // missing OCR_ES_Id, the decoder config descriptor immediately
+39. // followed instead.
+40. offset -= 2;
+41. size += 2;
+42.
+43. ALOGW("Found malformed 'esds' atom, ignoring missing OCR_ES_Id.");
+44. }
+45. }
+46.
+47. if (offset &amp;gt;= size) {
+48. return ERROR_MALFORMED;
+49. }
+50.
+51. uint8_t tag;
+52. size_t sub_offset, sub_size;
+53. status_t err = &lt;span style="color: #ff0000;"&gt;skipDescriptorHeader&lt;/span&gt;(
+54. offset, size, &amp;amp;tag, &amp;amp;sub_offset, &amp;amp;sub_size);
+</code></pre><p>虽然没直接看到溢出的size造成影响，但可能会造成开发者未预料到的逻辑。</p><pre><code>#!c
+1. do {
+2. if (size == 0) {
+3. return ERROR_MALFORMED;
+4. }
+5.
+6. uint8_t x = mData[offset++];
+7. --size;
+8.
+9. *data_size = (*data_size &amp;lt;&amp;lt; 7) | (x &amp;amp; 0x7f);
+10. more = (x &amp;amp; 0x80) != 0;
+11. }
+12. while (more);
+</code></pre><h4>1.1.8. No8 SampleTable Integer overflow</h4><p>https://android.googlesource.com/platform/frameworks/av/+/android-5.1.1_r8/media/libstagefright/SampleTable.cpp</p><p>32位uint相乘，然后将结果转化为64位uint</p><pre><code>#!c
+1.  uint32_t mTimeToSampleCount;
+2.  mTimeToSampleCount = U32_AT(&amp;header[4][4]);
+3.  uint64\_t allocSize = mTimeToSampleCount * 2 * sizeof(uint32\_t);
+4.  if (allocSize &gt; SIZE_MAX) {
+5.  return ERROR\_OUT\_OF_RANGE;
+6.  }
+7. 
+</code></pre><p>这里存在溢出问题，虽然未看到直接的影响，但可能造成后面的检查误判。修复方法如下：</p><pre><code>#!c
+- uint64_t allocSize = mTimeToSampleCount * 2 * sizeof(uint32_t);
++ uint64_t allocSize = mTimeToSampleCount * 2 * (uint64_t)sizeof(uint32_t);
+</code></pre><h3>1.2. 总结</h3><p>前面1-8个漏洞有相似之处。</p><p>No1 : 一段数据被计算<code>strlen</code>，然后分配内存并<code>strcpy</code>，但这段数据并非一定以<code>’\0’</code>结束，所以导致读越界</p><p>No2-5：都是<code>tag</code>前的4字节size没有校验，可以任意取值，导致一系列的<code>size</code>计算问题。如下图所示，所有<code>tag4</code>字节前面都有4字节的<code>size</code>：</p><p>No6-8：都是<code>integer overflow</code>，但没有看到直接内存破坏的错误。可能会造成数据异常等。</p><p><img alt="enter image description here" img-src="877547e733657fb8d2da2b2b72f9805c23c75462.jpg"></p><h3>1.3. POC</h3><p>1到5这5个漏洞的触发路径非常明了。都是在parseChunk遇到某种特殊tag时，分支处理逻辑出现问题。所以构造poc只需要修改对应的tag即可。</p><p>特别是2-4，都是tag前的4字节size出现问题。只需要调整对应的size。</p><p>以下的POC是针对no3，将其中一个<code>trak tag</code>修改为<code>tx3g</code>，然后将前面的size修改为4个FF</p><pre><code>#!c
+07-28 20:16:10.888: I/DEBUG(247): *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+07-28 20:16:10.888: I/DEBUG(247): Build fingerprint: 'Xiaomi/cancro/cancro:4.4.4/KTU84P/4.8.22:user/release-keys'
+07-28 20:16:10.888: I/DEBUG(247): Revision: '0'
+&lt;span style="color: #ff0000;"&gt;07-28 20:16:10.888: I/DEBUG(247): pid: 10928, tid: 10945, name: Binder_4 &amp;gt;&amp;gt;&amp;gt; /system/bin/mediaserver &amp;lt;&amp;lt;&amp;lt;
+07-28 20:16:10.888: I/DEBUG(247): signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 00000004&lt;/span&gt;
+07-28 20:16:10.978: I/DEBUG(247): r0 00000000 r1 63707274 r2 b187a6e8 r3 00000000
+07-28 20:16:10.978: I/DEBUG(247): AM write failure (32 / Broken pipe)
+07-28 20:16:10.978: I/DEBUG(247): r4 b187a6f8 r5 00000000 r6 b8100ed0 r7 b187aa28
+07-28 20:16:10.978: I/DEBUG(247): r8 74783367 r9 b66dc904 sl 000000a9 fp 00000000
+07-28 20:16:10.978: I/DEBUG(247): ip b66267b7 sp b187a690 lr b6df08df pc b664346e cpsr 60010030
+07-28 20:16:10.978: I/DEBUG(247): d0 0000000000000000 d1 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d2 0000000000000000 d3 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d4 3fd1cb8765719d59 d5 bebbbb3f58eabe9c
+07-28 20:16:10.978: I/DEBUG(247): d6 3e66376972bea4d0 d7 3ecccccd3ecccccd
+07-28 20:16:10.978: I/DEBUG(247): d8 0000000000000000 d9 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d10 0000000000000000 d11 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d12 0000000000000000 d13 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d14 0000000000000000 d15 0000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d16 3930373039303032 d17 2e37343932373154
+07-28 20:16:10.978: I/DEBUG(247): d18 006900640065006d d19 004d0049002e0061
+07-28 20:16:10.978: I/DEBUG(247): d20 0061006900640065 d21 00790061006c0050
+07-28 20:16:10.978: I/DEBUG(247): d22 006c004300720065 d23 0074006e00650069
+07-28 20:16:10.978: I/DEBUG(247): d24 3f77ff86776369e9 d25 bf77ff86919d591e
+07-28 20:16:10.978: I/DEBUG(247): d26 3fe0000000000000 d27 4000000000000000
+07-28 20:16:10.978: I/DEBUG(247): d28 3ffe542fa9d0152a d29 bfbcb8765719d592
+07-28 20:16:10.978: I/DEBUG(247): d30 3ff0000000000000 d31 3fd1cb8765719d59
+07-28 20:16:10.978: I/DEBUG(247): scr 20000010
+07-28 20:16:10.978: I/DEBUG(247): backtrace:
+07-28 20:16:10.978: I/DEBUG(247): &lt;span style="color: #ff0000;"&gt;#00 pc 0006846e /system/lib/libstagefright.so   
+(android::MPEG4Extractor::parseChunk(long long*, int)+4345)&lt;/span&gt;
+07-28 20:16:10.978: I/DEBUG(247): #01 pc 000675fb /system/lib/libstagefright.so (android::MPEG4Extractor::parseChunk(long long*, int)+646)
+07-28 20:16:10.978: I/DEBUG(247): #02 pc 00068a8b /system/lib/libstagefright.so (android::MPEG4Extractor::readMetaData()+46)
+07-28 20:16:10.978: I/DEBUG(247): #03 pc 00068d31 /system/lib/libstagefright.so (android::MPEG4Extractor::countTracks()+4)
+07-28 20:16:10.978: I/DEBUG(247): #04 pc 00092077 /system/lib/libstagefright.so 
+(android::ExtendedUtils::MediaExtractor_CreateIfNeeded(android::sp&amp;lt;android::MediaExtractor&amp;gt;, android::sp&amp;lt;android::DataSource&amp;gt; const&amp;amp;, char const*)+206)
+07-28 20:16:10.978: I/DEBUG(247): #05 pc 00075a43 /system/lib/libstagefright.so 
+(android::MediaExtractor::Create(android::sp&amp;lt;android::DataSource&amp;gt; const&amp;amp;, char const*)+566)
+07-28 20:16:10.978: I/DEBUG(247): #06 pc 0005a00b /system/lib/libstagefright.so 
+(android::AwesomePlayer::setDataSource_l(android::sp&amp;lt;android::DataSource&amp;gt; const&amp;amp;)+10)
+07-28 20:16:10.978: I/DEBUG(247): #07 pc 0005b519 /system/lib/libstagefright.so (android::AwesomePlayer::setDataSource(int, long long, long long)+136)
+07-28 20:16:10.978: I/DEBUG(247): #08 pc 00034319 /system/lib/libmediaplayerservice.so (android::MediaPlayerService::Client::setDataSource(int, long long, long long)+196)
+07-28 20:16:10.978: I/DEBUG(247): &lt;span style="color: #ff0000;"&gt;#09 pc 00059b2d /system/lib/libmedia.so (android::BnMediaPlayer::onTransact(unsigned int, android::Parcel const&amp;amp;, android::Parcel*, unsigned int)+332)&lt;/span&gt;
+07-28 20:16:10.978: I/DEBUG(247):&lt;span style="color: #ff0000;"&gt; #10 pc 00019225 /system/lib/libbinder.so (android::BBinder::transact(unsigned int, android::Parcel const&amp;amp;, android::Parcel*, unsigned int)+60)&lt;/span&gt;
+07-28 20:16:10.978: I/DEBUG(247): #11 pc 0001d799 /system/lib/libbinder.so (android::IPCThreadState::executeCommand(int)+508)
+07-28 20:16:10.978: I/DEBUG(247): #12 pc 0001db17 /system/lib/libbinder.so (android::IPCThreadState::getAndExecuteCommand()+38)
+07-28 20:16:10.978: I/DEBUG(247): #13 pc 0001db8d /system/lib/libbinder.so (android::IPCThreadState::joinThreadPool(bool)+48)
+07-28 20:16:10.978: I/DEBUG(247): #14 pc 000219f5 /system/lib/libbinder.so
+07-28 20:16:10.978: I/DEBUG(247): #15 pc 0000ea5d /system/lib/libutils.so (android::Thread::_threadLoop(void*)+216)
+07-28 20:16:10.978: I/DEBUG(247): #16 pc 0000e58f /system/lib/libutils.so
+07-28 20:16:10.978: I/DEBUG(247): #17 pc 0000d248 /system/lib/libc.so (__thread_entry+72)
+07-28 20:16:10.978: I/DEBUG(247): #18 pc 0000d3e0 /system/lib/libc.so (pthread_create+240)
+</code></pre><p>从<code>trace</code>看出，这里是通过<code>binder</code>来调用<code>media server</code>提供的接口，进而对视频处理解析过程崩溃。所以溢出在<code>media server</code>进程。</p><h3>1.4. 防护</h3><p>由于<code>media</code>是安卓中非常核心的一个服务（虽然权限不高），大量的功能都涉及到这个服务。如果仅仅<code>stop media</code>来停止这个服务，手机基本无法使用，例如无法显示出桌面。</p><p>service media /system/bin/mediaserver class main user media group audio camera inet net&#95;bt net&#95;bt&#95;admin net&#95;bw&#95;acct drmrpc mediadrm qcom&#95;diag ioprio rt 4</p><p>在短信app中，通过设置（可在小米，华为等手机中找到这个选项）可以关闭彩信自动下载，降低风险。</p><p>但这样无法防止例如sdcard根目录, 下载目录， bluetooth这些目录被通过各种渠道发送过来的恶意视频（浏览器自动下载，usb拷贝，bluetooth，微信等），当用户一旦打开文件浏览或图库app，甚至在浏览器中直接访问视频也会被攻击。</p><p>所以大家开心的等补丁吧！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2015-07-31 07:33:12</span></div><p></p><p>代码中关键的符号都被转义了,看着头大</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">theone</span> <span class="reply-time">2015-07-29 22:25:54</span></div><p></p><p>不太看得懂代码分析，还是开心的等补丁吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">theone</span> <span class="reply-time">2015-07-29 22:24:50</span></div><p></p><p>沙发。。</p><p></p></div></div></div></div></div></main>

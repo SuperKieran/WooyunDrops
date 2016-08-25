@@ -1,0 +1,74 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">浅谈PHP弱类型安全</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小飞</a> <span class="bull">·</span> <time title="2015/01/04 10:25" ui-time="" datetime="2015/01/04 10:25" class="published ng-binding ng-isolate-scope">2015/01/04 10:25</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 弱类型初探</h1><hr><p>没有人质疑php的简单强大，它提供了很多特性供开发者使用，其中一个就是弱类型机制。</p><p>在弱类型机制下 你能够执行这样的操作</p><pre><code>#!php
+&lt;?php
+$var = 1;
+$var = array();
+$var = "string";
+?&gt;
+</code></pre><p>php不会严格检验传入的变量类型，也可以将变量自由的转换类型。</p><p>比如 在$a == $b的比较中</p><ul><li>$a = null; $b = false; //为真</li><li>$a = ''; $b = 0; //同样为真</li></ul><p>然而，php内核的开发者原本是想让程序员借由这种不需要声明的体系，更加高效的开发，所以在<strong>几乎所有内置函数以及基本结构</strong>中使用了很多松散的比较和转换，防止程序中的变量因为程序员的不规范而频繁的报错，然而这却带来了安全问题。</p><h1>0x02 知识预备 php内核之zval结构</h1><hr><p>在PHP中声明的变量，在ZE中都是用结构体zval来保存的</p><p>zval的定义在zend/zend.h</p><pre><code>#!c
+typedef struct _zval_struct zval;  
+
+struct _zval_struct {  
+    /* Variable information */  
+    zvalue_value value;     /* value */  
+    zend_uint refcount__gc;  
+    zend_uchar type;    /* active type */  
+    zend_uchar is_ref__gc;  
+};  
+
+typedef union _zvalue_value {  
+    long lval;  /* long value */  
+    double dval;    /* double value */  
+    struct {  
+        char *val;  
+        int len;  
+    } str;  
+    HashTable *ht;  /* hash table value */  
+    zend_object_value obj;  
+} zvalue_value;
+</code></pre><p>其中php通过type判断变量类型 存入value</p><p>如上也就是php内核中弱类型的封装，也是我们后面讲的所有东西的原理和基础。</p><h1>0x03变量的强制转换</h1><hr><p>通过刚刚的了解，我们知道zval.type决定了存储到zval.value的类型。</p><p>当源代码进行一些未限制类型的比较，或数学运算的时候，可能会导致zval.type的改变，同时影响zval.value的内容改变。</p><h2>当int遇上string</h2><h5>cp.1 数学运算</h5><p>当php进行一些数学计算的时候</p><pre><code>#!php
+var_dump(0 == '0'); // true
+var_dump(0 == 'abcdefg'); // true  
+var_dump(0 === 'abcdefg'); // false
+var_dump(1 == '1abcdef'); // true 
+</code></pre><p>当有一个对比参数是整数的时候，会把另外一个参数强制转换为整数。</p><p>相当于对字符串部分</p><p>intval再和整数部分比较,其实也就是改变了zval.type的内容 尤为注意的是，'1assd'的转换后的值是1，而‘asdaf’是0</p><p>也说明了intval会从第一位不是数字的单位开始进行</p><p>所有也有</p><pre><code>#!php
+var_dump(intval('3389a'));//输出3389
+</code></pre><p>这个例子就告诉我们，永远不要相信下面的代码</p><pre><code>#!php
+if($a&gt;1000){
+    mysql_query('update ... .... set value=$a')
+}
+</code></pre><p>你以为这时候进入该支的万无一失为整数了</p><p>其实$a可能是1001/**/union...</p><h4>cp.2 语句条件的松散判断</h4><p>举个例子<br>php的switch使用了松散比较. $which会被自动intval变成0<br>如果每个case里面没有break ，就会一直执行到包含，最终执行到我们需要的函数，这里是成功包含</p><pre><code>#!php
+&lt;?php
+if (isset($_GET['which']))
+{
+        $which = $_GET['which'];
+        switch ($which)
+        {
+        case 0:
+        case 1:
+        case 2:
+                require_once $which.'.php';
+                break;
+        default:
+                echo GWF_HTML::error('PHP-0817', 'Hacker NoNoNo!', false);
+                break;
+        }
+</code></pre><h4>cp.3 函数的松散判断</h4><pre><code>#!php
+var_dump(in_array("abc", $array));
+</code></pre><p>in_array — 检查数组中是否存在某个值 参数</p><p>needle 待搜索的值。</p><p>Note: 如果 needle 是字符串，则比较是区分大小写的。 haystack 这个数组。</p><p>strict 如果第三个参数 strict 的值为 TRUE 则 in_array() 函数还会检查 needle 的类型是否和 haystack 中的相同。</p><p>可以看到，只有加了strict才会对类型进行严格比较， 那么我们再次把整形和字符串进行比较呢？</p><pre><code>#!php
+var_dump(in_array("abc", $array1));&lt;/br&gt;
+var_dump(in_array("1bc", $array2));
+</code></pre><p>它遍历了array的每个值，并且作"=="比较（“当设置了strict 用===”）</p><p>结果很明显了</p><p>如果array1里面有个值为0，那么第一条返回就会为真//intval('abc')=0</p><p>如果array2里面有个值为1，那么第二条就会为真//intval('1bc')=1</p><p>array_search也是一样的原理</p><p>这里的应用就很广泛了，</p><p>很多程序员都会检查数组的值，</p><p>那么我们完全可以用构造好的int 0或1 骗过检测函数，使它返回为真</p><p>总结一下，<strong>在所有php认为是int的地方输入string，都会被强制转换</strong>，比如</p><pre><code>#!php
+$a = 'asdfgh'；//字符串类型的a&lt;/br&gt;
+echo $a[2]；  //根据php的offset 会输出'd'&lt;/br&gt;
+echo $a[x]；  //根据php的预测，这里应该是int型，那么输入string，就会被intval成为0 也就是输出'a'
+</code></pre><h3>当数组遇上string</h3><p>这一个例子我是在德国的一个ctf中遇到，很有意思<br>前面我们讲的都是string和int的比较</p><p>那么array碰上int或者是string会有什么化学反应？</p><p>由php手册我们知道</p><p>Array转换整型int/浮点型float会返回元素个数；</p><p>转换bool返回Array中是否有元素；转换成string返回'Array'，并抛出warning。</p><p>那么实际应用是怎样的呢？</p><pre><code>#!php
+if(!strcmp($c[1],$d) &amp;&amp; $c[1]!==$d){
+...
+}
+</code></pre><p>可以发现，这个分支通过strcmp函数比较要求两者相等且“==”要求两者不相等才能进入。</p><p>strcmp() 函数比较两个字符串。</p><p>该函数返回：</p><pre><code>0 - 如果两个字符串相等
+&lt;0 - 如果 string1 小于 string2
+&gt;0 - 如果 string1 大于 string2
+</code></pre><p>这里的strcmp函数实际上是将两个变量转换成ascii 然后做数学减法，返回一个int的差值。</p><p>也就是说键入'a'和'a'进行比较得到的结果就是0</p><p>那么如果让$array和‘a’比较呢？</p><pre><code>#!php
+http://localhost:8888/1.php?a[]=1
+var_dump(strcmp($_GET[a],'a'));
+</code></pre><p>这时候php返回了null！</p><p>也就是说，我们让这个函数出错从而使它恒真，绕过函数的检查。<br>下面给出一张松散比较的表格<br></p><p><img alt="" img-src="300a9ab1118b03246830166942f7fb415f20cbc1.jpg"><br></p><h1>0x04时时防备弱类型</h1><hr><p>作为一个程序员，弱类型确实给程序员书写代码带来了很大的便利，但是也让程序员忘记了<br>$array =array();的习惯。<br>都说一切输入都是有害的</p><p>那么其实可以说一切输入的类型也是可疑的，永远不要相信弱类型的php下任何比较函数，任何数学运算。否则，你绝对是被php出卖的那一个。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7679" rel="bookmark" id="re1">php比较操作符的安全问题</a></li><li><a href="http://drops.wooyun.org/tips/3911" rel="bookmark" id="re2">PHP WDDX Serializier Data Injection Vulnerability</a></li><li><a href="http://drops.wooyun.org/papers/1409" rel="bookmark" id="re3">WordPress 3.8.2 cookie伪造漏洞再分析</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re4">php4fun.sinaapp.com PHP挑战通关攻略</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小哲哥</span> <span class="reply-time">2016-03-29 11:05:10</span></div><p></p><p>受益匪浅</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">a</span> <span class="reply-time">2016-03-09 10:21:15</span></div><p></p><p>a</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">青梅煮马</span> <span class="reply-time">2016-01-11 16:42:08</span></div><p></p><p>@青梅煮马 我靠 还不能回复过多 http://cn2.php.net/manual/zh/language.operators.comparison.php</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">青梅煮马</span> <span class="reply-time">2016-01-11 16:41:11</span></div><p></p><p>博主说：Array转换整型int/浮点型float会返回元素个， 是说如果int的值大于Array的元素个数的情况下， int&lt;array 就会返回false ； 但是我自己试了试，返回的是true;后来我在PHP手册中找到了这个http://cn2.php.net/manual/zh/language.operators.comparison.php，文章中说的A是否不正确？ 还是我理解错了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2015-11-22 09:58:25</span></div><p></p><p>学习了,谢谢大牛分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小菜鸟</span> <span class="reply-time">2015-11-12 16:08:06</span></div><p></p><p>很赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sicalpath</span> <span class="reply-time">2015-02-07 22:55:18</span></div><p></p><p>strcmp 好像第一个参数是数组时第二个参数不管怎样 返回都是null</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2015-01-10 10:06:16</span></div><p></p><p>实在嘲笑我的文笔嘛。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Guest</span> <span class="reply-time">2015-01-09 09:52:53</span></div><p></p><p>文章的表达方式怎么觉得怪怪的，感觉像使用翻译软件翻译的一样</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2015-01-04 23:37:01</span></div><p></p><p>我还没看到那个漏洞 自己研究的 第一次感受到自己和国外大牛有了那么一点交集…</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-01-04 22:34:46</span></div><p></p><p>不错的文章，最近的31c3的ctf web题的第一题里有你说的这个知识点。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-01-04 22:07:56</span></div><p></p><p>最近才体会到in_array的大大BUG</p><p>http://www.freebuf.com/articles/web/55075.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MeirLin</span> <span class="reply-time">2015-01-04 21:55:39</span></div><p></p><p>对呀 js也是弱类型</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">px1624</span> <span class="reply-time">2015-01-04 17:06:09</span></div><p></p><p>貌似js也是这样</p><p></p></div></div></div></div></div></main>

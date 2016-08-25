@@ -1,0 +1,90 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android Broadcast Security</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2014/12/23 12:08" ui-time="" datetime="2014/12/23 12:08" class="published ng-binding ng-isolate-scope">2014/12/23 12:08</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 科普</h2><hr><p>Broadcast Recevier 广播接收器是一个专注于接收广播通知信息，并做出对应处理的组件。很多广播是源自于系统代码的──比如，通知时区改变、电池电量低、拍摄了一张照片或者用户改变了语言选项。应用程序也可以进行广播──比如说，通知其它应用程序一些数据下载完成并处于可用状态。 应用程序可以拥有任意数量的广播接收器以对所有它感兴趣的通知信息予以响应。所有的接收器均继承自BroadcastReceiver基类。 广播接收器没有用户界面。然而，它们可以启动一个activity来响应它们收到的信息，或者用NotificationManager来通知用户。通知可以用很多种方式来吸引用户的注意力──闪动背灯、震动、播放声音等等。一般来说是在状态栏上放一个持久的图标，用户可以打开它并获取消息。</p><p><img alt="" img-src="80406a2f0665a3a1dc6612483bb1485e19ceed8e.jpg"></p><h2>0x01 知识要点</h2><hr><p><strong>注册形式：动态or静态</strong></p><p><activity>元素的name属性指定了实现了这个activity的 Activity的子类。icon和label属性指向了包含展示给用户的此activity的图标和标签的资源文件。其它组件也以类似的方法声明──<service>元素用于声明服务，<receiver>元素用于声明广播接收器，而<provider>元素用于声明内容提供器。 manifest文件中未进行声明的activity、服务以及内容提供器将不为系统所见，从而也就不会被运行。然而，广播接收器既可以在manifest文件中声明，也可以在代码中进行动态的创建，并以调用Context.registerReceiver()的方式注册至系统。</provider></receiver></service></activity></p><p><img alt="" img-src="78032d587fe4d7071fe17dfd1b690ce5c6911275.jpg"></p><p>（静态与动态注册广播接收器区别）</p><p><strong>回调方法</strong></p><p>广播接收器只有一个回调方法：</p><pre><code>#!java
+void onReceive(Context curContext, Intent broadcastMsg)
+</code></pre><p>当广播消息抵达接收器时，Android调用它的onReceive() 方法并将包含消息的Intent对象传递给它。广播接收器仅在它执行这个方法时处于活跃状态。当onReceive()返回后，它即为失活状态。 拥有一个活跃状态的广播接收器的进程被保护起来而不会被杀死。但仅拥有失活状态组件的进程则会在其它进程需要它所占有的内存的时候随时被杀掉。 这种方式引出了一个问题：如果响应一个广播信息需要很长的一段时间，我们一般会将其纳入一个衍生的线程中去完成，而不是在主线程内完成它，从而保证用户交互过程的流畅。如果onReceive()衍生了一个线程并且返回，则包涵新线程在内的整个进程都被会判为失活状态（除非进程内的其它应用程序组件仍处于活跃状态），于是它就有可能被杀掉。这个问题的解决方法是令onReceive()启动一个新服务，并用其完成任务，于是系统就会知道进程中仍然在处理着工作。</p><p><strong>权限</strong></p><p>设置接收app</p><pre><code>#!java
+Intent  setPackage(String packageName)
+(Usually optional) Set an explicit application package name that limits the components this Intent will resolve to.
+</code></pre><p>设置接收权限</p><pre><code>#!java
+abstract void   sendBroadcast(Intent intent, String receiverPermission)
+Broadcast the given intent to all interested BroadcastReceivers, allowing an optional required permission to be enforced.
+</code></pre><p>protectionLevel</p><p>normal:默认值。低风险权限，只要申请了就可以使用，安装时不需要用户确认。</p><p>dangerous：像WRITE&#95;SETTING和SEND&#95;SMS等权限是有风险的，因为这些权限能够用来重新配置设备或者导致话费。使用此protectionLevel来标识用户可能关注的一些权限。Android将会在安装程序时，警示用户关于这些权限的需求，具体的行为可能依据Android版本或者所安装的移动设备而有所变化。</p><p>signature：这些权限仅授予那些和本程序应用了相同密钥来签名的程序。</p><p>signatureOrSystem:与signature类似，除了一点，系统中的程序也需要有资格来访问。这样允许定制Android系统应用也能获得权限，这种保护等级有助于集成系统编译过程。</p><p><strong>广播类型</strong></p><p>系统广播：像开机启动、接收到短信、电池电量低这类事件发生的时候系统都会发出特定的广播去通知应用，应用接收到广播后会以某种形式再转告用户。</p><p>自定义广播：不同于系统广播事件，应用可以为自己的广播接收器自定义出一条广播事件。</p><p><strong>Ordered Broadcast</strong></p><p>OrderedBroadcast-有序广播，Broadcast-普通广播，他们的区别是有序广播发出后能够适配的广播接收者按照一定的权限顺序接收这个广播，并且前面的接收者可以对广播的内容进行修改，修改的结果被后面接收者接收，优先级高的接收者还可以结束这个广播，那么后面优先级低的接收者就接收不到这个广播了。而普通广播发出后，能够是适配的接收者没有一定顺序接收广播，也不能终止广播。</p><p><strong>sticky broadcast</strong></p><p>有这么一种broadcast，在发送并经过AMS(ActivityManagerService)分发给对应的receiver后，这个broadcast并不会被丢弃，而是保存在AMS中，当有新的需要动态注册的receiver请求AMS注册时，如果这个receiver能够接收这个broadcast，那么AMS会将在receiver注册成功之后，马上向receiver发送这个broadcast。这种broadcast我们称之为stickybroadcast。</p><p>sendStickyBroadcast()字面意思是发送粘性的广播，使用这个api需要权限android.Manifest.permission.BROADCAST_STICKY,粘性广播的特点是Intent会一直保留到广播事件结束，而这种广播也没有所谓的10秒限制，10秒限制是指普通的广播如果onReceive方法执行时间太长，超过10秒的时候系统会将这个广播置为可以干掉的candidate，一旦系统资源不够的时候，就会干掉这个广播而让它不执行。</p><p><img alt="" img-src="d3b78571f10d87881a25460497687c305b34d917.jpg"></p><p>(几种广播的特性)</p><p><strong>变动</strong></p><p>android3.1以及之后版本广播接收器不能在启动应用前注册。可以通过设置intent的flag为Intent.FLAG&#95;INCLUDE&#95;STOPPED_PACKAGES将广播发送给未启动应用的广播接收器。</p><p><strong>关键方法</strong></p><ul><li>sendBroadcast(intent)</li><li>sendOrderedBroadcast(intent, null, mResultReceiver, null, 0, null, null)</li><li>onReceive(Context context, Intent intent)</li><li>getResultData()</li><li>abortBroadcast()</li><li>registerReceiver()</li><li>unregisterReceiver()</li><li>LocalBroadcastManager.getInstance(this).sendBroadcast(intent)</li><li>sendStickyBroadcast(intent)</li></ul><h2>0x02 分类</h2><hr><p><img alt="" img-src="5b0e99b9ab3dbba501f9bef1304fee33cee2d184.jpg"></p><ol><li>私有广播接收器：只接收app自身发出的广播</li><li>公共广播接收器：能接收所有app发出的广播</li><li>内部广播接收器：只接收内部app发出的广播</li></ol><p><strong>安全建议</strong></p><p>intent-filter节点与exported属性设置组合建议</p><p><img alt="" img-src="e51a27dcfe5d0c14bcedba403560ffdd59f5f749.jpg"></p><ol><li><p>私有广播接收器设置exported='false'，并且不配置intent-filter。(私有广播接收器依然能接收到同UID的广播)</p><pre><code>&lt;receiver android:name=".PrivateReceiver" android:exported="false" /&gt;
+</code></pre></li><li><p>对接收来的广播进行验证</p></li><li><p>内部app之间的广播使用protectionLevel='signature'验证其是否真是内部app</p></li><li><p>返回结果时需注意接收app是否会泄露信息</p></li><li><p>发送的广播包含敏感信息时需指定广播接收器，使用显示意图或者</p><pre><code>setPackage(String packageName)
+</code></pre></li><li><p>sticky broadcast粘性广播中不应包含敏感信息</p></li><li><p>Ordered Broadcast建议设置接收权限receiverPermission，避免恶意应用设置高优先级抢收此广播后并执行abortBroadcast()方法。</p></li></ol><h2>0x03 测试方法</h2><hr><p>1、查找动态广播接收器：反编译后检索registerReceiver(),</p><pre><code>dz&gt; run app.broadcast.info -a android -i
+</code></pre><p>2、查找静态广播接收器：反编译后查看配置文件查找广播接收器组件<receiver>，注意exported属性</receiver></p><p>3、查找发送广播内的信息检索sendBroadcast与sendOrderedBroadcast，注意setPackage方法于receiverPermission变量。</p><p>发送测试广播</p><pre><code>#!java
+adb shell：
+am broadcast -a MyBroadcast -n com.isi.vul_broadcastreceiver/.MyBroadCastReceiver
+am broadcast -a MyBroadcast -n com.isi.vul_broadcastreceiver/.MyBroadCastReceiver –es number 5556.
+
+drozer：
+dz&gt; run app.broadcast.send --component com.package.name --action android.intent.action.XXX
+
+code：
+Intent i = new Intent();
+ComponentName componetName = new ComponentName(packagename,  componet);         
+i.setComponent(componetName);       
+sendBroadcast(i);
+</code></pre><p>接收指定广播</p><pre><code>#!java
+public class Receiver extends BroadcastReceiver {
+    private final String ACCOUNT_NAME = "account_name";
+    private final String ACCOUNT_PWD = "account_password";
+    private final String ACCOUNT_TYPE = "account_type";
+    private void doLog(Context paramContext, Intent paramIntent)
+    {
+        String name;
+        String password;
+        String type;
+        do
+        {
+            name = paramIntent.getExtras().getString(ACCOUNT_NAME);
+            password = paramIntent.getExtras().getString(ACCOUNT_PWD);
+            type = paramIntent.getExtras().getString(ACCOUNT_TYPE);
+        }
+        while ((TextUtils.isEmpty(name)) || (TextUtils.isEmpty(password)) || (TextUtils.isEmpty(type)) || ((!type.equals("email")) &amp;&amp; (!type.equals("cellphone"))));
+        Log.i("name", name);
+        Log.i("password", password);
+        Log.i("type", type);
+     }
+
+    public void onReceive(Context paramContext, Intent paramIntent)
+    {
+      if (TextUtils.equals(paramIntent.getAction(), "account"))
+      doLog(paramContext, paramIntent);
+     }
+
+}
+</code></pre><h2>0x04 案例</h2><hr><p><strong>案例1：伪造消息代码执行</strong></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-039801">WooYun: 百度云盘手机版钓鱼、信息泄露和代码执行高危漏洞三合一</a></p><p><strong>案例2：拒绝服务</strong></p><p>尝试向广播接收器发送不完整的intent比如空action或者空extra。</p><ul><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2010-0511">WooYun: 乐phone手机系统重启漏洞</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-042755">WooYun: QQ手机管家拒绝服务漏洞</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-034181">WooYun: 手机百度4.5.1Android客户端DOS攻击</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-053878">WooYun: 百度某手机应用拒绝服务漏洞</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-047716">WooYun: 搜狗输入法安卓客户端本地拒绝服务漏洞</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-039968">WooYun: 百度云盘客户端拒绝服务</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-019422">WooYun: su提权广播劫持导致拒绝服务攻击</a> （上面都是伪造，这个是劫持）</li></ul><p><strong>案例3：敏感信息泄漏</strong></p><p>某应用利用广播传输用户账号密码</p><p><img alt="" img-src="c9fc310f49ee1683bdadd6e96e59103385831b6f.jpg"></p><p>隐式意图发送敏感信息</p><pre><code>#!java
+public class ServerService extends Service {
+  // ...
+  private void d() {
+    // ...
+    Intent v1 = new Intent();
+    v1.setAction("com.sample.action.server_running");
+    v1.putExtra("local_ip", v0.h);
+    v1.putExtra("port", v0.i);
+    v1.putExtra("code", v0.g);
+    v1.putExtra("connected", v0.s);
+    v1.putExtra("pwd_predefined", v0.r);
+    if (!TextUtils.isEmpty(v0.t)) {
+      v1.putExtra("connected_usr", v0.t);
+    }
+  }
+  this.sendBroadcast(v1);
+}
+</code></pre><p>接收POC</p><pre><code>#!java
+public class BcReceiv extends BroadcastReceiver {
+  @Override
+  public void onReceive(Context context, Intent intent){
+
+    String s = null;
+    if (intent.getAction().equals("com.sample.action.server_running")){
+      String pwd = intent.getStringExtra("connected");
+      s = "Airdroid  =&gt; [" + pwd + "]/" + intent.getExtras();
+    }
+    Toast.makeText(context, String.format("%s Received", s),
+                   Toast.LENGTH_SHORT).show();
+  }
+}
+</code></pre><p>修复后代码，使用 LocalBroadcastManager.sendBroadcast() 发出的广播只能被app自身广播接收器接收。</p><pre><code>#!java
+Intent intent = new Intent("my-sensitive-event");
+intent.putExtra("event", "this is a test event");
+LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+</code></pre><p><strong>案例4：权限绕过</strong></p><ul><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-09175">WooYun: 小米MIUI漏洞可能导致硬件资源消耗</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-019579">WooYun: 无须权限随意开启和关闭手机wifi功能</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-068478">WooYun: 华为荣耀3X Android4.2提权打电话漏洞</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-084520">WooYun: 酷派最安全手机s6拨打电话权限绕过</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-084516">WooYun: 酷派最安全手机s6程序锁绕过</a></li></ul><p><a href="http://zone.wooyun.org/content/16841">任意短信重发漏洞</a></p><h2>0x05 参考</h2><hr><p><a href="http://www.jssec.org/dl/android_securecoding_en.pdf">http://www.jssec.org/dl/android&#95;securecoding&#95;en.pdf</a></p><p><a href="https://www.securecoding.cert.org/confluence/display/java/DRD03-J.+Do+not+broadcast+sensitive+information+using+an+implicit+intent">https://www.securecoding.cert.org/confluence/display/java/DRD03-J.+Do+not+broadcast+sensitive+information+using+an+implicit+intent</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3936" rel="bookmark" id="re1">Android Activtity Security</a></li><li><a href="http://drops.wooyun.org/tips/3812" rel="bookmark" id="re2">Android Logcat Security</a></li><li><a href="http://drops.wooyun.org/tips/4314" rel="bookmark" id="re3">Android Content Provider Security</a></li><li><a href="http://drops.wooyun.org/tips/4907" rel="bookmark" id="re4">Android Service Security</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">qjizho</span> <span class="reply-time">2015-10-14 10:02:22</span></div><p></p><p>从没这么清晰过，感谢~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">s.小飘</span> <span class="reply-time">2014-12-25 07:24:03</span></div><p></p><p>支持永少大牛的分享 赞...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2014-12-24 01:00:54</span></div><p></p><p>&quot;特定的广播去通知应用，应用接收到广播后悔以某种形式再转告用户。&quot;</p><p>悔？？码错了吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">泳少</span> <span class="reply-time">2014-12-23 20:38:23</span></div><p></p><p>学习好文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蓝风</span> <span class="reply-time">2014-12-23 13:46:40</span></div><p></p><p>good job</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">温柔的老虎</span> <span class="reply-time">2014-12-23 12:48:22</span></div><p></p><p>大牛，学习了</p><p></p></div></div></div></div></div></main>

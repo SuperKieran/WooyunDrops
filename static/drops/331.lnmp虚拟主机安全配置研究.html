@@ -1,0 +1,52 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">lnmp虚拟主机安全配置研究</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">phith0n</a> <span class="bull">·</span> <time title="2014/08/25 16:28" ui-time="" datetime="2014/08/25 16:28" class="published ng-binding ng-isolate-scope">2014/08/25 16:28</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>众所周知，虚拟主机的安全不好做，特别是防止跨目录成为了重点。apache+php服务器防止跨目录的方式比较简单，网上的所有成熟虚拟主机解决方案都是基于apache的，如directadmin、cpanel。</p><p>但如今已然不是apache的时代了，在linux+nginx+mysql+php下怎么防止不同虚拟主机进行跨站？</p><p>首先我们要清楚明白Nginx是怎么运行的，再考虑怎么具体操作吧。乌云知识库里有一篇很好的文章<a href="http://drops.wooyun.org/tips/1323">http://drops.wooyun.org/tips/1323</a>，介绍了nginx的安全配置，大家可以看看。</p><p>nginx实际上只是一个反向代理服务器，它接收到请求以后会看当前请求是否是.php文件，如果是则转交给php-fpm来处理，获得结果后再发给用户。所以有两个权限需要考虑：第一是nginx的权限，第二是php-fpm的权限。如下图，nginx和php-fpm都要读取这个文件，所以权限分配是要考虑的重要一项。</p><p><img alt="2014082402315954182.png" img-src="0469e578f77c89e469d66051c86e3bdec6ad57fb.jpg"></p><p>防御跨站要防御的有三点，第一是防止其他用户列网站目录，防止自己的一些敏感文件名被看到及访问；第二是防止其他用户读取自己的文件，防止配置信息泄露；第三就是防止其他用户写shell在自己目录。</p><p>php显然也考虑到了这个问题，其配置文件中的<code>open_basedir</code>，是一个目录列表，只允许php访问其中给出的目录。通过设置这个<code>open_basedir</code>我们就可以防御php读写web目录以外的文件，比如<code>/etc/passwd</code>之类的。</p><p>但现在的问题是，open&#95;basedir是写在php.ini中的一个配置文件，而所有虚拟主机使用的php是同一个php，我们可以防止php访问web目录以外的文件，但是没法防止“虚拟主机1”访问“虚拟主机2”的文件，因为二者都在web目录内。甚至还有一个更大的问题是，很多版本php的open&#95;basedir并不靠谱，能被很容易地绕过。</p><p>这是现在遇到的问题。解决方法就是：让每个虚拟主机用不同用户来单独启动php-fpm。</p><p>为了实现上面方法，我们需要对安装好的lnmp做些修改。（我使用的就是国内用的比较广的"lnmp一键安装包"）。</p><h2>0x01 lNMP加固</h2><hr><p>比如我们服务器上有两个虚拟主机game01.com和game02.com，其目录分别是 /home/wwwroot/game01/和/home/wwwroot/game02/。</p><p>这里说一下，新版的lnmp一键安装包有自带的防跨站功能，是因为php 5.3.3以后，可以在php.ini末尾加上类似如下语句：</p><pre><code>[HOST=www.vpser.net] 
+open_basedir=/home/wwwroot/www.vpser.net/:/tmp/ 
+[PATH=/home/wwwroot/www.vpser.net] 
+open_basedir=/home/wwwroot/www.vpser.net/:/tmp/
+</code></pre><p>就可以给不同HOST赋予不同<code>open_basedir</code>。但是我们这里不用这个方法，第一其限制php版本在5.3.3以上，第二<code>open_basedir</code>也是有局限与漏洞的，不能完全依靠这个玩意。所以，虚拟主机创建好以后，来到/usr/local/php/etc/php.ini把这些内容注释掉。（注释符;）</p><p>首先，让不同虚拟机用不同php-fpm运行：</p><p>一、为每个站点创建php-fpm.pid文件</p><pre><code>cd /usr/local/php5/var/run
+touch php-fpm-game01.pid
+touch php-fpm-game02.pid   
+</code></pre><p>二、为每个站点创建php-fpm.conf文件</p><pre><code>cd /usr/local/php5/etc/ 
+cp php-fpm.conf php-fpm-game01.conf 
+cp php-fpm.conf php-fpm-game02.conf     
+</code></pre><p>三、为每个站点建立php-cgi.sock文件</p><pre><code>touch /tmp/php-cgi-game01.sock #建立php-cgi.sock文件 
+chown www.www /tmp/php-cgi-game01.sock #设置文件所有者为www（必须与nginx的用户一致） 
+touch /tmp/php-cgi-game02.sock 
+chown www.www /tmp/php-cgi-game02.sock   
+</code></pre><p>四、修改相关文件</p><pre><code>vi /usr/local/php5/etc/php-fpm-game01.conf 
+pid = run/php-fpm-game01.pid 
+listen =/tmp/php-cgi-game01.sock; 
+
+vi /usr/local/php5/etc/php-fpm-game02.conf
+pid = run/php-fpm-game02.pid
+listen =/tmp/php-cgi-game02.sock; 
+
+vi /etc/init.d/php-fpm 
+vhost=$2 
+php_fpm_CONF=${prefix}/etc/php-fpm-$vhost.conf 
+php_fpm_PID=${prefix}/var/run/php-fpm-$vhost.pid 
+php_opts="-d open_basedir=/home/wwwroot/$vhost/:/tmp/ --fpm-config $php_fpm_CONF"
+</code></pre><p>上述最后一行，就是php-fpm执行的参数，其中我们将open_basedir设置成了/home/wwwroot/$vhost/:/tmp/，$vhost就是我们运行时传入的第二个参数$2（game01或game02）。</p><p>继续修改</p><pre><code>vi /usr/local/nginx/conf/vhost/game01.com.conf # 配置文件名可能不一样，要根据实际情况改变
+fastcgi_pass unix:/tmp/php-cgi-game01.sock;
+vi /usr/local/nginx/conf/vhost/game02.com.conf 
+fastcgi_pass unix:/tmp/php-cgi-game02.sock;
+</code></pre><p>五.增加开机启动项</p><pre><code>vi /home/start.sh
+# !/bin/bash
+auto=$1 /bin/bash /etc/rc.d/init.d/php-fpm $auto game01 /bin/bash /etc/rc.d/init.d/php-fpm $auto game02
+chmod +x /home/start.sh
+</code></pre><p>然后编辑/etc/rc.local 将start.sh加入启动项。 到此，不同虚拟主机就会以运行不同的php-fpm。我们还需要用不同的用户身份来运行。</p><pre><code>groupadd game01 groupadd game02 
+useradd game01 -M -s /sbin/nologin -g game01 
+useradd game02 -M -s /sbin/nologin -g game02     
+</code></pre><p>添加了game01.game01和game02.game02两个用户。 修改/usr/local/php/etc/php-fpm-game01.conf：</p><pre><code>listen.owner = game01
+listen.group = game01 
+user=game01 
+group=game01     
+</code></pre><p>game02同理修改。这样我们就让php-fpm以不同用户来运行了。</p><p>再来到/home/wwwroot/：</p><pre><code>cd /home/wwwroot/ 
+chown game01.game01 -R game01 
+chown game02.game02 -R game02   
+</code></pre><p>将game01和game02文件夹分别给予用户game01和game02。</p><p>再有，我们的nginx是默认以www用户运行的，所以是不能读取game01、game02用户文件的，如果把文件权限设置成777，又不能防止game01读取game02的文件。</p><p>所以，我们应该将www用户加入game01、game02组，再把game01、game02的文件设置成750权限，这样就可以允许www来读取game01/game02的文件（因为在同组，而组权限是5，5就够了），又能防止game01读取game02的文件。</p><p>linux中允许把一个用户加入多个组，所以操作如下：</p><pre><code>usermod -aG game01 www 
+usermod -aG game02 www
+</code></pre><p>这时候。我们的防御其实有两层。</p><p>01.不同php-fpm运行两个虚拟主机的php程序，他们拥有自己的open_basedir，使之不能跨目录。</p><p>02.即使open_basedir被绕过了，以game01用户身份运行的php-fpm也无法写入、读取game02的文件，因为game02的所有文件权限都是750。其他用户没有任何权限（0）。</p><p>一切设置好以后，说一下使用方法了。</p><h2>0x02 使用方法</h2><hr><p>先kill掉已有的php-fpm，再重启一下nginx，再/home/start.sh启动新的php-fpm即可。</p><pre><code>/etc/init.d/php-fpm start game01 单独启动game01
+/etc/init.d/php-fpm start game02 单独启动game02
+/etc/init.d/php-fpm stop game01 单独启动game01
+/etc/init.d/php-fpm stop game02 单独启动game02
+</code></pre><p>以上是我拼凑的一点方法，可能并不是最佳方法（我对nginx机制也是不熟悉，也许有更简单的方法可以解决这个问题），所以也希望各大牛能分享自己运维的方法，指出我的不足</p><h2>0x03 参考:</h2><hr><p>http://drops.wooyun.org/tips/1323</p><p>http://www.dedecms.com/knowledge/servers/linux-bsd/2012/0819/8389.html</p><p>http://yzs.me/2198.html</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/2016012414014966dd256dd9219030aec2a4c8fbe00433.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mtfly</span> <span class="reply-time">2016-01-15 09:43:53</span></div><p></p><p>可惜 没有mysql相关的内容</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">快播电影</span> <span class="reply-time">2015-03-17 10:58:18</span></div><p></p><p>PHP 5.2.X的咋办呢？不支持open_basedir？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ksc</span> <span class="reply-time">2015-01-04 13:21:30</span></div><p></p><p>open_basedir 不能限制 exec,system<br>比如 exec(&quot;ls /&quot;)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2014-11-02 17:48:49</span></div><p></p><p>你能保证你的vps上php就是最新版本的？<br>我看市面上大部分php都还是5.2 5.3的吧，最新版本当然不能绕过，否则就是0day了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">spooky</span> <span class="reply-time">2014-10-29 13:47:27</span></div><p></p><p>open_basedir绕过方法也有版本局限吧，并不是那么多通用的可以绕过最新版本好吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2014-08-29 09:44:42</span></div><p></p><p>哦 多么痛的领悟～～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2014-08-27 19:37:30</span></div><p></p><p>@/fd 曾说过<br>“open_basedir有1W种方法绕过”，自己领悟吧。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2014-08-27 17:07:47</span></div><p></p><p>为什么我还是觉得open_basedir比这不止简单1..</p><p></p></div></div></div></div></div></main>

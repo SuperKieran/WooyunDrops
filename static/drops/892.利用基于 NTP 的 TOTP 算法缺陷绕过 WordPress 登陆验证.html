@@ -1,0 +1,277 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">利用基于 NTP 的 TOTP 算法缺陷绕过 WordPress 登陆验证</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          Her0in</a>
+        <span class="bull">·</span>
+        <time title="2015/11/17 11:02" ui-time="" datetime="2015/11/17 11:02" class="published ng-binding ng-isolate-scope">2015/11/17 11:02</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p>近日，国外安全研究人员 Gabor 发表了两篇关于如何利用基于 NTP （Network Time Protocol）的验证算法缺陷绕过 WordPress 登陆验证的文章，这两篇文章分别介绍了<a href="https://blog.gaborszathmari.me/2015/11/11/tricking-google-authenticator-totp-with-ntp/">基于 NTP 的验证算法缺陷</a>以及<a href="https://blog.gaborszathmari.me/2015/11/11/bypassing-wordpress-login-pages-with-wpbiff/">如何利用该缺陷绕过 WordPress 登陆验证</a>并给出了 POC 和相关工具。以下内容是对这两篇文章的汇总介绍。 ；）</p>
+
+<h1>0x00 WordPress 插件 Google Authenticator 验证算法介绍</h1>
+
+<hr>
+
+<p>关于 NTP 相关的知识，可以在<a href="http://baike.baidu.com/link?url=aDjxXw3OivotsPntFuppRDAiJsN_rgrUP3NEHdqZXrvXbzwo7ed4PNmgtZxuAV0ojPyHHco4KYNZfpJjbBnvGK">这里</a>进行了解。</p>
+
+<h2>基于 NTP 的 TOTP 算法</h2>
+
+<p>现在以 WordPress 的一款插件 Google Authenticator 为例来说明一般的 token 生成程序生成一次性密码（TOTP）的实现细节。</p>
+
+<!--more-->
+
+<p>如下图所示，程序会使用一个密钥种子与当前服务器的时间戳进行 TOTP 算法后得出一个 6 位纯数字的 Token，该 Token 每 30 秒更换一次，其实这就是我们常见的 “动态口令”。</p>
+
+<p>在这个动态口令生成过程中所存在的问题就在于每次使用相同的密钥种子和时间戳的组合总会生成一个相同的动态口令。而密钥种子是个不变量同时在攻击中不可控，因此只要控制了时间戳那么即可生成任意时间戳所对应的动态口令。</p>
+
+<p><img alt="" img-src="199a223394c20ea749240646e4de0787d4237d5b.jpg"></p>
+
+<p>图 1 ：基于 NTP 的 TOTP 算法</p>
+
+<h2>修改服务器时钟进行攻击</h2>
+
+<p>从目前来看有很多使用 NTP 的网络都没有对 NTP 传输过程进行加密验证。因此，攻击者就可以修改 NTP 传输的数据进行中间人攻击，给 NTP 客户端提供一个伪造的时间戳。 Gabor 在文章中提到了几个早先对 NTP 进行安全研究的文章资料和工具。</p>
+
+<ul>
+<li><a href="https://github.com/PentesterES/Delorean">Delorean</a> 是一个可以对 NTP 客户端发送伪造的时间戳的工具。 </li>
+<li><a href="http://www.cs.bu.edu/~goldbe/papers/NTPattack.pdf">Attacking the Network Time Protocol</a> 这篇文章提供了其他几种针对 NTP 的攻击向量。 </li>
+<li><a href="https://www.youtube.com/watch?v=hkw9tFnJk8k">Jose Selvi’s presentation at DEF CON 23</a> 是一个在 DEF CON 23 中对 NTP 研究的议题视频（需翻墙）。 </li>
+</ul>
+
+<p>结合以上工具以及多种中间人攻击技术就可以通过 NTP 控制远程服务器的时钟。</p>
+
+<p>在 Unix 中设置时间的 ntpd 服务不会接受一个伪造的虚假时间戳，所以无法进行时间戳的伪造攻击。不过，可以结合 <a href="https://bugzilla.redhat.com/show_bug.cgi?id=1271076">CVE-2015-5300</a> 漏洞进行攻击。</p>
+
+<p>另外一种设置时间的方法是 <a href="https://en.wikipedia.org/wiki/Ntpdate">ntpdate</a>。这种设置方式非常简单，也是 <a href="https://help.ubuntu.com/community/UbuntuTime">Ubuntu Wiki</a> 中推荐的方式。因此，在很多地方都使用了这种方式进行时间设置。你可以参考<a href="https://supermarket.chef.io/cookbooks/ntpdate">官方手册</a> 和 <a href="http://www.psce.com/blog/kb/how-to-periodically-synchronize-time-in-linux/">这篇博文</a>进行设置。</p>
+
+<p>设置的方式极其简单，在 corntab 中运行 <code>ntpdate &lt;hostname&gt;</code> 即可。但是值得注意的是 <strong>ntpdate 会接受任何来自于 NTP 服务的数据流！</strong>。</p>
+
+<p>几个有名的开源项目，如 <a href="https://bugzilla.yoctoproject.org/show_bug.cgi?id=6433">Yocto Project</a>，<a href="http://wiki.openwrt.org/doc/howto/ntp.client">OpenWRT</a>，<a href="https://github.com/doejo/wordpress-cookbooks/blob/master/packages/ntpdate.rb">Startups</a>，还有<a href="https://github.com/search?q=ntpdate+cron&amp;type=Code&amp;utf8=%E2%9C%93">托管在 GitHub </a>上的无数配置脚本，以及 <a href="https://hub.docker.com/r/tutum/ntpd/~/dockerfile/">5 万多 Docker 用户</a>，甚至包括 <a href="http://wiki.vps.net/vps-net-features/cloud-servers/getting-started/getting-started-with-linux-keeping-your-server-on-time-with-ntp/">VPS 提供商</a> 都使用了 <strong>ntpdate</strong> 进行时间同步设置。</p>
+
+<p><a href="https://lists.debian.org/debian-user/2002/12/msg04091.html">早在 2002年</a> 就有人提出使用 corntab 运行 ntpdate 不是一个好主意。</p>
+
+<h1>0x01 绕过 WordPress 登陆验证</h1>
+
+<hr>
+
+<p>通过上述描述，让我们来总结一下攻击 NTP 的现有条件：</p>
+
+<ul>
+<li>ntpd 和 ntpdate 都容易遭到 MITM 攻击</li>
+<li>已经有现成的工具可以对 NTP 进行攻击 </li>
+<li>可以控制并修改 TOTP 算法的时间戳</li>
+</ul>
+
+<p>WordPress 中的插件 <a href="https://wordpress.org/plugins/google-authenticator/">Google Authenticator</a> 可以对 WordPress 后台登录开启双重验证。如下图所示：</p>
+
+<p><img alt="" img-src="44e5577c08a9d139b367ca89ccede14fbe893583.jpg"></p>
+
+<p>图 2 ：Google Authenticator 插件对 WordPress 后台登录开启双重验证</p>
+
+<p>由于可以利用中间人攻击设置服务器的时间一直为指定的时间，因此，可以使用暴力破解的手段对动态口令进行破解。大约最多需要一百万次的破解尝试。</p>
+
+<h2>攻击测试</h2>
+
+<p>搭建如下网络环境：</p>
+
+<ul>
+<li>3 台 Ubuntu 虚拟机</li>
+<li><a href="https://github.com/PentesterES/Delorean">Delorean NTP 服务器</a></li>
+<li>WordPress v4.3.1 并安装 <a href="https://wordpress.org/plugins/google-authenticator/">Google Authenticator 插件 v3.8.11</a></li>
+<li><a href="https://github.com/gszathmari/wpbiff">双重验证爆破工具 WPBiff</a>（支持 Google Authenticator 和 WP Google Authenticator 插件）</li>
+</ul>
+
+<p>整个网络非常简单，三台 Ubuntu 虚拟机需要处于同一个子网中。如下图所示：</p>
+
+<p><img alt="" img-src="8806b77d9603486cd75f8f9998feb851c2c251ff.jpg"></p>
+
+<p>图 3 ：搭建攻击网络环境</p>
+
+<p>为了模拟中间人攻击以<a href="http://arstechnica.com/security/2015/10/new-attacks-on-network-time-protocol-can-defeat-https-and-create-chaos/">篡改 NTP 传输数据</a>，我们首先需要修改 WordPress 服务器的 <code>/etc/hosts</code> 文件，如下图所示：</p>
+
+<p><img alt="" img-src="523bdc8bc8647b7cf16f4c701328b2caafa18948.jpg"></p>
+
+<p>图 4 ：修改 /etc/hosts 文件</p>
+
+<p>其次，我们假设管理员使用计划任务每隔一分钟同步一次时间（事实上很多人都是这么做的），如下图所示：</p>
+
+<p><img alt="" img-src="c7c7a103ba7529161287d9c67ab15a7827a25d3c.jpg"></p>
+
+<p>图 5 ：管理员每隔一分钟同步一次时间</p>
+
+<p>然后，我们使用预先设置的时间作为参数执行 Delorean ，同时 WordPress 服务器依旧会每隔一分钟同步一次时间。</p>
+
+<p><img alt="" img-src="50baba4a82d8f7cf076260aa35492a4b022a81ed.jpg"></p>
+
+<p>图 6 ：使用预先设置的时间作为参数执行 Delorean</p>
+
+<p>现在，我们在另外一台虚拟机中，也就是攻击者的机器中运行 WPBiff。设置 WordPress 后台登录用户名和密码，以及与上图相同的时间戳作为运行参数。如下图所示：</p>
+
+<p><img alt="" img-src="0f50e71131fa2368c860bb46e803ae313a741bcf.jpg"></p>
+
+<p>图 7 ：运行 WPBiff 开始攻击</p>
+
+<p>在 WPBiff 运行了 39 分钟后，成功的爆破出了 6 位纯数字动态口令，同时 dump 出了有效的登陆 WordPress 后台的 session cookies。如下图所示：</p>
+
+<p><img alt="" img-src="8bbdba76c51af6d5a79986baa1334986dbf5c791.jpg"></p>
+
+<p>图 8 ：成功爆破出了动态口令</p>
+
+<p>由于插件不允许动态口令的重用，所以可以使用 dump 出来的 session cookies 直接登录 WordPress 后台。 在额外的三次测试中，又分别花费了 51分钟，57分钟，83分钟 爆破出了动态口令。</p>
+
+<p><img alt="" img-src="8a5cd17b3c9fa6899492596a74d3caf43b42f28c.jpg"></p>
+
+<p>图 9 ：成功登陆 WordPress 后台</p>
+
+<h1>0x02 参考 &amp; 引用</h1>
+
+<ul>
+<li><a href="https://blog.gaborszathmari.me/2015/11/11/tricking-google-authenticator-totp-with-ntp/">https://blog.gaborszathmari.me/2015/11/11/tricking-google-authenticator-totp-with-ntp/ </a> </li>
+<li><a href="https://blog.gaborszathmari.me/2015/11/11/bypassing-wordpress-login-pages-with-wpbiff/">https://blog.gaborszathmari.me/2015/11/11/bypassing-wordpress-login-pages-with-wpbiff/</a></li>
+</ul>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/9510" rel="bookmark" id="re1">WordPress 利用 XMLRPC 高效爆破 原理分析</a></li>
+			<li><a href="http://drops.wooyun.org/papers/596" rel="bookmark" id="re2">WordPress < 3.6.1 PHP 对象注入漏洞</a></li>
+			<li><a href="http://drops.wooyun.org/papers/6024" rel="bookmark" id="re3">WordPress 评论功能Xss 始末</a></li>
+			<li><a href="http://drops.wooyun.org/papers/8988" rel="bookmark" id="re4">WordPress Vulnerability Analysis (CVE-2015-5714 &amp; CVE-2015-5715)</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">explorepress</span>
+                 <span class="reply-time">2015-11-28 22:38:37</span>
+        </div>
+        <p></p><p>看到这个不要做坏事，期待WP继续升级增强安全性，期待小编您的互访！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">BATA</span>
+                 <span class="reply-time">2015-11-22 12:51:22</span>
+        </div>
+        <p></p><p>学习了</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link"><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2d1c6d1f034e4240">[email&#160;protected]</a></span>
+                 <span class="reply-time">2015-11-17 13:34:37</span>
+        </div>
+        <p></p><p>卤煮辛苦啦</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">xsser</span>
+                 <span class="reply-time">2015-11-17 13:10:44</span>
+        </div>
+        <p></p><p>如果可以控制服务器的时间 那很多证据是不是都无效了？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">猪猪侠</span>
+                 <span class="reply-time">2015-11-17 12:43:06</span>
+        </div>
+        <p></p><p>@南靖男 恩，研究思路是对的，实战价值不是太高，有些可惜</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">南靖男</span>
+                 <span class="reply-time">2015-11-17 12:29:00</span>
+        </div>
+        <p></p><p>@猪猪侠 是中间人攻击 ntpdate 的服务器。如果 wordpress 后台是 https 就无法直接用中间人攻击。</p>
+<p>说实在的，ntpdate 已经在两年前就弃用了。当时很不理解，为什么文档提供了 ntpdate 方法，但又不建议使用。ntpd 要服务要端口，没有 ntpdate 那么直接有效。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">猪猪侠</span>
+                 <span class="reply-time">2015-11-17 11:44:00</span>
+        </div>
+        <p></p><p>都能中间人了，这样不是多此一举？</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

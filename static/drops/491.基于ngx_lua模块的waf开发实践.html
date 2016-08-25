@@ -1,0 +1,75 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">基于ngx_lua模块的waf开发实践</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">zhangsan</a> <span class="bull">·</span> <time title="2015/03/06 9:15" ui-time="" datetime="2015/03/06 9:15" class="published ng-binding ng-isolate-scope">2015/03/06 9:15</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 常见WAF简单分析</h1><hr><p>WAF主要分为硬件WAF和软件防火墙，硬件WAF如绿盟的NSFOCUS Web Application Firewall，软件防火墙比较有名的是ModSecurity，再就是代码级别的ngx&#95;lua&#95;waf。下面谈谈个人对几款防火墙的理解：</p><p>硬件WAF个人觉得只适合在那种访问量较少的网站，比如政府网站，公司的介绍网站等等。硬件WAF的的优势在于规则有专门的安全公司维护，管理方便，但也存在一个致命的弱点，使用传统的方式来解包到应用层对性能的需求较高，而且当访问量很大的时候延时比较大，这样在高并发访问的情况下要使用硬件WAF就只能使用很多台WAF了，这样成本就非常高了；还有一个在接触过程中发现的问题，就是硬件WAF的规则虽然多而且有人维护，但是一般公司很难敢直接开启阻难，很多都是只记录，并不能阻难，这样WAF的意义就变得小多了。</p><p>ModSecurity在网上的评价都是很高的，性能高，规则全。最开始我研究的也是这款WAF，但是在实际使用过程中发现问题，就是在高并发的情况下，运行一段时间，会出现内存飙升，而且不下来的问题。这个问题再ModSecurity的讨论论坛上面也发现了有人提出这样的问题，但一直未解决（https://github.com/SpiderLabs/ModSecurity/issues/785）。针对于规则全的优势，一般使用者也不敢直接开启所有的规则拦截，毕竟每个公司的业务不同，规则也不可能直接套用。</p><p>基于高性能，低成本的想法，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b2573d23553c02560834f2deddc4d7c1dad7dede570e32573d23552836dcd5ca">[email&#160;protected]</a>&#95;lua&#95;waf，经过实际使用下来，确实性能极好，由于LUA语言的性能是接近于C的，而且ngx&#95;lua&#95;module本身就是基于为nginx开发的高性能的模块。安全宝的云 WAF，以及cloudflare的新waf也是基于此模块使用LUA开发的。结合ModSecurity的思路，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cd28424f254d4e8da1a2bba8bea5a8a1a12a5749a3aab5">[email&#160;protected]</a>&#95;lua&#95;waf来开发适合自己用的WAF，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="07e282b1e3bfaae3bab8e093afe3bd81e2b98fe2a39d476b687162746f626b6be09d83e280bae192b7">[email&#160;protected]</a>，再此也表示感谢。</p><h1>0x01 WAF框架设计</h1><hr><p>WAF开发过程中的主要方向为：</p><ul><li>主引擎的开发，主要关注主引擎的性能和容错能力</li><li>规则的开发，主要关注规则的全面可靠，防勿拦截以及防绕过</li><li>整体方案能够适应多站点，高可用性的环境</li></ul><p>WAF的主要功能为：</p><ul><li>ip黑白名单</li><li>url黑白名单</li><li>useragent黑白名单</li><li>referer黑白名单</li><li>常见web漏洞防护，如xss，sql注入等</li><li>cc攻击防护</li><li>扫描器简单防护</li><li>其他你想要的功能</li></ul><p>WAF的总体检测思路：</p><ul><li>当用户访问到nginx时，waf首先获取用户的ip，uri，referer，useragent，，cookie，args，post，method，header信息。</li><li>将获取到的信息依次传给上述功能的函数，如ip规则，在ip规则中，循环到所有的ip规则，如果匹配到ip则根据规则的处理方式来进行处理，匹配到之后不继续匹配后续规则。</li><li>需要开启的功能依次在主函数中调用即可，顺序也可根据实际场景来确定最合适的顺序。</li></ul><p>图示如下：</p><p><img alt="enter image description here" img-src="bfc479de023d9e04659dccd72a19d45711e73bde.jpg"></p><h1>0x02 规则格式分析</h1><hr><p>规则说明：</p><p>比如规则：{"rule00001","rules","args|post|cookie",[[../]],"deny","logon"},</p><p>rule00001：规则编号，随意写</p><p>rules：规则名称，如xssrules，随意写</p><p>args|post|cookie|header：检测位置，|表示或，args，post，cookie，header可多选</p><p>../：匹配的正则表达式，标准PCRE正则</p><p>deny：处理方式，可选deny ，allow</p><p>logon：日志记录与否，可选logon，logoff</p><h1>0x03 cc攻击防护代码示例</h1><hr><pre><code>#!bash
+--在nginx.conf的HTTP中加入
+--lua_shared_dict limit 50m; 根据主机内存调合适的值
+--lua_shared_dict iplimit 20m;
+--lua_shared_dict blockiplimit 5m;
+-------------------------------------------------------------
+CCDeny="on"   --cc攻击开关
+CCrate="60/60"--基于url的计数 次/秒
+ipCCrate="600/60"--基于ip的计数 次/秒
+-------------------------------------------------
+ccdenyrules={"ccdeny1","ccdeny","","","","logon"}
+function gethost()
+    host = ngx.var.host
+    if host == nil or type(host) ~= "string" then
+        math.randomseed(os.time())
+        host = "nohost"..math.random()
+    end
+    return host
+end
+
+function denycc(clientdata)
+    if CCDeny=="on" then
+        local uri=clientdata[2]
+        local host = gethost()
+        CCcount=tonumber(string.match(CCrate,'(.*)/'))
+        CCseconds=tonumber(string.match(CCrate,'/(.*)'))
+        ipCCcount=tonumber(string.match(ipCCrate,'(.*)/'))
+        ipCCseconds=tonumber(string.match(ipCCrate,'/(.*)'))
+        local token = clientdata[1]..host..uri
+        local clientip = clientdata[1]..host
+        local limit = ngx.shared.limit
+        local iplimit = ngx.shared.iplimit
+        local blockiplimit = ngx.shared.blockiplimit
+        local req,_=limit:get(token)
+        local ipreq,_=iplimit:get(clientip)
+        local blockipreq,_=blockiplimit:get(clientip)
+        if blockipreq or ipreq then
+            if blockipreq or req then
+                if blockipreq or req &gt;= CCcount or ipreq &gt;= ipCCcount  then
+                    log(ccdenyrules,clientdata)
+                    blockiplimit:set(clientip,1,300)
+                    ngx.exit(403)
+                    return true
+                else
+                    limit:incr(token,1)
+                    iplimit:incr(clientip,1)
+                end
+            else
+                limit:set(token,1,CCseconds)
+            end
+        else
+            iplimit:set(clientip,1,ipCCseconds)
+        end
+    end
+    return false
+end
+</code></pre><h1>0x04 优势举例</h1><hr><p>可以很灵活的实现复杂的控制</p><p>比如我在我的个人网站上面就使用了这样一个功能，后台页面需要特定useragent才能访问。</p><p>代码如下：</p><pre><code>#!bash
+--特定页面容许特定useragent可访问
+function houtai(clientdata)
+    if stringmatch(clientdata[2],"wp-admin") then
+        if stringmatch(clientdata[4],"hahahaha") then
+            return
+        else
+            ngx.exit(403)
+            return
+        end
+    else
+        return
+    end
+end
+</code></pre><p>可以测试http://www.zhangsan.me/wp-admin/</p><p>只有在特定的useragent才可以访问此页面，否则报403错误。</p><h1>0x05 源码下载及使用</h1><hr><p>源码下载地址为：http://pan.baidu.com/s/18QQya</p><p>环境搭建就参考：http://wiki.nginx.org/HttpLuaModule#Installation</p><p>waf使用主要就是配置config.lua</p><p>SecRuleEngine = "on" attacklog = "on" logpath = "/home/waflog/"</p><p>分别为引擎是否开启 是否记录日志 日志的存储路径 日志的存储路径需要给予nginx运行用户的读写权限</p><h1>0x06 后续研究方向</h1><hr><ul><li>1.根据ModSecurity规则提取一份较适应自己用的规则</li><li>2.根据最新出现的漏洞维护规则</li><li>3.在多个站点的情况下，如果在站点变动，规则变动的时候，不影响其他站点，实现高可用性。</li></ul><p>写的很简单，大牛勿喷，希望大家多提建议。</p><h1>0x07 参考资料</h1><hr><pre><code>1. https://github.com/loveshell/ngx_lua_waf
+2. http://wiki.nginx.org/HttpLuaModule
+3. http://www.freebuf.com/tools/54221.html
+……
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re1">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/tips/734" rel="bookmark" id="re2">通过nginx配置文件抵御攻击</a></li><li><a href="http://drops.wooyun.org/tips/2460" rel="bookmark" id="re3">用Burpsuite 来处理csrf token</a></li><li><a href="http://drops.wooyun.org/tips/12677" rel="bookmark" id="re4">LUA脚本虚拟机逃逸技术分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蝎子</span> <span class="reply-time">2016-06-10 19:30:31</span></div><p></p><p>waf使用主要就是配置config.lua<br>SecRuleEngine = \&quot;on\&quot; attacklog = \&quot;on\&quot; logpath = \&quot;/home/waflog/\&quot;<br>=============<br>我的config.lua里边只有 attacklog 和 logdir， 没找到SecRuleEngine和logpath，版本差异？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蝎子</span> <span class="reply-time">2016-06-10 19:29:55</span></div><p></p><p>waf使用主要就是配置config.lua<br>SecRuleEngine = &quot;on&quot; attacklog = &quot;on&quot; logpath = &quot;/home/waflog/&quot;<br>=============<br>attacklog 和 logdir， 没找到SecRuleEngine和logpath，版本差异？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">请教问题</span> <span class="reply-time">2016-04-14 10:39:32</span></div><p></p><p>access_by_lua_file /usr/local/nginx/conf/waf2/waf.lua<br>在nginx中需要加这行代码吗？这行代码的作用是什么？ @zhangsan</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪猪出来冒个泡</span> <span class="reply-time">2016-04-14 10:36:46</span></div><p></p><p>你好，我在搭建这个代码环境的时候出了些问题，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="23cb8c94cab48dc685a1c79eb6cba2b7c49098c6ab93c79e8363594b424d4450424d">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2015-05-06 21:50:59</span></div><p></p><p>LUA语言的性能是接近于C,这话我怎么遭的住</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">greg.wu</span> <span class="reply-time">2015-03-29 10:25:03</span></div><p></p><p>绿盟的兄弟。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xysky</span> <span class="reply-time">2015-03-25 15:56:26</span></div><p></p><p>硬件WAF目前用过F5、imperva、绿盟，前两个还行，不存在楼主说的性能不行的问题，国产的的确是放在流量小的地方了，你懂的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">f4ckbaidu</span> <span class="reply-time">2015-03-12 16:22:59</span></div><p></p><p>苹果用的哪家的，impreva？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.Anderson</span> <span class="reply-time">2015-03-09 18:54:26</span></div><p></p><p>“硬件WAF个人觉得只适合在那种访问量较少的网站”。你访问下苹果官网试试。他们用的就是硬件WAF :) 多谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">smarttang</span> <span class="reply-time">2015-03-07 13:19:35</span></div><p></p><p>关注下，最好有相关的东西。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞侠</span> <span class="reply-time">2015-03-06 22:37:32</span></div><p></p><p>关注下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑翼</span> <span class="reply-time">2015-03-06 10:36:47</span></div><p></p><p>学习下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zhangsan</span> <span class="reply-time">2015-03-06 10:09:30</span></div><p></p><p>我不是说ngx_lua_waf比modsecurity性能高，放弃使用modsecurity的主要原因是在高并发的时候会出现内存飙升的情况。你可以看看https://github.com/SpiderLabs/ModSecurity/issues/785这个讨论。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">marshal</span> <span class="reply-time">2015-03-06 09:48:03</span></div><p></p><p>按照你说的ngx_lua_waf优势在于性能高，能否将性能测试数据，以及与modsecurity或硬件WAF做一个对比？</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,35 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">XML安全之Web Services</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">L.N.</a> <span class="bull">·</span> <time title="2015/03/31 10:37" ui-time="" datetime="2015/03/31 10:37" class="published ng-binding ng-isolate-scope">2015/03/31 10:37</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x01 引言</h1><hr><p>前段时间搞站遇到了TRS的系统里面涉及到了ws（Web Services简称）的相关技术，不久前玩一个xx酒店的时候又通过ws进入了它的数据库，后来接连遇到或看见一些app服务和物联网相关系统中出现XML相关漏洞，于是搜索相关资料做技术积累。如果文中出现错误，望指正。</p><h1>0x02 什么是WS</h1><hr><p>Web Service是基于网络的、分布式的模块化组件，它执行特定的任务，遵守具体的技术规范，这些规范使得Web Service能与其他兼容的组件进行互操作。 Web Services 利用 SOAP 和 XML对这些模型在通讯方面作了进一步的扩展以消除特殊对象模型的障碍。Web Services 主要利用 HTTP 和 SOAP 协议使业务数据在 Web 上传输，SOAP通过 HTTP 调用业务对象执行远程功能调用，Web 用户能够使用 SOAP 和 HTTP通过 Web 调用的方法来调用远程对象的。（来至百度百科）。</p><p>简单的说WS就是http + XML，WS平台的元素有：SOAP、UDDI、WSDL。</p><h1>0x03 xml注入（soap注入）</h1><hr><p>以下将介绍一些利用场景，漏洞是千变万化的肯定不全，也不是每种环境都适用。</p><h2>情景1：</h2><p>漏洞：</p><pre><code>#!html
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;USER role="guest"&gt;attacker's code&lt;/USER&gt;
+</code></pre><p>poc:</p><pre><code>#!html
+A&lt;/USER&gt;&lt;USER role="admin"&gt;B
+</code></pre><h2>情景2：</h2><p>漏洞：</p><p><img alt="enter image description here" img-src="913eef61e143a9c1b54c3bb3891cfd914a35e489.jpg"></p><p>改变了<lname><lname>为空，通过返回错误发现loginid作为登陆判断：</lname></lname></p><p><img alt="enter image description here" img-src="e4f18f5c9bc68b217d3aff540dcaf430ffafbaa6.jpg"></p><p>poc:</p><p><img alt="enter image description here" img-src="7cca99bc66cafde5780bcb9377fc36a4dba36e0a.jpg"></p><p>结果bypass登陆：</p><p><img alt="enter image description here" img-src="b6420d17aea6205d83b295d036fabd7d450a005f.jpg"></p><h2>情景3：</h2><pre><code>#!html
+&lt;transaction&gt;
+     &lt;total&gt;6000.00&lt;total&gt;
+     &lt;credit_card_number&gt;12345&lt;/credit_card_number&gt; //12345可控,覆盖&lt;total&gt;标签
+     &lt;expiration&gt;01012008&lt;/expiration&gt;
+&lt;/transaction&gt;
+</code></pre><p>poc:</p><pre><code>#!html
+12345&lt;/credit_card_number&gt;&lt;total&gt;1.00&lt;/total&gt;&lt;credit_card_number&gt;12345
+</code></pre><h1>0x03 SQL注入和xpath注入</h1><hr><p>总所周知SQL注入，注入的是数据库，作为owasp top10的漏洞，存在相当的普遍，ws中也同样存在。wooyun上也同样存在案例 <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-094720">WooYun: 安盛天平某平台系统可被getshell第四弹，并存在注入</a> ，这种ws上的sql注入漏洞也是非常容易被忽略的。至于sql注入的利用，不用多少，不同数据库不同注入手法，和我们常见的sql注入方法一样，并无区别。</p><p>xpath注入，在wooyun上谈论的很少，中文资料也不是很多。简单的形容如果xml作为数据库的话xpath讲究相当与sql语句，因此如果服务器是用xml格式来存储数据，我们用xpath来调用数据，当传入参数过滤不严的时候，就可能照成xpath注入，当然xpath注入还有很多技巧和函数的使用以及和xxe结合使用之类的技巧，在此不多说。</p><p>举一ws注入xpath利用场景：</p><pre><code>#!html
+&lt;sopaenv:Body&gt;
+&lt;web1:Login xmlns:web1="http://ws.ws.com/"&gt;
+&lt;username&gt;abc&lt;/username&gt;
+&lt;password&gt;123&lt;/password&gt;
+&lt;/web1:Login&gt;
+&lt;/sopaenv:Body&gt;
+</code></pre><p>假如正常的xpath查询：</p><pre><code>string(//Employee[username/text()='abc' and password/text()='123']/account/text())
+</code></pre><p>我们控制可以控制username或者password，输入</p><pre><code>' or '1' = '1
+</code></pre><p>最后xpath查询成为：</p><pre><code>string(//Employee[username/text()='' or '1' = '1' and password/text()='' or '1' = '1']/account/text())
+</code></pre><p>绕过登陆，当让xpath的利用不知如此，比如使用doc()函数读取任意xml文件、使用doc()和xxe读取任意文件。</p><h1>0x04 DDOS和XXE</h1><hr><p>为什么会有DDOS和XXE呢，前面已经说过了ws可以看成xml和http的结合，因此XML相关漏洞也是可能会出现在ws之中的，关于xml中的DDOS和XXE都是各位大牛都做了很多分析：</p><p>DDOS上有：长数据DDOS、多标签DDOS</p><p>例如:</p><pre><code>#!html
+&lt;transaction&gt;
+       &lt;total&gt;6000.00&lt;total&gt;
+       &lt;credit_card_number&gt;12345&lt;/credit_card_number&gt;
+       &lt;credit_card_number&gt;qqqq&lt;/credit_card_number&gt;  
+       &lt;credit_card_number&gt;qqqq&lt;/credit_card_number&gt;  
+       &lt;credit_card_number&gt;qqqq&lt;/credit_card_number&gt;  
+       &lt;credit_card_number&gt;qqqq&lt;/credit_card_number&gt;  
+       ``````
+       &lt;expiration&gt;01012008&lt;/expiration&gt;
+&lt;/transaction&gt;
+</code></pre><p>xxe漏洞drops上已有文章：http://drops.wooyun.org/tips/5290，以及利用xxe漏洞DDOS，利用xxe漏洞SSRF、命令执行关于这连个漏洞推荐两篇文章：《Having Fun with XML hacking》、《XML实体攻击-从内网探测到命令执行步步惊心》</p><h1>0x05 上传漏洞</h1><hr><p>这两个都是危害非常大的漏洞：</p><p>上传漏洞，ws是可以上传附件的，典型的例子就是trs上传漏洞</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-092138">WooYun: 安徽省公路管理网站任意文件写入漏洞</a></p><h1>0x06 总结</h1><hr><p>从上面的攻击方式不难看出分为两类：</p><ul><li><p>1.xml相关攻击技术；</p></li><li><p>2.使用soap请求传输数据，数据进去其他函数或程序引起的漏洞（sql注入、文件上传等所有常见漏洞）</p></li></ul><p>因此漏洞利用形式多种多样，不同场景会有不同利用方式结合使用或者是bypass，掌握基础的知识才能在遇到的时候灵活运用。</p><h1>0x07 引用</h1><hr><p>http://resources.infosecinstitute.com/soap-attack-2/</p><p>https://www.blackhat.com/presentations/bh-europe-07/Bhalla-Kazerooni/Whitepaper/bh-eu-07-bhalla-WP.pdf</p><p>https://www.owasp.org/index.php/Testing&#95;for&#95;Web_Services</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4605" rel="bookmark" id="re1">SQL Injection via DNS</a></li><li><a href="http://drops.wooyun.org/web/11861" rel="bookmark" id="re2">Web应用隐形后门的设计与实现</a></li><li><a href="http://drops.wooyun.org/papers/1321" rel="bookmark" id="re3">wechall mysql关卡题解</a></li><li><a href="http://drops.wooyun.org/papers/42" rel="bookmark" id="re4">Json hijacking/Json劫持漏洞</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">LoveSnow</span> <span class="reply-time">2015-11-23 20:56:34</span></div><p></p><p>不错不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Blunber</span> <span class="reply-time">2015-08-06 17:19:04</span></div><p></p><p>涨姿势了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">好人一生平安</span> <span class="reply-time">2015-06-11 15:52:38</span></div><p></p><p>学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">laterain</span> <span class="reply-time">2015-04-01 08:26:56</span></div><p></p><p>来给学长点赞了(๑´ڡ`๑)</p><p></p></div></div></div></div></div></main>

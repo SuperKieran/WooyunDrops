@@ -1,0 +1,67 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">异常中的异常——借助系统异常处理特例实现匪夷所思的漏洞利用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">xlab</a> <span class="bull">·</span> <time title="2016/04/07 10:11" ui-time="" datetime="2016/04/07 10:11" class="published ng-binding ng-isolate-scope">2016/04/07 10:11</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author：<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="daaeb5b7b8b1bfbfaabfa89a325f643274753d545e3c777c3f74443370563f747e">[email&#160;protected]</a></strong></p><h1>0x00 简介</h1><hr><p>内存的读、写、执行属性是系统安全最重要的机制之一。通常，如果要改写内存中的数据，必须先确保这块内存具有可写属性，如果要执行一块内存中的代码，必须先确保这块内存具有可执行属性，否则就会引发异常。然而，Windows系统的异常处理流程中存在一些小小的特例，借助这些特例，就可以知其不可写而写，知其不可执行而执行。</p><h1>0x01 直接改写只读内存</h1><hr><p>我在CanSecWest 2014的演讲《ROPs are for the 99%》中介绍了一种有趣的IE浏览器漏洞利用技术：通过修改JavaScript对象中的某些标志，从而关闭安全模式，让IE可以加载类似WScript.Shell这样的危险对象，从而执行任意代码而完全无需考虑DEP。</p><p>不过，修改SafeMode标志并非是让IE可以加载危险对象的唯一方法。</p><p>IE浏览器的某些界面实际上是用HTML实现的，这些HTML通常存储在ieframe.dll的资源中，例如：打印预览是<code>res://ieframe.dll/preview.dlg</code>，整理收藏夹是<code>res://ieframe.dll/orgfav.dlg</code>，页面属性则是<code>res://ieframe.dll/docppg.ppg</code>。</p><p>IE浏览器会为这些HTML创建独立的渲染实例，以及独立的JavaScript引擎实例。而为这些HTML创建的JavaScript引擎实例中，SafeMode本身就是关闭的。</p><p>所以，只需将JavaScript代码插入到ieframe.dll的资源中，然后触发IE的相应功能，被插入的代码就会被当作IE自身的功能代码在SafeMode关闭的JavaScript实例下执行。</p><p>不过，PE的资源节是只读的，如果试图用某个能对任意地址进行写入的漏洞直接改写ieframe.dll的资源，会触发写访问违例：</p><pre><code>#!bash
+eax=00000041 ebx=1e2e31b0 ecx=00000000 edx=00000083 esi=1e2e31b0 edi=68b77fe5
+eip=69c6585f esp=0363ac00 ebp=0363ac84 iopl=0         nv up ei pl nz na pe cy
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010207
+jscript9!Js::JavascriptOperators::OP_SetElementI+0x117:
+69c6585f 88040f          mov     byte ptr [edi+ecx],al      ds:002b:68b77fe5=76
+0:008&gt; !exchain
+0363b0f0: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+1570 (69b421d1)
+0363b648: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+1570 (69b421d1)
+0363bab8: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+1570 (69b421d1)
+0363bb78: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+28c0 (69c71564)
+0363bbc0: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+2898 (69c7150f)
+0363bc44: jscript9!DListBase&lt;CustomHeap::Page&gt;::DListBase&lt;CustomHeap::Page&gt;+276a (69d0dedd)
+0363c588: MSHTML!_except_handler4+0 (66495fa4)
+  CRT scope  0, filter: MSHTML! ... Omitted... (6652bbe8) 
+                func:   MSHTML!... Omitted... (6652bbf1)
+0363c62c: user32!_except_handler4+0 (7569a61e)
+  CRT scope  0, func:   user32!UserCallWinProcCheckWow+123 (75664456)
+0363c68c: user32!_except_handler4+0 (7569a61e)
+  CRT scope  0, filter: user32!DispatchMessageWorker+15e (756659b7)
+                func:   user32!DispatchMessageWorker+171 (756659ca)
+0363f9a8: ntdll!_except_handler4+0 (776a71f5)
+  CRT scope  0, filter: ntdll!__RtlUserThreadStart+2e (776a74d0)
+                func:   ntdll!__RtlUserThreadStart+63 (776a90eb)
+0363f9c8: ntdll!FinalExceptionHandler+0 (776f7428)
+</code></pre><p>在上面的异常处理链中，mshtml.dll中的异常处理函数最终会调用kernel32!RaiseFailFastException()。如果g_fFailFastHandlerDisabled标志是false，就会终止当前进程：</p><pre><code>#!cpp
+int __thiscall RaiseFailFastExceptionFilter(int this) {
+  signed int **v1; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b2d7c1dbf283">[email&#160;protected]</a>
+  CONTEXT *v2; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e0b3b4d0d4bfd4a0d2">[email&#160;protected]</a>
+  signed int v3; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="86e3e7fec6b4">[email&#160;protected]</a>
+  UINT v4; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c99a9df9f196fd89fd">[email&#160;protected]</a>
+  HANDLE v5; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6b0e0a132b5f">[email&#160;protected]</a>
+
+  v1 = (signed int **)this;
+  if ( !g_fFailFastHandlerDisabled )
+  {
+    v2 = *(CONTEXT **)(this + 4);
+    g_fFailFastHandlerDisabled = 1;
+    RaiseFailFastException(*(PEXCEPTION_RECORD *)this, v2, 2u);
+    v3 = 1653;
+    if ( *v1 )
+      v3 = **v1;
+    v4 = v3;
+    v5 = GetCurrentProcess();
+    TerminateProcess(v5, v4);
+  }
+  return 0;
+}
+</code></pre><p>但是，如果g_fFailFastHandlerDisabled标志为true，异常处理链就会执行到kernel32!UnhandledExceptionFilter()，并最终执行kernel32!CheckForReadOnlyResourceFilter()：</p><pre><code>#!cpp
+int __stdcall CheckForReadOnlyResourceFilter(int a1) {
+  int result; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ff9a9e87bfcd">[email&#160;protected]</a>
+
+  if ( BasepAllowResourceConversion )
+    result = CheckForReadOnlyResource(a1, 0);
+  else
+    result = 0;
+  return result;
+}
+</code></pre><p>如果BasepAllowResourceConversion 也为true，CheckForReadOnlyResource()函数就会将试图写入的那个内存分页的属性设为可写，然后正常返回。</p><p>也就是说，如果先将g_fFailFastHandlerDisabled和BasepAllowResourceConversion这两个标志改写为true，之后就可以直接修改ieframe.dll的资源，而不必担心其只读属性的问题，操作系统会处理好一切。</p><p>另外还有个小问题。如果像上面所说的那样触发了一次CheckForReadOnlyResource()中的修改内存属性的操作，内存属性的RegionSize也会变成一个内存分页的大小，通常是0x1000。而IE在以ieframe.dll中的HTML资源创建渲染实例前，mshtml!GetResource()函数会检查资源所在内存的RegionSize属性，如果该属性小于资源的大小，就会返回失败。然而，只需将要改写的资源从头到尾全部改写一遍， RegionSize就会相应变大，从而绕过这个检查。</p><p>这样，利用Windows写访问异常对PE文件资源节开的绿灯，就可以写出非常奇妙的漏洞利用代码。</p><h1>0x02 直接执行不可执行内存</h1><hr><p>我在VARA 2009的演讲《漏洞挖掘中的时间维度》中介绍了一种较为少见的模块地址释放后重用漏洞。比如一个程序中线程A调用了模块X的函数，模块X又调用了模块Y的函数。模块Y的函数由于某种原因，耗时比较长才能返回。在它返回前，如能让线程B将模块X释放，那么模块Y的函数返回时，返回地址将是无效的。当时发现在Opera浏览器中可以利用Flash模块触发这种漏洞，一款国产下载工具也有类似问题。</p><p><img alt="p1" img-src="6249bf169b4f510363e05bc4246ee7524df48122.jpg"></p><p>另外还有不少其它类型的漏洞，最终表现也和上述问题一样，可以执行某个固定的指针，但无法控制该指针的值。在无DEP环境下，这些漏洞并不难利用，只要喷射代码到会被执行的地址即可。而在DEP环境下，这些漏洞通常都被认为是不可能利用的。</p><p>但如果在预期会被执行到的地址喷射下面这样的数据：</p><pre><code>#!cpp
+typedef struct _THUNK3 {
+    UCHAR MovEdx;       // 0xba         mov edx, imm32
+    LONG EdxImmediate; 
+    UCHAR MovEcx;       // 0xb9         mov ecx, imm32
+    LONG EcxImmediate; // &lt;- put your Stack Pivot here
+    USHORT JmpEcx;      // 0xe1ff       jmp ecx
+} Thunk3;
+</code></pre><p>即使在DEP环境下，尽管堆喷射的内存区域确定无疑不可执行，但你会惊奇地发现系统似乎还是执行了这些指令，跳到ecx所设定的地址去了。只要把ecx设为合适的值，就可以跳往任何地址，继而执行ROP链。</p><p>这是因为Windows系统为了兼容某些老版本程序，实现了一套叫ATL thunk emulation的机制。系统内核在处理执行访问异常时，会检查异常地址处的代码是否符合ATL thunk特征。对符合ATL thunk特征的代码，内核会用KiEmulateAtlThunk()函数去模拟执行它们。</p><p>ATL thunk emulation机制会检查要跳往的地址是否位于PE文件中，在支持CFG的系统上还会确认要跳往的地址能否通过CFG检查。同时，在Vista之后的Windows默认 DEP policy 下，ATL thunk emulation机制仅对没有设置 IMAGE&#95;DLLCHARACTERISTICS&#95;NX_COMPAT的程序生效。如果程序编译时指定了/NXCOMPAT参数，就不再兼容ATL thunk emulation了。不过还是有很多程序支持ATL thunk emulation，例如很多第三方应用程序，以及32 位的 iexplore.exe。所以，类似Hacking Team泄露邮件中的CVE-2015-2425，如能用某种堆喷成功抢占内存，也可借此技巧实现漏洞利用。</p><p>这样，利用系统异常处理流程中的ATL thunk emulation能直接执行不可执行内存的特性，就可以让一些通常认为无法利用的漏洞起死回生。</p><p>（本文大部分内容完成于2014年10月，涉及的模块地址、符号信息等基于Windows Technical Preview 6.4.9841 x64 with Internet Explorer 11。）</p><h1>0x03 参考</h1><hr><ol><li><a href="https://cansecwest.com/slides/2014/ROPs_are_for_the_99_CanSecWest_2014.pdf">ROPs are for the 99%, CanSecWest 2014</a></li><li><a href="https://www.trailofbits.com/resources/bypassing_browser_memory_protections_vista_paper.pdf">Bypassing Browser Memory Protections</a></li><li><a href="http://blog.trendmicro.com/trendlabs-security-intelligence/gifts-from-hacking-team-continue-ie-zero-day-added-to-mix/">(CVE-2015-2425) “Gifts” From Hacking Team Continue, IE Zero-Day Added to Mix</a></li><li>《漏洞挖掘中的时间维度》，VARA 2009</li></ol><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

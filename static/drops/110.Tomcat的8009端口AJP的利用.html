@@ -1,0 +1,69 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Tomcat的8009端口AJP的利用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mickey</a> <span class="bull">·</span> <time title="2013/11/15 12:28" ui-time="" datetime="2013/11/15 12:28" class="published ng-binding ng-isolate-scope">2013/11/15 12:28</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>Tomcat在安装的时候会有下面的界面，我们通常部署war，用的最多的是默认的8080端口。</p><p>可是当8080端口被防火墙封闭的时候，是否还有办法利用呢？</p><p>答案是可以的，可以通过AJP的8009端口，下面是step by step。</p><p><img alt="2013111512070655523.png" img-src="7c0fbe6031e25b41b9e7129e26f4f28b1c2bb59b.jpg"></p><p>下面是实验环境：</p><pre><code>192.168.0.102   装有Tomcat 7的虚拟主机，防火墙封闭8080端口 
+192.168.0.103   装有BT5系统的渗透主机 
+</code></pre><p>首先nmap扫描，发现8009端口开放</p><p><img alt="2013111512075970614.png" img-src="3c59de4d6daf52905a68c0b96694a33ad4d7aee1.jpg"></p><p>BT5默认apache2是安装的，我们仅需要安装mod-jk</p><pre><code>#!shell
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="53213c3c27133e3a3038362a">[email&#160;protected]</a>:~# apt-get install libapache2-mod-jk 
+</code></pre><p>jk.conf的配置文件如下：</p><pre><code>#!shell
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a4d6cbcbd0e4c9cdc7cfc1dd">[email&#160;protected]</a>:/etc/apache2/mods-available# cat jk.conf  
+
+# Update this path to match your conf directory location 
+
+JkWorkersFile /etc/apache2/jk_workers.properties 
+
+# Where to put jk logs 
+
+# Update this path to match your logs directory location 
+
+JkLogFile /var/log/apache2/mod_jk.log 
+
+# Set the jk log level [debug/error/info] 
+
+JkLogLevel info 
+
+# Select the log format 
+
+JkLogStampFormat "[%a %b %d %H:%M:%S %Y]" 
+
+# JkOptions indicate to send SSL KEY SIZE, 
+
+JkOptions +ForwardKeySize +ForwardURICompat -ForwardDirectories 
+
+# JkRequestLogFormat set the request format 
+
+JkRequestLogFormat "%w %V %T" 
+
+# Shm log file 
+
+JkShmFile /var/log/apache2/jk-runtime-status
+</code></pre><p>jk.conf软连接到/etc/apache2/mods-enabled/目录</p><pre><code>#!shell
+ln -s /etc/apache2/mods-available/jk.conf /etc/apache2/mods-enabled/jk.conf
+</code></pre><p>配置 jk_workers.properties</p><pre><code>#!shell
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e4968b8b90a4898d878f819d">[email&#160;protected]</a>:/etc/apache2# cat jk_workers.properties  
+
+worker.list=ajp13 
+
+# Set properties for worker named ajp13 to use ajp13 protocol, 
+
+# and run on port 8009 
+
+worker.ajp13.type=ajp13 
+
+worker.ajp13.host=192.168.0.102       &lt;\---|这里是要目标主机的IP地址 
+
+worker.ajp13.port=8009 
+
+worker.ajp13.lbfactor=50 
+
+worker.ajp13.cachesize=10 
+
+worker.ajp13.cache_timeout=600 
+
+worker.ajp13.socket_keepalive=1 
+
+worker.ajp13.socket_timeout=300 
+</code></pre><p>默认站点的配置</p><p><img alt="2013111512095536811.png" img-src="9a4a0c0ebdd81099951c74d22882b5be56514dd5.jpg"></p><p>重启apache</p><pre><code>#!shell
+sudo a2enmod proxy_ajp 
+
+sudo a2enmod proxy_http 
+
+sudo /etc/init.d/apache2 restart 
+</code></pre><p>现在apache的mod_jk模块就配置好了，访问192.168.0.103的80端口，就被重定向到192.168.0.102的8009端口了，然后就可以部署war了。</p><p><img alt="2013111512103969324.png" img-src="514a57ae7088f06790203215a6eb08485c831ef6.jpg"></p><p>对渗透有兴趣的朋友，加我多交流 ：）</p><p></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/653" rel="bookmark" id="re1">搭建基于Suricata+Barnyard2+Base的IDS前端Snorby</a></li><li><a href="http://drops.wooyun.org/tips/413" rel="bookmark" id="re2">CentOS 6.2下安装基于Suricata + Barnyard 2 + Base 的⼊侵检测系统</a></li><li><a href="http://drops.wooyun.org/tips/783" rel="bookmark" id="re3">远程备份数据库和文件的方法</a></li><li><a href="http://drops.wooyun.org/tips/3827" rel="bookmark" id="re4">PHP文件包含漏洞总结</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Secer</span> <span class="reply-time">2016-04-20 18:37:38</span></div><p></p><p>命令还差一个<br>···<br>a2enmod jk<br>···</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ca1n</span> <span class="reply-time">2015-11-30 22:17:38</span></div><p></p><p>@1c3z 同 = = 还是目标站点的80口</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2015-08-01 15:23:16</span></div><p></p><p>现在apache的mod_jk模块就配置好了，访问192.168.0.103的80端口，就被重定向到192.168.0.102的8009端口了，然后就可以部署war了。<br>然而并没有，还是默认的80端口页面</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">www</span> <span class="reply-time">2014-12-13 23:32:08</span></div><p></p><p>这文章比较傻 实践还要装tomcat 文章没有说</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">spiderman</span> <span class="reply-time">2014-07-03 09:57:07</span></div><p></p><p>请问rootsecurity实验成功了吗？我实验了一下，不成功啊<br>manager/html密码是需要哪个？<br>那位大神实验成功了，给指点下？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑人</span> <span class="reply-time">2014-06-24 03:25:16</span></div><p></p><p>原文。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑人</span> <span class="reply-time">2014-06-24 03:24:31</span></div><p></p><p>http://diablohorn.wordpress.com/2011/10/19/8009-the-forgotten-tomcat-port/</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">qglfnt</span> <span class="reply-time">2014-04-06 00:17:20</span></div><p></p><p>jk.conf 没这个文件</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Zvall</span> <span class="reply-time">2013-12-08 19:12:49</span></div><p></p><p>nmap里面有相关脚本</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">net2</span> <span class="reply-time">2013-12-05 09:51:59</span></div><p></p><p>楼主实力确实可以，但是你起码也要把英语原始出处链接，给贴出来吧。怎么说，原创也不容易。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rootsecurity</span> <span class="reply-time">2013-11-26 16:37:23</span></div><p></p><p>本地测试了一下，我去，这关键是manager/html那块要谁的密码，自己机器的还是别人机器的呢？要是必须知道manager密码才能搞的话，就没意思了吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xss_art</span> <span class="reply-time">2013-11-24 19:41:53</span></div><p></p><p>吊炸天啊。。。。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">核攻击</span> <span class="reply-time">2013-11-24 14:36:48</span></div><p></p><p>这思路想必定是极好的！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xeyes</span> <span class="reply-time">2013-11-24 10:47:05</span></div><p></p><p>屌炸天.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2013-11-23 16:58:22</span></div><p></p><p>单纯是来看设置了密码会如何的，看来有密码也不行啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无敌L.t.H</span> <span class="reply-time">2013-11-22 22:30:49</span></div><p></p><p>ajp开放的比较少吧，机会不多，但也能做一种思路。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">兜兜</span> <span class="reply-time">2013-11-21 14:13:40</span></div><p></p><p>如果是tomcat-user里面用户名密码设置 或者都是注释的 可以用吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">se55i0n</span> <span class="reply-time">2013-11-20 17:54:15</span></div><p></p><p>在内网就能逆天~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2013-11-19 17:57:56</span></div><p></p><p>99%是封8009开8080，思路赞一下。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2013-11-17 16:43:58</span></div><p></p><p>可是当8080端口被防火墙封闭的时候<br>这个条件就已经非常艰难了，如果8080作为应用端口一般是不可能没事就干掉的。端口被未打开或干掉的情况可能也会是因为根本就没有启动tom猫。tom猫默认是没有配置管理的账户的，所以穿越了也没法登录后台。但是虽然这种情况只在极少数，楼主的思路也是极好。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c2y2</span> <span class="reply-time">2013-11-16 13:06:44</span></div><p></p><p>貌似还跟那边tomcat本地设置有关系，如果那边直接把host-manager 或者默认管理目录删除了，或者那边配置了tomcat管理密码，或者server.xml配置了 8009端口本地回环，这个方法也就，失效了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c2y2</span> <span class="reply-time">2013-11-16 11:18:19</span></div><p></p><p>8009链接上就可以发送数据么？这也太淫荡了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wuxianjun</span> <span class="reply-time">2013-11-16 10:37:19</span></div><p></p><p>思想比较淫荡.看了这个协议，不知道可否直接发数据包过去？<br>http://wenku.baidu.com/link?url=YUYUv_ifLAKOj6cWZ2FAoPsQPTihweP5oH2Gmvu91luelon39RBOzkL1K6rVRjzQ1UFHEEeeGUgBBkSHKWPRt6BoDEfI9X_eiU7ug6MvwUG</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Pentest.mobi</span> <span class="reply-time">2013-11-15 14:50:24</span></div><p></p><p>强大</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小忆</span> <span class="reply-time">2013-11-15 14:21:35</span></div><p></p><p>这招用的……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">带馅儿馒头</span> <span class="reply-time">2013-11-15 13:23:01</span></div><p></p><p>消灭零回复，楼主淫荡~</p><p></p></div></div></div></div></div></main>

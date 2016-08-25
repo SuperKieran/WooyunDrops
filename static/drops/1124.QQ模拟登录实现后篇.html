@@ -1,0 +1,67 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">QQ模拟登录实现后篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">iv4n</a> <span class="bull">·</span> <time title="2016/04/01 11:23" ui-time="" datetime="2016/04/01 11:23" class="published ng-binding ng-isolate-scope">2016/04/01 11:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 概述</h1><hr><p>本来是和上篇文章一起发的，后来出去，就搁置了。</p><p>比较高兴有人参与讨论和吐(B)槽(4)，其实本身也没啥高大上的技术，只是自己在对以前工具做review和重构的时候发现，这些东西很少人在讨论分享，所以也就放出来，算是抛砖引玉。</p><p>今天分享两个东西。</p><ul><li>QQ模拟登录实现之愚公移山（流程自实现）</li><li>QQ模拟登陆实现之草船借箭（客户端快速登录实现）</li></ul><p>当然，干货也就意味着乏味，如果大家不想看文章的可以直接看代码。</p><p>第一个分享是对我上一篇文章的补充，<a href="http://drops.wooyun.org/tips/13556">QQ模拟登录实现之四两拨千斤(基于V8引擎)</a></p><p>自己参考TX JS代码实现的加密流程，因为个人能力有限，所以TX的tea算法是直接引用的hoxide 2005基于python的实现。</p><p>第二个分享其实是主要是利用QQ客户端实现快速登录，快速登录对环境有一定的依赖，但是也有很多好处，我们不用处理密码；当然，这种登录方式的使用场景比较有限，目前主要在爬虫和扫描器的场景。</p><h1>0x01 QQ模拟登录实现之愚公移山（流程算法实现）</h1><hr><p>在上一篇文章：<a href="http://drops.wooyun.org/tips/13556">QQ模拟登录实现之四两拨千斤(基于V8引擎)</a></p><p>中我们分享了QQ帐号密码登录的流程和基于JS引擎实现的密码加密方式，我们用一种简单实用的方式实现了“能用”。</p><p>但是对于一个做安全爱好者，有时候我们需要深入一些，整个加密的流程和算法，我们是不是自己可以实现一套？所以，本文的重点，是对TX密码处理流程的分析。</p><h2>密码处理流程</h2><h3>总体说明</h3><p>了解了登录流程，我们在要分析和实现模拟登录需要考虑一个问题，密码是如何处理的？</p><p>要了解密码是如何处理的，我们先要了解以下3种算法：MD5，RSA，TEA。其中MD5是hash算法，比较常用；RSA是一种非对称加密算法，大家也比较了解。这里需要说明一下TEA算法。</p><p>TEA算法Tiny Encryption Algorithm，是一种分组加密算法，实现比较简单。TEA算法使用64位的明文分组和128位的密钥，需要进行 64 轮迭代。</p><p>不过TX&#95;TEA算法对传统的TEA算法进行了一些修改，具体的原理可以参考登录的JS。这里简单说明下：TX只使用了16轮迭代；TX&#95;TEA加密的是数据流，并且采用的是反馈随机交织填充方式。</p><h3>加密流程</h3><p><strong>加密总流程图</strong></p><p><img alt="p1" img-src="5b3d2f69d67669204c71e9af8d68aa9e5e3c75c0.jpg"></p><p>基本上看懂这个流程图，就明白QQ密码的加密流程了。</p><p>浅蓝色的是来源数据，绿色是一些密码的处理方法（加密、HASH、替换）。</p><p>来源数据：</p><pre><code>密码：password
+salt：salt，来源于check接口的返回
+verifycode: 来源于check接口的返回
+rsaKey在js源码里面可以获取
+</code></pre><p>数据说明：</p><ul><li>rsaData: rsa(md5(pwd), rsaKey)</li><li>hex_verifycode： verifycode 的16进制</li></ul><p>最后进行tea算法tea(v, k)</p><ul><li>v是 （rsaDataLen + rsaData + salt + verifycodeLen + hex_verifycode） 的byte数组</li><li>k是 md5(md5(pwd) + salt) 的byte数组</li></ul><p>结果进行base64编码</p><p>Replace是做一个简单的替换，对以下3个字符进行替换</p><pre><code>/ -&gt; -
++ -&gt; *
+= -&gt; _
+</code></pre><p>最后得出加密的密码，长度为216的字符串，形式参考如下：</p><pre><code>#!bash
+37Hro2-AgR4d8ZkU1L-6FqYhTUdhywhLlD2WihfVZGqZmz5R1RlwBsYPNowY0ZHJxcISmwpW0e7ppcoEDTGYyM5*6ZPJNUnZnb4h4Ke*qIBnFlTkiYFUhUwvXgOEvfIDTgCZIWsiFT6EauXujkB2i5yNFobx9aN5vw2xFyE1E2VoF*LV952q0mQO-HiooQZfMocl13kxFgxtVQaSRpm7Rg__
+</code></pre><p>参考代码：</p><pre><code>#!python
+def tx_pwd_encode(self, pwd, salt, verifycode):
+    """
+    js:getEncryption(t, e, i, n)
+    t=pwd, e=salt 二进制形式, i=verifycode, n:default undefined
+    # """
+    salt = salt.replace(r'\x', '')
+    e = self.fromhex(salt)
+    md5_pwd = o = self.tx_md5(pwd)
+    r = hashlib.md5(pwd).digest()
+    p = self.tx_md5( r + e )
+    a = rsa.encrypt(r, self.rsaKey)
+    rsaData = a = binascii.b2a_hex(a)
+
+    # rsa length
+    s = self.hexToString( len(a)/2 )
+    s = s.zfill(4)
+
+    # verifycode先转换为大写，然后转换为bytes
+    verifycodeLen = hex(len(verifycode)).replace(r"0x","").zfill(4)
+    l = binascii.b2a_hex( verifycode.upper() )
+
+    # verifycode length
+    c = self.hexToString( len(l)/2 )
+    c = c.zfill(4)
+
+    # TEA: KEY:p, s+a+ TEA.strToBytes(e) + c +l
+    new_pwd = s + a + salt + c + l
+    saltpwd = base64.b64encode(
+            tea.encrypt( self.fromhex(new_pwd), self.fromhex(p) )
+    ).decode().replace('/', '-').replace('+', '*').replace("=", "_")
+</code></pre><p>代码传送门：<br><a href="https://github.com/LeoHuang2015/qqloginjs/blob/master/autologin_account.py">https://github.com/LeoHuang2015/qqloginjs/blob/master/autologin_account.py</a></p><h1>0x02 QQ模拟登陆实现之草船借箭（客户端快速登录实现）</h1><hr><p>我们在对QQ进行爬取和扫描的时候，很多时候需要考虑到登录的情况，如果使用用户名密码的方式，可能因为一些风控规则，当我们多次登陆时就要求图片验证码，而使用快速登录就能很好的规避这种情况。</p><h3>流程梳理</h3><p>客户端快速登录方式是用户在PC端已经登录了QQ客户端软件，如果用户再打开Web页面进行登陆，不用再输入用户名和密码，只需要选择已经登录的帐号，点击确认登录即可。</p><p><img alt="p2" img-src="0450ded0b35b4ec86415700cb2f1c7159a5703dc.jpg"></p><p>快速登录的本质上是使用clientkey置换token。</p><p>QQ客户端登陆后会生成一个长224的clientkey认证字符串，每次登陆都会变化，参考如下：</p><pre><code>#!bash
+000156DCEB4E0068663F53B8B402784291BB6E74C482BFB6367FF48FB970443E9B9682359E8F1F92D5A814B097D12D938B96B30742DDE5CDA8E453EB7CD31A5121416637D945615C661285F5306884D959184AB1E4F7CFA83BC9FAF069C1E5878320ECF79EF8751320763492752A1433
+</code></pre><p>早期快速登录的实现方式是各个浏览器使用插件，如IE的 ActiveX控件支持的，firefox是插件，通过插件植入clientkey。</p><p>后续支持非插件的形式，每次动态的访问QQ客户端绑定的本地server（localhost.ptlogin2.qq.com）获取clientkey，然后再用clientkey去置换token。</p><h3>整体流程</h3><p>客户端快速登录主要分为两种情况：</p><p>一种是插件模式，直接使用clientkey置换token登陆；</p><p>另外一种是费插件模式，或者clientkey出现一些异常情况，通过请求server把clientkey设置到cookie，然后再置换token登陆。</p><p><img alt="p3" img-src="4789d3b342bb25075c14cd661d515d3cd69e77bd.jpg"></p><h3>流程分析</h3><h4>clientkey存在且正常/插件模式</h4><p><strong>1.组件加载&amp;获取用户头像信息</strong></p><p>同帐号和密码登陆，只是这里获取已经登陆QQ客户端的用户头像和昵称。</p><p>获取登陆信息，用户<br><a href="http://ptlogin2.qq.com/getface">http://ptlogin2.qq.com/getface</a></p><p>返回：帐号、头像地址（有多个客户端登陆的帐号，请求多个）</p><p><strong>2.登陆</strong></p><p>用户点击登陆，实际上是一个clientkey置换token的过程。</p><p>请求会带上clientkey进行认证<br><a href="http://ptlogin2.qq.com/jump">http://ptlogin2.qq.com/jump</a></p><p>如果client不正确，则会登陆失败，后续登陆不会信任原来的clientkey，会走clientkey不存在/异常的流程。</p><h4>clientkey不存或者异常/没有安装插件</h4><p><strong>1.组件加载&amp;获取用户信息&amp;获取用户头像信息</strong></p><p>由于clientkey这里会多一步获取用户信息的流程</p><p>参考url:</p><pre><code>#!bash
+http://localhost.ptlogin2.qq.com:4300/pt_get_uins
+?callback=ptui_getuins_CB
+&amp;r=0.5314265366275367
+&amp;pt_local_tk=0.3291951622654449
+</code></pre><p>返回，账号信息，客户端类型，昵称等信息</p><p>PS：这里如果获取不到会进行重试，一共5次，比如http的端口依次是4300,4302,4304,4306,4308。</p><p>然后再获取用户头像信息（同上）。</p><p><strong>2.登陆</strong></p><p>获取clientkey</p><p>参考URL：</p><pre><code>#!bash
+http://localhost.ptlogin2.qq.com:4300/pt_get_st
+?clientuin=1802014971
+&amp;callback=ptui_getst_CB
+&amp;r=0.11057236711379814
+&amp;pt_local_tk=0.3291951622654449
+</code></pre><p>返回：设置clientkey到cookie，返回回调方法</p><pre><code>#!js
+var var_sso_get_st_uin={uin:"1802014971"};ptui_getst_CB(var_sso_get_st_uin);
+</code></pre><p>然后进行登陆置换<br><a href="http://ptlogin2.qq.com/jump">http://ptlogin2.qq.com/jump</a></p><p>返回：设置cookie</p><pre><code>#!js
+ptui_qlogin_CB('0', 'http://www.qq.com/qq2012/loginSuccess.htm', '');
+</code></pre><p>设置完cookie后，再请求ptlogin2.qq.com域的如下url来完成对ptlogin2.qq.com域和qq.com域的认证cookie的设置，同时删除clientuin和clientkey这两个cookie值。</p><h3>模拟实现</h3><p>我们需要模拟实现的快速登录，需要走非插件模式的流程，流程本身比较简单，也没有比较复杂的算法，如下：</p><ul><li>获取签名</li><li>获取客户端QQ号码</li><li>用户名和环境检测</li><li>获取clientkey</li><li>置换token</li></ul><p><img alt="p4" img-src="dc342da4e282fd4461e3472389ded5579c5010d8.jpg"></p><p>这里有两个安全点需要注意：</p><ol><li>Token校验：请求的<code>pt_local_tk</code>会和cookie中的<code>pt_local_tk</code>校验；</li><li>Referrer验证：referer限制了QQ域。</li></ol><p>参考代码：</p><pre><code>#!python
+def get_client_uins(self):
+    '''
+    get client unis info
+    need: token check &amp; referer check
+    '''
+    tk =  "%s%s" %(random.random(), random.randint(1000, 10000) )
+    self.session.cookies['pt_local_token'] = tk
+    self.session.headers.update({'Referer':'http://ui.ptlogin2.qq.com/'})
+</code></pre><p>具体实现参考代码：<br><a href="https://github.com/LeoHuang2015/qqloginjs/blob/master/autologin_quick.py">https://github.com/LeoHuang2015/qqloginjs/blob/master/autologin_quick.py</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">iv4n</span> <span class="reply-time">2016-05-02 12:00:48</span></div><p></p><p>@cmxz 1. 建议仔细看一下第一篇文章，里面说的清清楚楚，同一个帐号的salt怎么会不同呢？ 2. 很多系统的设计需要考虑很多因素，安全性只是一方面，尽管是做安全行业，但是也需要了解一些系统设计和切合实际情况，比如TX的帐号体系，你可以考虑一下他们10年前怎么设计的，后续为了加强安全性就全部推翻？怎么兼容？ 用户的密码怎么迁移？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">iv4n</span> <span class="reply-time">2016-05-02 11:55:05</span></div><p></p><p>@hawkfirm 验证码没啥讨论的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">iv4n</span> <span class="reply-time">2016-05-02 11:54:11</span></div><p></p><p>@hungry 这就是普通的登录流程。登录的js也不复杂，自己也可以调试一下和抓包进行验证</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hungry</span> <span class="reply-time">2016-04-27 01:10:44</span></div><p></p><p>想问下，楼主是怎么找出这个流程的，可否加下qq:1341078994</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hawkfirm</span> <span class="reply-time">2016-04-12 17:57:20</span></div><p></p><p>验证码怎么突破，取出验证码图片链接，验证码就失效了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我去年没买表</span> <span class="reply-time">2016-04-02 06:25:53</span></div><p></p><p>@cmxz<br>salt不会变，变得是verifycode。<br>腻自己走下流程活着看下里面的代码就造了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cmxz</span> <span class="reply-time">2016-04-01 13:36:17</span></div><p></p><p>看了下1，难道腾讯数据库中存的还是MD5(password)？<br>我试了下同一账号每次登录时salt值是不同的<br>从encrypt_pwd替换那几个字符后得到TPWD1，要得到K，必须有MD5(MD5(pwd)+salt)，因为salt每次不同，所以K的值每次都需要有MD5(pwd)进行计算</p><p>另外，有人知道为何会设计的如此复杂吗？<br>只需要RSA(MD5(pwd))应该就可以达到和上述设计一样的安全性了吧！？<br>抛去使用https可防止窃听和修改不谈，在http下，如果攻击者只能窃听，无法修改，那么RSA(MD5(pwd))就可以防止获取到MD5(pwd)值，如果攻击者可以修改，那么上述设计也无任何作用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">莫里</span> <span class="reply-time">2016-04-01 11:38:37</span></div><p></p><p>屌</p><p></p></div></div></div></div></div></main>

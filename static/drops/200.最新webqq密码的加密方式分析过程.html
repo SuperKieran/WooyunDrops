@@ -1,0 +1,245 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">最新webqq密码的加密方式分析过程</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">等TA回来</a> <span class="bull">·</span> <time title="2014/03/27 15:53" ui-time="" datetime="2014/03/27 15:53" class="published ng-binding ng-isolate-scope">2014/03/27 15:53</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>授人以鱼，不如授人以渔，今天就分享一个 分析qq加密的过程。</p><p>工具：谷歌浏览器自带的的调试工具（在浏览器中按F12呼出）</p><p>以下是全过程，历时4个的小时。</p><p>提交的时候调用 onFormSubmit</p><pre><code>#!js
+function onFormSubmit(form)
+{
+        if (form.remember_uin.checked){
+                return ptui_onLoginEx(form, "qq.com")
+        }else{                                
+                var myDate=new Date();
+                myDate.setFullYear(1971,1,1);
+                pt.cookie.set("ptui_loginuin",  "", myDate, '/', 'ui.ptlogin2.qq.com');
+                return ptui_onLogin(form);
+        }
+}
+</code></pre><p>如果用户没有勾选保存密码调用 <code>ptui_onLogin</code></p><pre><code>#!js
+function ptui_onLogin(A) {
+    try {
+        if (parent.ptlogin2_onLogin) {
+            if (!parent.ptlogin2_onLogin()) {
+                return false
+            }
+        }
+        if (parent.ptlogin2_onLoginEx) {
+            var D = A.u.value;
+            var B = A.verifycode.value;
+            if (str_uintip == D) {
+                D = ""
+            }
+            if (!parent.ptlogin2_onLoginEx(D, B)) {
+                return false
+            }
+        }
+    } catch(C) {}
+    return ptui_checkValidate(A)
+}
+</code></pre><p>接下来调用 <code>ptui_checkValidate(A)</code></p><pre><code>#!js
+function ptui_checkValidate(B) {
+    var A = B.u;                                        //此处获取用户名
+    var D = B.p;                                        //此处获取密码
+    var E = B.verifycode;                        //此处获取验证码
+    if (A.value == "" || str_uintip == A.value) {
+        pt.show_err(str_no_uin);
+        A.focus();
+        return false
+    }
+    A.value = A.value.trim();
+    if (!pt.chkUin(A.value)) {
+        pt.show_err(str_inv_uin);
+        A.focus();
+        A.select();
+        return false
+    }
+    if (D.value == "") {
+        pt.show_err(str_no_pwd);
+        D.focus();
+        return false
+    }
+    if (E.value == "") {
+        if (!isLoadVC) {
+            loadVC(true);
+            g_submitting = true;
+            return false
+        }
+        pt.show_err(str_no_vcode);
+        try {
+            E.focus()
+        } catch(C) {}
+        if (!g_loadcheck) {
+            ptui_reportAttr(78028)
+        } else {
+            ptui_reportAttr(78029)
+        }
+        return false
+    }
+    if (E.value.length &amp;lt; 4) {
+        pt.show_err(str_inv_vcode);
+        E.focus();
+        E.select();
+        return false
+    }
+    if (isLoadVC &amp;amp;&amp;amp; !(/^[a-zA-Z0-9]+$/.test(E.value))) {
+        pt.show_err(str_correct_vcode);
+        E.focus();
+        E.select();
+        return false
+    }
+    D.setAttribute("maxlength", "32");
+    ajax_Submit();
+    ptui_reportNum(g_changeNum);
+    g_changeNum = 0;
+    return true
+}
+</code></pre><p>然后：</p><pre><code>#!js
+function ajax_Submit() {
+    if (pt.checkRet == -1 || pt.checkRet == 3) {
+        pt.show_err(pt.checkErr[window.g_lang]);
+        try {
+            $("p").focus()
+        } catch(B) {}
+        return
+    }
+    var A = getSubmitUrl("login");
+    pt.winName.set("login_param", encodeURIComponent(login_param));
+    pt.loadScript(A);
+    return
+}
+</code></pre><p>最后在这个函数中加密组装提交地址：</p><pre><code>#!js
+function getSubmitUrl(K) {
+    var E = true;
+    var C = document.forms[0];
+    var A = (pt.isHttps ? "https://ssl.": "http://") + "ptlogin2." + g_domain + "/" + K + "?";
+    var B = document.getElementById("login2qq");
+    if (pt.regmaster == 2) {
+        A = "http://ptlogin2.function.qq.com/" + K + "?regmaster=2&amp;amp;"
+    } else {
+        if (pt.regmaster == 3) {
+            A = "http://ptlogin2.crm2.qq.com/" + K + "?regmaster=3&amp;amp;"
+        }
+    }
+    for (var J = 0; J &amp;lt; C.length; J++) {
+        if (K == "ptqrlogin" &amp;amp;&amp;amp; (C[J].name == "u" || C[J].name 
+== "p" || C[J].name == "verifycode" || C[J].name == "h")) {
+            continue
+        }
+        if (C[J].name == "ipFlag" &amp;amp;&amp;amp; !C[J].checked) {
+            A += C[J].name + "=-1&amp;amp;";
+            continue
+        }
+        if (C[J].name == "fp" || C[J].type == "submit") {
+            continue
+        }
+        if (C[J].name == "ptredirect") {
+            g_ptredirect = C[J].value
+        }
+        if (C[J].name == "low_login_enable" &amp;amp;&amp;amp; (!C[J].checked)) {
+            E = false;
+            continue
+        }
+        if (C[J].name == "low_login_hour" &amp;amp;&amp;amp; (!E)) {
+            continue
+        }
+        if (C[J].name == "webqq_type" &amp;amp;&amp;amp; !B &amp;amp;&amp;amp; (!C[J].checked)) {
+            continue
+        }
+        A += C[J].name;
+        A += "=";
+        if (C[J].name == "u" &amp;amp;&amp;amp; pt.needAt) {
+            A += pt.needAt + "&amp;amp;";
+            continue
+        }
+        if (C[J].name == "p") {
+            var M = C.p.value;
+            var I = hexchar2bin(md5(M));
+            var H = md5(I + pt.uin);
+            var G = md5(H + C.verifycode.value.toUpperCase());
+            A += G
+        } else {
+            if (C[J].name == "u1" || C[J].name == "ep") {
+                var D = C[J].value;
+                var L = "";
+                if (g_appid == "1003903" &amp;amp;&amp;amp; B) {
+                    L = /\?/g.test(D) ? "&amp;amp;": "?";
+                    var F = document.getElementById("webqq_type").value;
+                    L += "login2qq=" + B.value + "&amp;amp;webqq_type=" + F
+                }
+                A += encodeURIComponent(D + L)
+            } else {
+                A += C[J].value
+            }
+        }
+        A += "&amp;amp;"
+    }
+    A += "fp=loginerroralert&amp;amp;action=" + pt.action.join("-") + "-" + 
+(new Date() - g_begTime) + "&amp;amp;mibao_css=" + pt.mibao_css + "&amp;amp;t=" +
+ pt.submitN[pt.uin] + "&amp;amp;g=1";
+    A += "&amp;amp;js_type=" + pt.js_type + "&amp;amp;js_ver=" + window.g_pt_version + "&amp;amp;login_sig=" + window.g_login_sig;
+    return A
+}
+</code></pre><p>核心的加密代码如下：</p><pre><code>#!js
+if (C[J].name == "p") {
+            var M = C.p.value;
+            var I = hexchar2bin(md5(M));
+            var H = md5(I + pt.uin);        //pt.uin  估计是用户qq号的16进制表示 
+            var G = md5(H + C.verifycode.value.toUpperCase());
+            A += G
+
+var M = "××××××";var ver="!";var I = hexchar2bin(md5(M));var H = md5(I + pt.uin);var G = md5(H + ver.toUpperCase());
+</code></pre><p>hexchar2bin算法如下：</p><pre><code>#!js
+function hexchar2bin(str) {
+    var arr = [];
+    for (var i = 0; i &amp;lt; str.length; i = i + 2) {
+        arr.push("\\x" + str.substr(i, 2))
+    }
+    arr = arr.join("");
+    eval("var temp = '" + arr + "'");
+    return temp
+}
+</code></pre><p>最终加密过程如下：</p><pre><code>#!js
+md5(md5(hexchar2bin(md5(pwd))+uin)+verifycode.toUpperCase())
+
+
+
+
+
+#!js
+md5(md5(hexchar2bin(md5("××××××××"))+'\x00\x00\x00\x00\x01\xd3\xff\xf3')+"!EHZ")
+"918AAFDF8C9481F7AC2FC1C89A4DED7B"
+</code></pre><p>此处改变了 pt.uin:</p><pre><code>#!js
+function ptui_checkVC(A, C, B) {
+    clearTimeout(checkClock);
+    pt.checkRet = A;
+    pt.uin = B;
+    if (A == "2") {
+        g_uin = "0";
+        pt.show_err(str_inv_uin)
+    }
+    if (!pt.submitN[B]) {
+        pt.submitN[B] = 1
+    }
+    var E = new Date();
+    g_time.time7 = E;
+    var D = {
+        "12": g_time.time7 - g_time.time6
+    };
+    if (!curXui) {
+        ptui_speedReport(D)
+    }
+    g_loadcheck = false;
+    switch (A + "") {
+    case "0":
+    case "2":
+    case "3":
+        $("verifycode").value = C || "abcd";
+        loadVC(false);
+        break;
+    case "1":
+        $("verifycode").value = pt.needCodeTip ? str_codetip: "";
+        loadVC(true);
+        break;
+    default:
+        break
+    }
+}
+</code></pre><p>其实找出这个算法花的时间很少，只是一直找不到 ptui_checkVC 调用的地方，后来恍然大悟，在验证qq是否需要图片验证码的时候返回的就是给js调用的，地址是：</p><pre><code>https://ssl.ptlogin2.qq.com/chec ... 5Q4YxDJ8Rza4-1ubGMR*aruR6Byct1dQ&amp;u1=http%3A%2F%2Fweb2.qq.com%2Floginproxy.html&amp;r=0.5011255156714469
+</code></pre><p>返回内容如下：</p><pre><code>#!js
+ptui_checkVC('0','!BGC','\x00\x00\x00\x00\x01\xd3\xff\xf3');  
+</code></pre><p>第三个参数就是 16进制表示的qq号码</p><p>至此全搞定，剩下的就是编程实现。https方式访问。可以试试 libcurl   或者自己 用openssl+socket也可以</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">班章</span> <span class="reply-time">2016-03-18 21:25:28</span></div><p></p><p>https？全程http的好吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">..</span> <span class="reply-time">2015-11-15 13:33:32</span></div><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">niphor</span> <span class="reply-time">2014-04-04 16:32:37</span></div><p></p><p>QQ 新浪微博 什么的登陆都基本一样的流程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2014-03-31 11:17:10</span></div><p></p><p>很早以前就有人把webqq的协议和demo发出来了，调用webqq接口可以自由收发消息。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">PlO</span> <span class="reply-time">2014-03-28 10:10:04</span></div><p></p><p>http://blog.csdn.net/agoago_2009/article/details/9492961</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2014-03-28 09:33:35</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Kuuki</span> <span class="reply-time">2014-03-28 00:17:54</span></div><p></p><p>记得13年XDCTF线上赛中某题就是重现朋友网加密过程...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">不告诉你</span> <span class="reply-time">2014-03-27 22:55:24</span></div><p></p><p>前端功力很强啊</p><p></p></div></div></div></div></div></main>

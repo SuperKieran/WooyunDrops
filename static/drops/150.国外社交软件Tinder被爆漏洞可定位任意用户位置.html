@@ -1,0 +1,24 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">国外社交软件Tinder被爆漏洞可定位任意用户位置</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">news</a> <span class="bull">·</span> <time title="2014/02/21 14:29" ui-time="" datetime="2014/02/21 14:29" class="published ng-binding ng-isolate-scope">2014/02/21 14:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>Tinder是国外的一款手机交友APP，这款应用在推出的两个月内，推荐匹配了超过 100 万对的爱慕者（双方第一眼互有好感），并获取了 3500 万个用户的账号打分。而它最初的着力点，正是在校园。它的功能实际很简单：基于你的地理位置，应用每天为你“推荐”一定距离内的四个对象，根据你们在 Facebook 上面的共同好友数量、共同兴趣和关系网给出评分，得分最高的推荐对象优先展示。</p><p><img alt="enter image description here" img-src="34296b0fe1f1b4a97e78b70c00f5f7808834e4f5.jpg"></p><p>在2013年七月的时候，Tinder就被爆有API接口暴露iOS客户端的经纬度，可以定位任意用户位置。</p><p>下面介绍的这个API是新发现的，而不是之前被暴露的。</p><p>通过代理抓取iPhone的请求，抓取Tinder的通信情况，抓到一个API通过用户的ID返回信息如下：</p><pre><code>{
+   "status":200,
+   "results":{
+      "bio":"",
+      "name":"Anthony",
+      "birth_date":"1981-03-16T00:00:00.000Z",
+      "gender":0,
+      "ping_time":"2013-10-18T18:31:05.695Z",
+      "photos":[
+      //cut to save space
+      ],
+      "id":"52617e698525596018001418",
+      "common_friends":[
+
+      ],
+      "common_likes":[
+
+      ],
+      "common_like_count":0,
+      "common_friend_count":0,
+      "distance_mi":4.760408451724539
+   }
+}
+</code></pre><p>不再返回准确的GPS信息，但是<code>distance_mi</code>字段为距离信息，是一个64位双精度字段，精确度非常的高了。</p><p>利用此信息，我们就可以获取改ID对应用户的比较准确的GPS信息。看看下图你就明白了：</p><p><img alt="enter image description here" img-src="818803047821836c05118583e88797f166e50b60.jpg"></p><p>利用三个位置的距离信息就可以定位到该用户的准确位置，其原理与GPS定位是一样的。</p><p>通过伪造GPS信息，通过API​​来告诉Tinder，我在任意的位置，并查询API查找到用户的距离。</p><p>创建Tinder的3个测试账号。然后告诉了Tinder的API，我所在的三个位置，以及到该用户的距离。</p><p>然后，根据<a href="https://en.wikipedia.org/wiki/Trilateration#Derivation">公式</a>就可以算出该用户的GPS信息了。</p><p>这种问题似乎微信与陌陌之前也有，不知道现在还有没有呢？:)</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2014" rel="bookmark" id="re1">批量网站DNS区域传送漏洞检测——bash shell实现</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-14 16:23:06</span></div><p></p><p>定位妹子们</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lucky</span> <span class="reply-time">2014-02-21 15:56:57</span></div><p></p><p>不错，用来找朋友！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-02-21 15:03:47</span></div><p></p><p>要弄清这么个地理位置，除了地理好，数学棒，还得会计算</p><p></p></div></div></div></div></div></main>

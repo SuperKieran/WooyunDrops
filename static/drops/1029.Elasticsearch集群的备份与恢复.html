@@ -1,0 +1,87 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Elasticsearch集群的备份与恢复</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">rootsecurity</a> <span class="bull">·</span> <time title="2016/02/03 10:47" ui-time="" datetime="2016/02/03 10:47" class="published ng-binding ng-isolate-scope">2016/02/03 10:47</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 NFS准备</h1><hr><p>在ES集群上做一个NFS，并挂载：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e89a87879ca884878b898480879b9c">[email&#160;protected]</a> ~]# yum install nfs-utils*
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b2c0ddddc6f2deddd1d3dedaddc1c6">[email&#160;protected]</a> ~]# vi /etc/exports
+</code></pre><p>输入集群的IP地址，例如：</p><pre><code>192.168.1.2(rw)
+192.168.1.3(rw)
+192.168.1.4(rw)
+</code></pre><p>保存退出,并启动NFS服务</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e2908d8d96a28e8d81838e8a8d9196">[email&#160;protected]</a> ~]# service nfs start
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="40322f2f34002c2f23212c282f3334">[email&#160;protected]</a> ~]# service rpcgissd start
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="bfcdd0d0cbffd3d0dcded3d7d0cccb">[email&#160;protected]</a> ~]# service rpcbind start
+</code></pre><p>挂载NFS</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="60120f0f14200c0f03010c080f1314">[email&#160;protected]</a> ~]# mount elasticsearch.master:/data/es/es_backup /data/es/es_backup
+</code></pre><h1>0x01 配置</h1><hr><p>在elasticsearch.master端执行:</p><pre><code>curl -XPUT 'http://elasticsearch.master:9200/_snapshot/backup' -d '{
+"type": "fs",
+"settings": {
+    "location": "/data/es/es_backup",
+    "compress": true
+  }
+}'
+</code></pre><p>备份操作，名字根据自己的情况修改</p><pre><code>curl -XPUT http://elasticsearch.master:9200/_snapshot/backup/logstash-2016.01.01 -d '     
+{"indices":"logstash-sec-2016.01.01",
+"ignore_unavailable": "true",
+"include_global_state": false }'
+</code></pre><h1>0x02 备份常用命令</h1><hr><p>查看备份状态:</p><pre><code>curl –XGET  http://elasticsearch.master:9200/_snapshot/backup/logstash-security-2016.01.01
+</code></pre><p>删除备份</p><pre><code>curl -XDELETE  http://elasticsearch.master:9200/_snapshot/backup/logstash-security-2016.01.01
+</code></pre><p>恢复备份</p><pre><code>curl -XPOST http://elasticsearch.master:9200/_snapshot/backup/logstash-security-2016.01.01/_restore -d ' { "indices" : "logstash-security-2016.01.01"}'
+</code></pre><h1>0x03 最后附备份脚本</h1><hr><pre><code>#!python
+# -*- coding:UTF-8 -*- #
+"""
+自动备份ElaticSearch
+"""
+
+import sys,requests
+import simplejson
+import time,os
+import zipfile
+
+URL="http://elasticsearch.master:9200/_snapshot/backup"
+BAK_DIR="/var/wd/elasticsearch_backup/data" 
+ZIP_DIR="/var/wd/elasticsearch_backup/zip"
+
+if __name__=='__main__':
+    date=time.strftime('%Y.%m.%d',time.localtime(time.time()-86400))
+
+    data1={"type": "fs","settings": {"location":BAK_DIR ,"compress": True}}
+    r1=requests.post(URL,simplejson.dumps(data1))
+    print r1.text
+
+    index='logstash-sec-'+date
+    url=URL+'/'+index
+
+    #开始备份指定INDEX
+    data2={"indices":index,"ignore_unavailable": True,"include_global_state": False }
+    r2=requests.post(url,simplejson.dumps(data2))
+    print r2.text
+
+    #查询备份状态
+    r3=requests.get(url)
+    dic=simplejson.loads(r3.text)
+    while  (dic['snapshots'][0]['state']=='IN_PROGRESS'):
+        print "%s Backup is IN_PROGRESS..." % index
+        time.sleep(10)
+        r3=requests.get(url)
+        dic=simplejson.loads(r3.text)
+
+    if dic['snapshots'][0]['state']=='SUCCESS':
+        print '%s 备份成功' % index
+        try:
+            #压缩文件
+            zfile=ZIP_DIR+'/'+index+'.zip'
+            z = zipfile.ZipFile(zfile,'w',zipfile.ZIP_DEFLATED,allowZip64=True) 
+            print "开始压缩文件..."
+            for dirpath, dirnames, filenames in os.walk(BAK_DIR):  
+                for filename in filenames:  
+                    z.write(os.path.join(dirpath,filename))  
+            z.close()
+
+            os.system('rm -rf '+BAK_DIR) #删除原文件目录
+
+            print "备份结束"
+
+
+        except Exception,e:
+            print e
+        print "开始删除index: %s" % index
+        os.system('curl -XDELETE "http://elasticsearch.master:9200/%s"' % index)
+
+    else:
+        print '%s 备份失败' % index
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

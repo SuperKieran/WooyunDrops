@@ -1,0 +1,71 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Hacking Team 新 Flash 0day分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/07/11 12:23" ui-time="" datetime="2015/07/11 12:23" class="published ng-binding ng-isolate-scope">2015/07/11 12:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>继前几天从Hacking Team中找到一个flash 0day，Adobe发布修复补丁之后，又被人在邮件中找到了一个flash 0day。</p><p>readme中描述，影响范围为<code>Adobe Flash Player 9+ 32/64-bit (since Jun 2006)</code>。</p><p>Windows中的IE，OS X中的firefox均可直接执行计算器。</p><h1>0x01 漏洞分析</h1><hr><p>漏洞文件<a href="http://krash.in/flashnew0day.zip">http://krash.in/flashnew0day.zip</a>，是从Hacking Team邮件中找到Flash 0day，简单看一下该漏洞的利用方法。</p><p>点击Run Calc之后，该程序会调用Check64()函数，这个函数是该漏洞的一个简化版，程序用32、64不同的内存结构判断当前是32位进程还是64位。程序在最开始重载了<code>MyClass</code>的<code>valueOf</code></p><p><img alt="enter image description here" img-src="ef7745e091e8052b9d4bbbb27532f7f085bfc734.jpg"></p><p>而<code>opeaqueBackground</code>属性接受数值型，故如果传入一个类，会显示调用该类的<code>valueOf</code>一次，这个也是之前的一个UAF用的一个技巧。所以，在第一次走到下列语句设置<code>opaqueBackground</code>的时候走到了<code>valueOf1</code>：</p><p><img alt="enter image description here" img-src="70bf44917bd6af27ce662ed7020dc53a04e80153.jpg"></p><p>在<code>valueOf1</code>中，攻击者使用<code>recreateTextLine</code>重用<code>_tl</code>这个<code>textLine</code>，随之，原始<code>TextBlock（_tb）</code>中的内部<code>TextLine</code>对象被释放。</p><p><img alt="enter image description here" img-src="5998ced2ac2a23a36ca73878a52e212946fc4b17.jpg"></p><p>-----></p><p><img alt="enter image description here" img-src="eda741f1e4e0758964610c13ed5af28be59e4df7.jpg"></p><p><img alt="enter image description here" img-src="0f49856348def703ec41f5d4523b33901295c780.jpg"></p><p>然后，在valueOf中使用</p><p><img alt="enter image description here" img-src="c8c6a3428463e49487baffc3a79e938be80a3e2a.jpg"></p><p>占住这片被释放的内存，1016是<code>TextLine</code>对象在内存中的大小，1344相当于多分配了一块内存（1016/4-8）。函数<code>return 1</code>，写入到这片内存中。</p><p><code>valueOf</code>返回后，程序搜索<code>_ar</code>，找到值为1的一项，根据该项的位置判断是32还是64位系统：</p><p><img alt="enter image description here" img-src="ddc91dba6803135925d1a3ff41f83aefa6ef6c19.jpg"></p><p>随后，程序调用<code>TryExpl()</code>，这里使用了类似的方式：</p><p>先分配特殊长度的Vector和TextLine留待后用，接着将<code>MyClass</code>的<code>valueOf</code>也设置为<code>valueOf2</code>：</p><p><img alt="enter image description here" img-src="75715bc2b1a79e58e0edc6327279d0c062a76c30.jpg"></p><p>然后设置<code>opaqueBackground</code>属性，<code>_mc</code>是<code>MyClass</code>的实例，因此触发<code>valueOf2</code>：</p><p><img alt="enter image description here" img-src="6e9760f3ad30cd8d8800882bac95609baffd2782.jpg"></p><p>在<code>valueOf2</code>中使用和之前一样的方式给<code>_ar</code>的所有元素全部做一次内存破坏，<code>vLen</code>的值是98。</p><p><img alt="enter image description here" img-src="0a964fb6c1492f9b39dfb78cff1a1ebe8e218079.jpg"></p><p>返回后，程序在<code>_ar</code>中搜索被破坏的块，并设置下一个<code>Vector</code>的<code>Length</code>为<code>0x40000000</code>，后续就是经典的<code>Vector</code>操作了。</p><p><img alt="enter image description here" img-src="54db7755e88469917c6510ba44a439859040c4e8.jpg"></p><p><img alt="enter image description here" img-src="a05dc9cc16b43119b8a0c75e760b136e06ea1533.jpg"></p><p>在<code>IE11+Flash Player 17</code>中，跟踪可发现<code>length</code>被覆盖后的<code>Vector</code>：</p><p><img alt="enter image description here" img-src="a9e2f6b2a760860eeb393d482847ec38f1ad1720.jpg"></p><h1>0x02 使用的shellcode</h1><hr><p>和之前一样，使用<code>CreateProcessA</code>调用calc</p><pre><code>#!c
+0:008&gt; uf 0x603b1b8
+Flow analysis was incomplete, some code may be missing
+0603b1b8 55              push    ebp
+0603b1b9 8bec            mov     ebp,esp
+0603b1bb 83c4ac          add     esp,0FFFFFFACh
+0603b1be 53              push    ebx
+0603b1bf 51              push    ecx
+0603b1c0 57              push    edi
+0603b1c1 648b0530000000  mov     eax,dword ptr fs:[30h]
+0603b1c8 8b400c          mov     eax,dword ptr [eax+0Ch]
+0603b1cb 8b400c          mov     eax,dword ptr [eax+0Ch]
+0603b1ce 8b00            mov     eax,dword ptr [eax]
+0603b1d0 8b00            mov     eax,dword ptr [eax]
+0603b1d2 8b5818          mov     ebx,dword ptr [eax+18h]
+0603b1d5 89d8            mov     eax,ebx
+0603b1d7 03403c          add     eax,dword ptr [eax+3Ch]
+0603b1da 8b5078          mov     edx,dword ptr [eax+78h]
+0603b1dd 01da            add     edx,ebx
+0603b1df 8b7a20          mov     edi,dword ptr [edx+20h]
+0603b1e2 01df            add     edi,ebx
+0603b1e4 31c9            xor     ecx,ecx
+
+0603b1e6 8b07            mov     eax,dword ptr [edi]
+0603b1e8 01d8            add     eax,ebx
+0603b1ea 813843726561    cmp     dword ptr [eax],61657243h ; Crea
+0603b1f0 751c            jne     0603b20e
+
+0603b1f2 81780b73734100  cmp     dword ptr [eax+0Bh],offset IEXPLORE!api-ms-win-downlevel-shell32-l1-1-0_NULL_THUNK_DATA_DLA &lt;PERF&gt; (IEXPLORE+0x37373) (00417373) ;ssA   (=&gt;CreateProcessA)
+0603b1f9 7513            jne     0603b20e
+
+0603b1fb 8b4224          mov     eax,dword ptr [edx+24h]
+0603b1fe 01d8            add     eax,ebx
+0603b200 0fb70448        movzx   eax,word ptr [eax+ecx*2]
+0603b204 8b521c          mov     edx,dword ptr [edx+1Ch]
+0603b207 01da            add     edx,ebx
+0603b209 031c82          add     ebx,dword ptr [edx+eax*4]
+0603b20c eb09            jmp     0603b217
+
+0603b20e 83c704          add     edi,4
+0603b211 41              inc     ecx
+0603b212 3b4a18          cmp     ecx,dword ptr [edx+18h]
+0603b215 7ccf            jl      0603b1e6
+
+0603b217 8d45f0          lea     eax,[ebp-10h]
+0603b21a 50              push    eax
+0603b21b 8d7dac          lea     edi,[ebp-54h]
+0603b21e 57              push    edi
+0603b21f 31c0            xor     eax,eax
+0603b221 b911000000      mov     ecx,11h
+0603b226 f3ab            rep stos dword ptr es:[edi]
+0603b228 c745ac44000000  mov     dword ptr [ebp-54h],44h
+0603b22f 50              push    eax
+0603b230 50              push    eax
+0603b231 50              push    eax
+0603b232 50              push    eax
+0603b233 50              push    eax
+0603b234 50              push    eax
+0603b235 e809000000      call    0603b243
+0603b23a 63616c          arpl    word ptr [ecx+6Ch],sp
+0603b23d 632e            arpl    word ptr [esi],bp
+0603b23f 657865          js      0603b2a7
+
+0603b242 0050ff          add     byte ptr [eax-1],dl
+0603b245 d35f59          rcr     dword ptr [edi+59h],cl
+0603b248 5b              pop     ebx
+0603b249 c1e003          shl     eax,3
+0603b24c 83c006          add     eax,6
+0603b24f c9              leave
+0603b250 c3              ret
+</code></pre><p><img alt="enter image description here" img-src="51f59d5c81d358dffc2f0916cafcaad29b0c1eb5.jpg"></p><h1>0x03 效果</h1><hr><p><img alt="enter image description here" img-src="e58cd8b101dd420bfa12cf68f0d00c681aa746ce.jpg"></p><p>在IE11中成功地启动了<code>calc.exe</code></p><p>桌面截图：</p><p><img alt="enter image description here" img-src="80e4d445695fe403bb3bfbf7bb8eaf9a71b0d4b1.jpg"></p><p><img alt="enter image description here" img-src="f67f5cc85aa1fe91b882685ebd1bac51dcef7db6.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/7199" rel="bookmark" id="re1">Hacking Team系列 Flash 0Day分析</a></li><li><a href="http://drops.wooyun.org/papers/7049" rel="bookmark" id="re2">Hacking Team攻击代码分析Part 4: Flash 0day漏洞 CVE-2015-5122</a></li><li><a href="http://drops.wooyun.org/news/6977" rel="bookmark" id="re3">人手一份核武器 - Hacking Team 泄露（开源）资料导览手册</a></li><li><a href="http://drops.wooyun.org/mobile/7196" rel="bookmark" id="re4">无处不在的监控: Hacking Team:WP8 监控代码分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夸父追日</span> <span class="reply-time">2015-07-15 19:54:24</span></div><p></p><p>怎么才能实现自动弹弹弹,弹走鱼尾纹?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jn·</span> <span class="reply-time">2015-07-11 18:02:07</span></div><p></p><p>吊炸。</p><p></p></div></div></div></div></div></main>

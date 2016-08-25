@@ -1,0 +1,635 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">WordPress < 3.6.1 PHP 对象注入漏洞</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          五道口杀气</a>
+        <span class="bull">·</span>
+        <time title="2013/09/13 11:36" ui-time="" datetime="2013/09/13 11:36" class="published ng-binding ng-isolate-scope">2013/09/13 11:36</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p>From:<a href="http://vagosec.org/2013/09/wordpress-php-object-injection/">WordPress &lt; 3.6.1 PHP Object Injection</a></p>
+
+<h2>0x00 背景</h2>
+
+<hr>
+
+<p>当我读到一篇关于Joomla的“PHP对象注射”的漏洞blog后，我挖深了一点就发现Stefan Esser大神在2010年黑帽大会的文章：</p>
+
+<p><a href="http://media.blackhat.com/bh-us-10/presentations/Esser/BlackHat-USA-2010-Esser-Utilizing-Code-Reuse-Or-Return-Oriented-Programming-In-PHP-Application-Exploits-slides.pdf">http://media.blackhat.com/bh-us-10/presentations/Esser/BlackHat-USA-2010-Esser-Utilizing-Code-Reuse-Or-Return-Oriented-Programming-In-PHP-Application-Exploits-slides.pdf</a></p>
+
+<p>这篇文章提到了PHP中的unserialize函数当操作用户生成的数据的时候会产生安全漏洞。</p>
+
+<!--more-->
+
+<p>所以呢，基本来说，unserialize函数拿到表现为序列化的数据，然后就解序列化它（unserialize嘛，当然就干这个啊~）为php的值。这个值它可以是resource之外的任何类型，可为（integer, double, string, array, boolean, object, NULL），当这个函数操作一个用户生成的字符串的时候，在低版本的PHP中可能会产生内存泄露的漏洞，当然这也不是这篇blog要关注的问题。如果你对这个问题感兴趣，你可以再去看看我上面说的大神的文章。</p>
+
+<p>另外一种攻击方式发生在当攻击者的输入被unserialize函数操作的时候，这种就是我说到的“PHP对象注入”。在这种方式中，对象类型的被unserialize的话，允许攻击者设置他选择对象的属性。当这些对象中的方法被调用的时候，会出现一些效果（例如：删除一些文件），当攻击者可以去选择对象里的一些属性的时候，他就能够删除一个他所提交的文件。</p>
+
+<p>让我们举个例子吧，想象以下的代码中的class是用户自己生成的内容被unserialize时载入的：</p>
+
+<p>（ps:老外贴出的代码语法有问题，改了一下测试成功……）</p>
+
+<pre><code>#!php
+&lt;?php
+class Foo {
+    private $bar; 
+    public  $file;
+
+    public function __construct($fileName) {
+        $this-&gt;bar = 'foobar';
+        $this-&gt;file = $fileName;
+    }
+
+    // 一些其他的代码……
+
+    public function __toString() {
+        return file_get_contents($this-&gt;file);
+    }
+} 
+?&gt;
+</code></pre>
+
+<p>如果受害的缺陷代码同时还存在以下的代码：</p>
+
+<pre><code>#!php
+echo unserialize($_GET['in']);
+</code></pre>
+
+<p>这攻击者就可以读取任意文件，攻击者可以如下去构造它的对象。</p>
+
+<pre><code>#!php
+&lt;?php
+class Foo {
+    public $file;
+}
+$foo = new Foo();
+$foo-&gt;file = '/etc/passwd';
+echo serialize($foo); 
+?&gt;
+</code></pre>
+
+<p>上面这段代码的结果是：O:3:"Foo":1:{s:4:"file";s:11:"/etc/passwd";} ，攻击者现在要做的事情就事通过提交get请求到存在漏洞的页面触发他的攻击代码。这个页面会吐出/etc/passwd的内容来。能读到这些文件的内容怎么看都不是一个好事情，你就想象一下，万一缺陷代码中的函数不是file_get_contents而是eval呢？</p>
+
+<p>我相信上面这部分已经能让人明白允许用户输入进入unserialize这个函数危害有多大了。就连PHP手册里也说了不要把用户生成的内容交给unserialize函数。</p>
+
+<h3>警告：</h3>
+
+<p>不要把不可信的用户输入交给unserialize，使用该函数解序列化内容能导致访问且自动载入对象，恶意用户可以利用这一点，从安全的角度，如果你想让用户可以标准的传递数据，可以使用json （json_encode json_decode）。</p>
+
+<p>好，让我们继续说这些问题怎么影响到Wordpress。</p>
+
+<h2>0x01 wordpress的安全问题</h2>
+
+<hr>
+
+<p>Stefan Esser's的黑帽演讲中，他提到Wordpress是一款使用了serialize和unserialize函数的知名应用。在他的幻灯片中，unserialize用来接收来自Wordpress站点上的数据。所以攻击者可以在受害站点上发起一次中间人攻击。他可以修改来自Wordpress站点的返回数据，把他的代码加进去。有趣的是就在我编写这篇文章的时候，Wordpress最新的版本也包含这个问题（距离那演讲似乎过去三年了），想象一下，如果有黑客可以劫持WordPress.org的DNS会发生什么事情吧。</p>
+
+<p>然而，这也不是Wordpress使用这个unserialize的唯一地方，它还用于用于在数据库中数据。举例来说，用户的metadata就被序列化后存储在数据库中，metadata的取回方式在wp-includes/meta.php的272行的get_metadata()，我在这里引用一下该函数的部分代码（292-297行）</p>
+
+<pre><code>#!php
+if ( isset($meta_cache[$meta_key]) ) {
+    if ( $single )
+        return maybe_unserialize( $meta_cache[$meta_key][0] );
+    else
+        return array_map('maybe_unserialize', $meta_cache[$meta_key]); 
+}
+</code></pre>
+
+<p>基本上，这个函数所干的事情就是取回数据库里的metadata（它来自每篇文章或用户输入），数据在数据库中的wp_postmeta和wp_usermeta表中，有些数据是被序列化的而有些没有被序列化，所以maybe_unserialize()函数替代了unserialize()在这里操作，这个函数在wp-includes/functions.php的230到234行之间被定义。</p>
+
+<pre><code>#!php
+function maybe_unserialize( $original ) {
+    if ( is_serialized( $original ) ) //序列化的数据才会走到这里面
+        return @unserialize( $original );
+    return $original; 
+}
+</code></pre>
+
+<p>所以，这个函数干的事情是检查给予它的值是不是一个序列化的数据，如果是的话，就解序列化。这里用来判断是否是序列化所使用的函数是is_serialized()，它的定义在同文件的247到276行之间。</p>
+
+<pre><code>#!php
+function is_serialized( $data ) {
+    // 如果连字符串都不是，那就不是序列化的数据了
+    if ( ! is_string( $data ) )
+        return false;
+    $data = trim( $data );
+     if ( 'N;' == $data )
+        return true;
+    $length = strlen( $data );
+    if ( $length &lt; 4 )
+        return false;
+    if ( ':' !== $data[1] )
+        return false;
+    $lastc = $data[$length-1];
+    if ( ';' !== $lastc &amp;&amp; '}' !== $lastc )
+        return false;
+    $token = $data[0];
+    switch ( $token ) {
+        case 's' :
+            if ( '"' !== $data[$length-2] )
+                return false;
+        case 'a' :
+        case 'O' :
+            return (bool) preg_match( "/^{$token}:[0-9]+:/s", $data );
+        case 'b' :
+        case 'i' :
+        case 'd' :
+            return (bool) preg_match( "/^{$token}:[0-9.E-]+;\$/", $data );
+    }
+    return false;
+}
+</code></pre>
+
+<p>WordPress检查一个值是否是序列化的字符串为什么那么重要的原因马上要变得清晰了。首先，我们看一下一个攻击者如何把他的内容最终加入到metadata表中的。每个用户的姓名，雅虎IM都存储在wp_usermeta表里。所以我们把自己的恶意代码加在那我们就可以搞掂掉WordPress，对不对？你可以试试在你该写名字的地方写个i:1试试，如果这个没有被解序列化那这里只会返回一个我们输入的i:1。</p>
+
+<p>麻痹的，看来要发几个大招才可以搞掂WordPress啊。让我们挖得再深一点，看看为什么这个东西就没有给解序列化。在 wp-includes/meta.php 中，这个update_metadata() 函数定义在101-164行，这里有这个函数的部分代码。</p>
+
+<pre><code>#!php
+// …
+    $meta_value = wp_unslash($meta_value);
+    $meta_value = sanitize_meta( $meta_key, $meta_value, $meta_type );
+// …
+    $meta_value = maybe_serialize( $meta_value );
+
+    $data  = compact( 'meta_value' );
+// …
+    $wpdb-&gt;update( $table, $data, $where );
+// …
+</code></pre>
+
+<p>这里maybe_serialize函数可能能解释为什么我们刚才的操作没成功，我们再跟进去看看这个函数，它定义在wp-includes/functions.php的314-324行。</p>
+
+<pre><code>#!php
+function maybe_serialize( $data ) {
+    if ( is_array( $data ) || is_object( $data ) )
+        return serialize( $data );
+    // 二次序列化是为了向下支持
+    // 详见 http://core.trac.wordpress.org/ticket/12930
+    if ( is_serialized( $data ) )
+        return serialize( $data );
+
+    return $data; 
+}
+</code></pre>
+
+<p>所以当我们传入一个序列化的值的话，它就会再序列化一下，这就是现在发生的情况，你看，数据库里的东西不是i:1;而是s:4:"i:1;";，当解序列化的时候它就显示为一个字符串，那现在该怎么办呢？</p>
+
+<p>你懂的，这帖子的内容也存在数据库里，上面这就说明了为什么我们失败了。如果我们现在想往数据库插一个序列化后的东西，我们就需要在我们插入数据的时候让is_serialized()这个函数返回一个false，而当我们再从数据里取它的时候，它就应该返回个true了。</p>
+
+<p>你懂的，Mysql数据库，表和字段都有他们自己的charset和collation(字符集和定序）。WordPress呢，默认的字符集是UTF-8。从这个名字就看的出来，这个字符集它不支持全部的Unicode字符，你要是对这个感兴趣，你可以看看Mathias Bynens的这篇文章：http://mathiasbynens.be/notes/mysql-utf8mb4，这文章教了我UTF-8的表储存不了Unicode编码区间是U+010000到U+10FFFF的字符。所以当我们在这个情况下尝试保存这些字符呢？显而易见，包括这个字符和这个字符之后的内容都会被忽略掉。所以在我们尝试插入<code>foo{0xf09d8c86}bar</code>的时候，Mysql会忽略<code>{0xf09d8c86}bar</code>而保存为foo。</p>
+
+<p>这个迷题的最后一部分就是我们需要插入一个用以一会儿解序列化的内容，为了测试这个，你可以插入<code>1:i{0xf09d8c86}</code>为你的名字。正如所见到的，结果是1，意味着你的输入被解序列化了，如果你还不相信我，你试着输入一个空数组的序列化并且以该字符结尾：<code>a:0:{}{0xf09d8c86}</code>。这个结果是Array。</p>
+
+<p>让我们继续<code>maybe_serialized('i:1;{0xf09d8c86}')</code>插入了数据库。WordPress不认为这是一个已序列化的数据，因为它不是;或者}结尾的。它会返回<code>i:1;{0xf09d8c86}</code>，当插入数据库的时候，它的值是i:1，当它从数据库取回的时候，它有了;最为最后一个字符，所以它可以解序列化成功。碉堡了。漏洞。</p>
+
+<h2>0x02 WordPress 利用</h2>
+
+<hr>
+
+<p>现在我们展示了WordPress存在PHP对象注入漏洞。让我们尝试利用它。所以为了利用该漏洞（通过注入对象的方法），我们需要找到一个符合以下条件的class：</p>
+
+<p>1，内有“有用”的方法可被调用。
+2，存在该对象的类已经被包含了。</p>
+
+<p>当一个对象被解序列化的时候，__wakeup函数会被调用，这被称作PHP的魔术方法，这也是我们确定会被调用的方法，实际上这些函数会更多写些，我写了一个以下的class来获取被调用的class到/tmp/fumc.log。</p>
+
+<pre><code>#!php
+&lt;?php
+class Foo {
+    public static function logFuncCall($funcName) {
+        $fh = fopen('/tmp/func.log', 'a');
+        fwrite($fh, $funcName."\n");
+        fclose($fh);
+    }
+    public function __construct() { Foo::logFuncCall('__construct('.json_encode(func_get_args()).')');}
+    public function __destruct() { Foo::logFuncCall('__destruct()');}
+    public function __get($name) { Foo::logFuncCall("__get($name)"); return "Foo";}
+    public function __set($name, $value) { Foo::logFuncCall("__set($name, value)");} 
+    public function __isset($name) { Foo::logFuncCall("__isset($name)"); return true;} 
+    public function __unset($name) { Foo::logFuncCall("__unset($name)");} 
+    public function __sleep() { Foo::logFuncCall("__sleep()"); return array();} 
+    public function __wakeup() { Foo::logFuncCall("__wakeup()");} 
+    public function __toString() { Foo::logFuncCall("__toString()"); return "Foo";} 
+    public function __invoke($a) { Foo::logFuncCall("__invoke(". json_encode(func_get_args()).")");}
+    public function __call($a, $b) { Foo::logFuncCall("__call(". json_encode(func_get_args()).")");}
+    public static function __callStatic($a, $b) { Foo::logFuncCall("__callStatic(". json_encode(func_get_args()).")");}
+    public static function __set_state($a) { Foo::logFuncCall("__set_state(". json_encode(func_get_args()).")"); return null;}
+    public function __clone() { Foo::logFuncCall("__clone()");} 
+} 
+?&gt;
+</code></pre>
+
+<p>为了列出这些被调用的函数，首先要确认这个函数在解序列化发生的时候是被引入被包含过的（php中的include require等）。你可以把require_once('foo.php')加到functions.php的顶端。接下来，把名字改为O:3:"Foo":0:{}{0xf09d8c86}来尝试利用这个PHP对象注入漏洞，当刷新页面后，你回看到你的名字变成了Foo，这也就是意味着这是上面那class中__toString()函数的返回，然后让我们看看都有哪些函数被调用了。</p>
+
+<pre><code>$ sort -u /tmp/func.log
+__destruct()
+__toString() 
+__wakeup()
+</code></pre>
+
+<p>给出了我们三个函数：__wakeup(), __destruct() 和 __toString()</p>
+
+<p>很不幸的是我不能再WordPress中找到一个载入了并且解序列化时能被利用造成影响的类。所以不是一个WordPress的安全问题，而是一个可能利用的地方。</p>
+
+<p>所以是不是WordPress是有安全隐患的，但是无法被利用？不一定，如果你熟悉WordPress，你可能会觉察到可能有一堆插件存在漏洞。这些插件有他们自己的类并且可能暴露出可被利用的安全漏洞。我想到这个后，已经发现了一款著名的插件存在漏洞并且可以导致远程任意代码执行。</p>
+
+<p>由于道德考虑，这个时候我不会发布PoC的，有太多存在安全漏洞的WordPress了。</p>
+
+<h2>0x03 修复WordPress</h2>
+
+<hr>
+
+<p>这个修复方式是修改is_serialized函数，我简单的说说：</p>
+
+<pre><code>#!php
+function is_serialized( $data, $strict = true ) {
+     // 如果不是字符串就不会是序列化后的数据
+     if ( ! is_string( $data ) )
+         return false;
+     if ( ':' !== $data[1] )
+         return false;
+    if ( $strict ) {
+        $lastc = $data[ $length - 1 ];
+        if ( ';' !== $lastc &amp;&amp; '}' !== $lastc )
+            return false;
+    } else {
+         //确认存在;或}但不是在第一个字符
+        if ( strpos( $data, ';' ) &lt; 3 &amp;&amp; strpos( $data, '}' ) &lt; 4 )
+            return false;
+    }
+     $token = $data[0];
+     switch ( $token ) {
+         case 's' :
+            if ( $strict ) {
+                if ( '"' !== $data[ $length - 2 ] )
+                    return false;
+            } elseif ( false === strpos( $data, '"' ) ) {
+                 return false;
+            }
+         case 'a' :
+         case 'O' :
+             return (bool) preg_match( "/^{$token}:[0-9]+:/s", $data );
+         case 'b' :
+         case 'i' :
+         case 'd' :
+            $end = $strict ? '$' : '';
+            return (bool) preg_match( "/^{$token}:[0-9.E-]+;$end/", $data );
+     }
+     return false; 
+ }
+</code></pre>
+
+<p>这主要的区别是当$strict参数设置为false的时候，会有一些强制操作导致一个字符串被标记为已序列化。举例说明，最后一个字符不需要必须是;或者{（译者注：作者此处应该笔误了，应该是;或者}),修复了我所提交的漏洞。现在大家有没有相似的内容可以拿出来做个讨论的？</p>
+
+<p>WordPress依旧使用着不安全的unserialize()而非安全的json_decode。它的安全性全在判断规则或者Mysql的规则实现上。我在上面揭露的漏洞实际上是使用Mysql的规则去掉我跟在特殊符号后的所有字符。</p>
+
+<p>有一个很简洁的修复方案，修改一下数据库编码不被截断就好：</p>
+
+<pre><code>ALTER TABLE wp_commentmeta CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+ALTER TABLE wp_postmeta CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+ALTER TABLE wp_usermeta CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+</code></pre>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/6024" rel="bookmark" id="re1">WordPress 评论功能Xss 始末</a></li>
+			<li><a href="http://drops.wooyun.org/papers/785" rel="bookmark" id="re2">WordPress 3.5.1远程代码执行EXP</a></li>
+			<li><a href="http://drops.wooyun.org/papers/4820" rel="bookmark" id="re3">理解php对象注入</a></li>
+			<li><a href="http://drops.wooyun.org/papers/9510" rel="bookmark" id="re4">WordPress 利用 XMLRPC 高效爆破 原理分析</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">小贱人</span>
+                 <span class="reply-time">2014-03-16 22:28:50</span>
+        </div>
+        <p></p><p>很赞呀</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">luwikes</span>
+                 <span class="reply-time">2014-01-14 09:59:44</span>
+        </div>
+        <p></p><p>不明觉厉</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Forever80s</span>
+                 <span class="reply-time">2013-10-08 22:01:41</span>
+        </div>
+        <p></p><p>wordpress框架要是能找出来漏洞，你就发了。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Ray</span>
+                 <span class="reply-time">2013-09-24 17:12:38</span>
+        </div>
+        <p></p><p>我估计啊，是作者翻译的时候翻着翻着把i:1;写成了i:1，而i:1;正好是4个字节。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">lhshaoren</span>
+                 <span class="reply-time">2013-09-24 17:05:03</span>
+        </div>
+        <p></p><p>膜拜</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">齐迹</span>
+                 <span class="reply-time">2013-09-17 17:57:36</span>
+        </div>
+        <p></p><p>弱弱的问一下 只有在用了__toString 这个魔术方法的时候才能够触发吗？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">龙臣</span>
+                 <span class="reply-time">2013-09-16 16:21:34</span>
+        </div>
+        <p></p><p>holy shit</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">s3cur1ty</span>
+                 <span class="reply-time">2013-09-16 13:14:26</span>
+        </div>
+        <p></p><p>function is_serialized( $data ) {<br>
+	// if it isn't a string, it isn't serialized<br>
+	if ( ! is_string( $data ) )<br>
+		return false;<br>
+	$data = trim( $data );<br>
+ 	if ( 'N;' == $data )<br>
+		return true;<br>
+	$length = strlen( $data );<br>
+	if ( $length &lt; 4 )<br>
+		return false;<br>
+	if ( &#039;:&#039; !== $data[1] )<br>
+		return false;<br>
+	$lastc = $data[$length-1];<br>
+	if ( &#039;;&#039; !== $lastc &amp;&amp; &#039;}&#039; !== $lastc )<br>
+		return false;<br>
+	$token = $data[0];<br>
+	switch ( $token ) {<br>
+		case &#039;s&#039; :<br>
+			if ( &#039;&quot;&#039; !== $data[$length-2] )<br>
+				return false;<br>
+		case &#039;a&#039; :<br>
+		case &#039;O&#039; :<br>
+			return (bool) preg_match( &quot;/^{$token}:[0-9]+:/s&quot;, $data );<br>
+		case &#039;b&#039; :<br>
+		case &#039;i&#039; :<br>
+		case &#039;d&#039; :<br>
+			return (bool) preg_match( &quot;/^{$token}:[0-9.E-]+;\$/&quot;, $data );<br>
+	}<br>
+	return false;<br>
+}</p>
+<p>难道楼主没有看到if ( $length &lt; 4 ) return false;</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Sct7p</span>
+                 <span class="reply-time">2013-09-16 13:06:10</span>
+        </div>
+        <p></p><p>good job</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">s3cur1ty</span>
+                 <span class="reply-time">2013-09-16 10:23:57</span>
+        </div>
+        <p></p><p>s:4:"i:1;";压根就没再数据库里出现过。。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Ivan</span>
+                 <span class="reply-time">2013-09-13 22:57:18</span>
+        </div>
+        <p></p><p>poc啊poc</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">MEng</span>
+                 <span class="reply-time">2013-09-13 20:15:44</span>
+        </div>
+        <p></p><p>高富帅!</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">horseluke</span>
+                 <span class="reply-time">2013-09-13 16:39:15</span>
+        </div>
+        <p></p><p>unserialize一直都是大坑，但悲剧的是某些场景还是得要用它，比如文件缓存......</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">insight-labs</span>
+                 <span class="reply-time">2013-09-13 14:08:35</span>
+        </div>
+        <p></p><p>杀气太重了……<br>
+又要倒下一片了</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">BlackWidow7</span>
+                 <span class="reply-time">2013-09-13 13:31:40</span>
+        </div>
+        <p></p><p>杀气。日</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">0x334</span>
+                 <span class="reply-time">2013-09-13 11:59:21</span>
+        </div>
+        <p></p><p>顶，节操。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">RuIg</span>
+                 <span class="reply-time">2013-09-13 11:57:13</span>
+        </div>
+        <p></p><p>good job man!</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">erevus</span>
+                 <span class="reply-time">2013-09-13 11:51:53</span>
+        </div>
+        <p></p><p>那我这是地板</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">ccSec</span>
+                 <span class="reply-time">2013-09-13 11:51:05</span>
+        </div>
+        <p></p><p>太漂亮了！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">园长</span>
+                 <span class="reply-time">2013-09-13 11:36:51</span>
+        </div>
+        <p></p><p>沙发？</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

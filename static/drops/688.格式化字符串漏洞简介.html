@@ -1,0 +1,71 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">格式化字符串漏洞简介</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">explorer</a> <span class="bull">·</span> <time title="2015/08/07 16:33" ui-time="" datetime="2015/08/07 16:33" class="published ng-binding ng-isolate-scope">2015/08/07 16:33</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00简介</h1><hr><p>格式化字符串，也是一种比较常见的漏洞类型。会触发该漏洞的函数很有限。主要就是<code>printf</code>还有<code>sprintf</code>，<code>fprintf</code>等等c库中print家族的函数。 我们先来看看<code>printf</code>的函数声明</p><pre><code>&gt;int printf(const char* format,...)
+</code></pre><p>这个是每个学过c语言的人一定会知道、会使用的函数。先是一个字符串指针，它指向的一个format字符串。后面是个数可变的参数。</p><p>一般人可能会这么用它</p><pre><code>char str[100];
+scanf("%s",str);
+printf("%s",str);
+</code></pre><p>这个程序没有问题。然后会有一些人为了偷懒会写成这种样子</p><pre><code>char str[100];
+scanf("%s",str);
+printf(str)
+</code></pre><p>这个程序在<code>printf</code>处用了一种偷懒的写法。这看起来是没有什么问题。但是却产生了一个非常严重的漏洞。</p><p>千万不要将<code>printf</code>中的format字符串的操纵权交给用户。保证<code>printf</code>函数的第一个参数是不可变的，在程序员的掌握中的。</p><h1>0x01漏洞的产生原理</h1><hr><p>这里我们就要详细的讲述一下<code>printf</code>的运行原理了。因为64位上<code>printf</code>函数的行为发生了许多变化。这里暂时不进行说明。不过如果清楚了漏洞的产生原因，依然可以使用此漏洞。</p><p>先看看正常的情况</p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+
+{
+printf("%d%d%d%d%s",5,6,8,0x21,"test");
+return 0;
+}
+</code></pre><p>首先，看看汇编的源码，额暂时搞不到，还是手写吧</p><pre><code>.data
+str     db  "test",0
+format  db  "%d%d%d%d%s",0
+
+.code
+push   str
+push   21h
+push   8
+push   6
+push   5
+push   format
+call   printf
+</code></pre><p>差不多就这样。这个时候的栈就会是这个样子的。</p><pre><code>-00000003                 db ? ;
+-00000002                 db ? ;
+-00000001                 db ? ;
++00000000  s              db 4 dup(?)
++00000004  r              db 4 dup(?)
++00000008  format         db 4       ;"%d%d%d%c"
++0000000c  %d             db 4       ; 4
++00000010  %d             db 4       ; 6
++00000014  %d             db 4       ; 8
++00000018  %x             db 4       ; 0x21
++0000001c  %s             db 4       ; "test"
++0000001c ; end of stack variables
+</code></pre><p>(~~额，不要吐槽的那原始的栈结构表示方式，用过IDA的应该知道~~)。</p><p>根据cdecl的函数调用规定，函数的从最右边的参数开始，逐个压栈。如果要传入的是一个字符串，那么就将字符串的指针压栈。这一切都井井有条的进行着。如果是一般的函数，函数的调用者和被调用者都应该知道函数的参数个数以及每个参数的类型。对于不相同的类型，编译器还会自动的进行类型的转换，或者是发生编译错误，提醒程序的编写者。</p><p>但是，到了<code>printf</code>函数，一切就不一样了。因为<code>printf</code>是c语言中少有的支持可变参数的库函数。对于可变参数的函数，一切就变得模糊了起来。函数的调用者可以自由的指定函数参数的数量和类型，被调用者无法知道在函数调用之前到底有多少参数被压入栈帧当中。所以<code>printf</code>函数要求传入一个format参数用以指定到底有多少，怎么样的参数被传入其中。然后它就会忠实的按照函数的调用者传入的格式一个一个的打印出数据。</p><p>当然这会产生一个严重的问题。如果我们无意或者有意，在format中，或者说我们要求<code>printf</code>打印的数据数量大于我们所给的数量会怎样？<code>printf</code>函数不可能知道栈帧中哪一些数据是传入它参数，哪些是属于函数调用者的数据。看下面段代码</p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+ { printf("%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x");
+ return 0; }
+</code></pre><p>这里我们只给了<code>printf</code>一个参数，却让其打印出12个int类型的数据，我们编译运行看看会有什么结果。</p><p><img alt="enter image description here" img-src="becd99eaa0a6098c9d2ceab138cce4a0becbac0b.jpg"></p><p>这里可以看到，<code>printf</code>忠实的按照我们意愿打印出了12个数值。这些数值不是我们输入的参数，而是保存在栈中的其他的数值。通过这个特性，黑客们就创造出了格式化字符串的漏洞。</p><h1>0x02漏洞利用</h1><hr><p>可能有人（~~像我一样的弱渣~~）会对这个漏洞的危害感到疑惑，因为它似乎只是打印一些没有用的垃圾数据而已。其实，它的危害一点不比栈溢出漏洞的危害小，如果使用得当，甚至比栈溢出效果更好。如果栈溢出是粗暴的地毯式轰炸的话，格式化字符串漏洞就是一位可怕的狙击手。一击便可致命。</p><p>至于此漏洞的利用方式，主要有2种</p><h3>打印内存</h3><p>刚才也看到了<code>printf</code>可以打印出调用者栈帧中的信息。在0day攻击当中，如何获得对方内存中的数据是非常重要的一个技巧，而格式化字符串漏洞的其中一个利用方法便是能够获得内存中那些本不应该被我们知道的数据。这个过程我们称之为leak内存。0day攻击中一种重要的方法ret to libc就是以leak基地址为前提的。</p><p>只要我们在format中填入足够的参数，那么<code>printf</code>就可以打出储存在栈中的，那些本不能被知道的信息。只要计算好format在栈中的地址与需要leak的信息地址之差。就可以得到想要的数据</p><p>比如format在<code>0x20</code>处而dest数据在<code>0x00</code>处。他们一共相差32个字节，那么我们就可以构造<code>"%f%f%f%d,%x"</code>这样的字符串。逗号前面会的<code>"%f%f%f%d"</code>可以打印出比foramt更高位的28个字节的数据，当然这不是我们想要的。然后最后的一个<code>%x</code>便可以以16进制的形式打印出我们想要的数据了。</p><p>然后，更进一步，我们知道格式化字符串还有<code>%s</code>参数。那么，如果在栈中保存有指向我们感兴趣数据的指针，我们就可以在打印指针的时候使用一个<code>%s</code>来打印别的地方的内容。而且一般的程序都会将用户输入的数据储存在栈上。这就给了我们一个构造指针的机会，再结合格式化字符串漏洞，几乎可以得到所有内存数据。</p><h3>修改内存</h3><p>也许格式化字符串漏洞可以打印内存信息这一点不让人奇怪。但是格式化字符串其实也可以修改内存中的数据。我们来看看下面这一段代码。</p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+ { int a; printf("aaaaaaa%n\n",&amp;a);
+ printf("%d\n",a);
+ return 0; }
+</code></pre><p>这是一段有点神奇的代码，让我们看看它的运行结果。 <img alt="enter image description here" img-src="f402b38320ad270da6ee10a215ac40c73b1dbd69.jpg"></p><p>可以发现a的值被<code>printf</code>函数修改为了7。这就是<code>%n</code>的功效了。这是一个不常用到的参数。它的功能是将<code>%n</code>之前<code>printf</code>已经打印的字符个数赋值给传入的指针。通过<code>%n</code>我们就可以修改内存中的值了。和<code>%s</code>leak内存一样，只要栈中有我们需要修改的内存的地址就可以使用格式化字符串的漏洞修改它。</p><p>当然，如果需要修改的数据是相当大的数值时，我们可以使用%02333d这种形式。在打印数值右侧用0补齐不足位数的方式来补齐足。</p><p>可以看出，格式化字符串可以修改的内存范围更加广。只要构造出指针，就可以改写内存中的任何数值。和栈溢出的地毯轰炸不同。这种一次只能改写一个dword大小的内存的攻击方式更加精而致命</p><h1>0x03实践</h1><hr><p>最好的学习方法就是实践，现在我们就来实验一下格式字符串漏洞的功效。 首先，代码</p><pre><code>#include &lt;stdio.h&gt;
+int main(void)
+ { int flag = 0;
+ int *p = &amp;flag; char a[100];
+    scanf("%s",a);
+    printf(a);
+
+    if(flag == 2000)
+    {
+            printf("good!!\n");
+    }
+
+    return 0;
+</code></pre><p>}</p><p>使用gcc编译。<a href="http://7xkqu1.com1.z0.glb.clouddn.com/@/pwn/test">这里</a>&lt;-- 是我编译成的可执行文件。可以拿去试试。</p><p>然后拖进IDA中分析一下栈结构，调用<code>printf</code>函数时候的栈结构是这样的</p><pre><code>-00000010 r               dd ?   &lt;-- 这里是printf的返回地址，向上就是printf的栈帧
+-00000010 format          dd ?
+-00000010                 dd ?
+-00000010                 dd ?
+-00000010                 dd ?
+-0000000C flag            dd ?
+-00000008 p               dd ?
+-00000004 a               db ?
+-00000000                 db ? ; &lt;-- 再向下就都是a数组的空间
+</code></pre><p>我们可以需要修改的变量是flag，而指针p便是指向flag的指针。所以可以通过p来修改flag的值为2000，从而达到我们打印出good！！的目标</p><pre><code>&gt;%010x%010x%010x%01970x%n
+</code></pre><p>这个便是我构造出的poc，很短，但是很强悍（→_→）。 那么我们来看看效果吧</p><p><img alt="enter image description here" img-src="b738f109627c935eaf2146b0585fdb9d48816955.jpg"></p><p>oh yeah！！！！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/9426" rel="bookmark" id="re1">漏洞挖掘基础之格式化字符串</a></li><li><a href="http://drops.wooyun.org/binary/7428" rel="bookmark" id="re2">逆向基础 OS-specific (一)</a></li><li><a href="http://drops.wooyun.org/tips/5535" rel="bookmark" id="re3">wargame narnia writeup</a></li><li><a href="http://drops.wooyun.org/tips/6919" rel="bookmark" id="re4">太极越狱重大安全后门</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ahlaman</span> <span class="reply-time">2016-05-09 11:32:33</span></div><p></p><p>Z神就是6</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Airbasic</span> <span class="reply-time">2015-08-13 21:41:10</span></div><p></p><p>Z神就是6</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Msyb</span> <span class="reply-time">2015-08-08 19:31:08</span></div><p></p><p>学习了(￣∇￣)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Aklis</span> <span class="reply-time">2015-08-07 17:12:04</span></div><p></p><p>Z神就是6</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">evilddog</span> <span class="reply-time">2015-08-07 16:57:02</span></div><p></p><p>Z神就是6</p><p></p></div></div></div></div></div></main>

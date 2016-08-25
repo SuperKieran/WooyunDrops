@@ -1,0 +1,62 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">OSSEC服务端配置客户端批量部署方案</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">hello</a> <span class="bull">·</span> <time title="2015/10/16 15:03" ui-time="" datetime="2015/10/16 15:03" class="published ng-binding ng-isolate-scope">2015/10/16 15:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>最近也在研究ossec报警规则，还没研究的很透彻，暂时不是这篇文章的内容。ossec中文资料还是比较少，外文文献比较多。之前看到drops的两篇文章分享<a href="http://drops.wooyun.org/tips/2821">http://drops.wooyun.org/tips/2821</a>，<a href="http://drops.wooyun.org/tips/636">http://drops.wooyun.org/tips/636</a>，看到评论都说批量部署是个坑，比较麻烦。现在说下我的方案，如何批量安装部署客户端。对大家有帮助，可以解决大家在批量部署过程遇到的问题。</p><h1>0x01 服务端配置</h1><hr><p>服务端IP:192.168.145.128</p><p>服务端安装可参考<a href="http://drops.wooyun.org/tips/636">http://drops.wooyun.org/tips/636</a>，不在这篇文章讨论范围。因为ossec服务端与客户端是基于key认证传输信息的，所以服务端需为客户端生成相应的key。对于大企业来说每台主机都有一个主机名，假如我们把这样的服务器信息保存到ip.txt文本里面。</p><p>ip.txt内容格式如下：</p><pre><code>...
+host_name:ip
+host_name:ip
+host_name:ip
+host_name:ip
+...
+</code></pre><p><img alt="" img-src="07908bcb2c5e3603bdcab5bd9c7269a6abb07383.jpg"></p><p>这样的信息对，在大企业里面可通过api直接获取得到。</p><p>接着利用脚本，批量为每条记录生成key。key_gen.py：</p><pre><code>#!python
+import os    
+
+if __name__ == '__main__':
+    save_keys_path = "keys.logs"
+    f = open("ip.txt")
+    lines = f.read().splitlines()
+f.close()
+#perl文件在安装包里面
+    shell_path ="/usr/src/ossec-hids-2.7.1/contrib/ossec-batch-manager.pl"
+    for line in lines:
+        arr = line.split(":")
+        host_name = arr[0]
+        ip = arr[1]
+        #服务端根据name和ip添加客户端
+        cmd = "%s -a --ip %s --name %s" % (shell_path,ip,host_name)
+        os.system(cmd)
+        cmd = "%s -e %s &gt;&gt; %s" % (shell_path,ip,save_keys_path)
+        os.system(cmd)
+</code></pre><p>执行完后查看服务端安装目录下的client.keys文件，默认为<code>/var/ossec/etc/client.keys</code>，<strong>先把这个文件拷贝到web服务器或者ftp服务器方便客户端下载</strong>。</p><h1>0x02 客户端agent批量部署</h1><hr><p>agent群体比较大，批量部署需要面临两个问题：</p><p>1) 安装程序安装基于对话模式，怎么处理使它顺序安装，没有对话模式。</p><p>2) 客户端agent对应key导入问题。</p><p>3) 客户端配置ossec.conf统一配置。</p><p>对于问题1)修改安装包预配置文件<code>/ossec-hids-2.7.1/etc/preloaded-vars.conf</code>，设置变量的值，方可以使其顺序安装。</p><p>去掉一些注释，使其赋值，就不用通过对话模式进行赋值了。</p><p><img alt="" img-src="242262035c0d9b9e268b1f9cf33b4876f904add8.jpg"></p><p><img alt="" img-src="105c4c7f66745cbf54d78dfea479ef103514882c.jpg"></p><p><img alt="" img-src="a2c14a0d72fea45603b5d5d87f90dd382d86d641.jpg"></p><p><strong>把修改后的文件preloaded-vars.conf拷贝到之前的ftp服务器或者web服务器下方便客户端下载</strong>。</p><p>对于问题2) 只需要刚才的ftp服务器或者web服务器下载client.keys，然后根据自己本地的ip获取对应的key记录，这个不难。</p><p>对于问题3) 在一台客服端生成一份统一的ossec.conf，上传到之前web服务器或者ftp服务器，方便其他客户端下载。</p><p>至此，客户端部署脚本应该满足上面点，具体脚本如下：</p><p>ossec-agent-batch-install.sh文件内容如下：</p><pre><code>#!bash
+#!/bin/bash    
+
+cd /usr/local
+wget -U "Mozillai/5.0 (Macintosh; Intel Mac OS X 10_8_2) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.101 Safari/537.11"  http://www.ossec.net/files/ossec-hids-2.7.1.tar.gz    
+
+tar -zxvf ossec-hids-2.7.1.tar.gz     
+
+cd ossec-hids-2.7.1    
+
+cd etc    
+
+mv preloaded-vars.conf preloaded-vars.conf.bak    
+
+#从服务端下载预配置文件，用于顺序安装，不基于对话模式
+wget http://192.168.145.128/preloaded-vars.conf
+#开始安装
+../install.sh    
+
+cd /var/ossec/etc    
+
+#下载key文件，下面主要导入key
+wget http://192.168.145.128/client.keys    
+
+ip1=`/sbin/ifconfig eth0|sed -n '2p' |awk -F: '{print $2}'|awk '{print$1}'`
+#ip2=`/sbin/ifconfig eth1|sed -n '2p' |awk -F: '{print $2}'|awk '{print$1}'`
+#主要针对服务器网卡是eth0还是eth1不同操作
+sed -i '/'$ip1'/!'d /var/ossec/etc/client.keys    
+
+
+rm -rf ossec.conf
+#下载客户端统一配置文件
+wget http://192.168.145.128/ossec.conf    
+
+#启动客户端程序
+../bin/ossec-control start
+</code></pre><h1>0x03 总结</h1><hr><p>最后，可以通过ossec-wui查看客户端的部署情况或者在安装目录下 <code>/var/ossec/bin/agent-control</code>查看客户端的状态。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ubuntu</span> <span class="reply-time">2015-11-12 17:31:27</span></div><p></p><p>ossec 已部署近200台，架构由原来的ossec+MySQL+webui 升级为ossec+elk+redis 的方案。如果公司有用splunk,ossec 也可以和splunk 结合起来。</p><p>ossec 自动化、批量部署，前提是IP地址划分必须规划好，最好是连续的。<br>1是agent，2是server端。<br>先说agent批量部署，agent 批量部署有很多种方式，比如shell 脚本，ansible，puppet等。目前已把agent 部署脚本集成到系统初始化中。agent 交互的地方是用的expect 。<br>2、server端 ，主要是注册agent 和 生产key的问题，也要用Python 或 shell 写脚本，前提是基础网络已规划好，比如IP地址段的划分，哪个段跑web ,哪个段跑db等，否则就很难自动化、批量化。技术交流：1920532880</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Joffrey</span> <span class="reply-time">2015-10-18 15:09:23</span></div><p></p><p>哈，我折腾的时候是用Python+expect来搞定生成Keys的，后面发现只要key对了就行了</p><p></p></div></div></div></div></div></main>

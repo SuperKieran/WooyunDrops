@@ -1,0 +1,652 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">磁盘分区表恢复原理</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">purpleroc</a> <span class="bull">·</span> <time title="2016/01/13 19:36" ui-time="" datetime="2016/01/13 19:36" class="published ng-binding ng-isolate-scope">2016/01/13 19:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ec9c999e9c80899e838facdc94aaadc1b8898d81">[email&#160;protected]</a></strong></p><p><strong>Email: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="79181d1410173949011f18571a150c1b">[email&#160;protected]</a></strong></p><h1>0x00 引子</h1><hr><p>实在是词穷想不到要怎么写题目了，就把vs中的工程名当题目吧。</p><p>这篇文，主要讲讲MBR、DBR、NTFS、FAT32结构等等诸如此类的东西，以及在数据恢复中，我们可以从现有的被破坏了的磁盘中获取到哪些有利于我们进行数据恢复的信息。</p><p>不知道是最近没休息好还是其他原因，总觉得静不下心、集中不了注意力，也不知道从什么时候开始，浏览网页只需要几秒钟，查找资料也从来不会耐心看完文章，总是一翻到底，用最快的速度去搜索、定位自己要找的内容。但通常来说，网上有的与你问题相同的解决方案并不多。而人们写文章往往不是奔着主题去的，而是和写论文、写书一样，先把种种后面要用到的概念堆砌起来，然后再来慢慢的说解决方案。当然，其实这样也挺好的，但作为一个目的驱动者，我更喜欢看需要用到的时候再讲的内容。</p><p>于是，这篇文就这么来写吧，免得你看完NTFS和FAT32文件系统就不想看下去了。</p><h1>0x01 背景</h1><hr><p>事情是这样的，这几天在测试TrueCrypt解密的时候，碰到这么一种情况：</p><p>用TrueCrypt做整盘加密系统时，TrueCrypt会重写磁盘的MBR区域，将原本的MBR加密保存到其他位置，启动过程中通过了TrueCrypt的密码验证后再在内存中恢复原先的MBR并引导进入系统</p><p>这么做没问题，用我的解密程序解完后也能够正常挂载并访问，可另一种情况来了：</p><p>如果加密的磁盘中，并不是只有一个c盘，而还有其他分区</p><p>这时，我的解密工具便不能直接挂载了，双击出现：</p><p>图1： <img alt="Alt text" img-src="395bc6e80bef747de34975d3c59b29eb1e86aa00.jpg"></p><p>Winhex打开看了看，解密后的数据都是正确的，也看到了DBR：</p><p>图2： <img alt="Alt text" img-src="3ecd360df3bd59aca006ff9a08f13e9ec94998eb.jpg"></p><p>可还是打不开，为啥呢？猜测是分区表被破坏了。那怎么修复呢？瞬间想到了大一那会儿帮别人修电脑，搞坏分区表，花了一晚上找数据（而且还没找全）的黑历史，毕竟那会儿不知道用重建分区表的功能，也不理解原理，也就那次之后，呆图书馆看了蛮多数据恢复的书籍，去了解原理。</p><p>于是对解密后的文件做了个镜像，用数据恢复软件Diskgenuis打开，搜索并重建分区表，得到结果如下：</p><p>图3： <img alt="Alt text" img-src="46b2effe93948b85de5c70c8e23d9c405af5ab7c.jpg"></p><p>发现他很神奇的把两个分区找回来了，如果点保存，再去winhex中看，就能当磁盘来分析了。</p><p>所以，<strong>我的目的是想知道他是怎么恢复分区表的！</strong></p><p><strong>想自己写个程序，能修复镜像文件中损坏了的分区表，并且能够当做vhd文件形式被win7以上的系统直接加载，并且在加载完之后，恢复到原有形态。</strong></p><p>于是，憋了一周，边写边找资料，终于把程序写完来写这文章了。</p><p>要恢复分区表，首先得从损坏了分区表的磁盘里找出分区信息，再用这些信息来生成分区表。</p><p>那问题是，磁盘中会有哪些信息呢？</p><h1>0x02 寻址方式（CHS/LBA）</h1><hr><p>在用正常磁盘做讲解前先来了解下磁盘的两种寻址方式，一种是CHS（cylinder head sector）寻址方式、一种是LBA（Logical Block Addressing）逻辑块寻址方式。其中CHS（寻址方式）在分区表中使用24个bit位（前10位表示cylinder、中间8位表示head、后6位表示sector），其最大寻址空间为8GB，后因为其满足不了要求了，人们给他扩充到28bit，但寻址空间也只有128G，面对现有的动辄上TB的硬盘还是无能为力。LBA是用来取代CHS的，LBA是一个整数，常见有32bit和64bit，32bit最大寻址空间达到2TB。</p><p>不管CHS（寻址方式）也好，还是LBA（寻址方式）也好。磁盘存储寻址都需要通过cylinder、head、sector这三个变量来实现。</p><p>从上面我们了解到的信息就是，有两种寻址方式，而且可以相互转换，再然后呢，归根到底其实就是用的CHS方式。</p><p>这一块的详细的介绍以及转换方式我就不说了，有兴趣的可以百度百度，这里也提供一个链接：</p><p><a href="http://blog.csdn.net/haiross/article/details/38659825">http://blog.csdn.net/haiross/article/details/38659825</a></p><h1>0x03 主引导记录MBR</h1><hr><p>接着，来看看正常的磁盘中的MBR，所谓MBR即Main Boot Record 主引导记录区，位于整个硬盘的0磁道0柱面1扇区（也可以用LBA描述成0扇区）。总共占512字节，通常也就是1个扇区的大小。其重要作用就是负责从BIOS手中接过引导权，再去找可引导的分区，并将权限交给可引导的DBR（Dos Boot Record），完成系统启动。</p><p>MBR虽然占了一个扇区，但其<code>Boot_Code</code>部分只占了446个字节。其余64个字节为DPT（Disk Partition Table硬盘分区表），对就是我们要恢复的东西，最后2个字节就是传说中的标志位<code>55AA</code>了。于是，他的结构体大体如下：</p><pre><code>#!cpp
+typedef struct MBR_T
+{
+    UCHAR boot_code[446];
+    PartTableRecord partition[4];
+    UCHAR sign[2];
+}MBR;
+</code></pre><p>对照着结构体，我们看看winhex中的截图：</p><p>图4： <img alt="Alt text" img-src="ded18926f7fe005c8d61701819552be61e1afeb6.jpg"></p><p>黄色区域就是boot_code所占用的446个字节，红色部分就是DPT，蓝色就是标志位了。</p><h1>0x04 磁盘分区表DPT</h1><hr><p>既然找到了DPT，那肯定是要分析清楚，它是干嘛用的，里面都有些什么信息呢？</p><p>直接用winhex的模板看看先：</p><p>图5： <img alt="Alt text" img-src="8107ded6fe1bd5bdb658cc29e056f9d9c063c94f.jpg"></p><p>桌面太小，截图不完全，但也大体知道了里面会有些什么信息，顺便翻出结构体如下：</p><pre><code>#!cpp
+typedef struct PartTableRecord_t
+{
+
+    BYTE    byIsBoot;           //引导分区      1B  1B  80（引导分区），00（非引导分区）
+    BYTE    byStartHead;        //起始磁头      1B  2B
+    BYTE    byStartSector;      //起始扇区      1B  3B  
+    BYTE    byStartCylinder;    //起始柱面      1B  4B
+    BYTE    byPartType;         //分区类型      1B  5B  07（NTFS），05（扩展分区），0B（FAT32）
+    BYTE    byEndHead;          //结束磁头      1B  6B
+    BYTE    byEndSector;        //结束扇区      1B  7B
+    BYTE    byEndCylinder;      //结束柱面      1B  8B
+    DWORD   dwStartSector;      //开始扇区      4B  12B     
+    DWORD   dwTotalSector;      //分区扇区数 4B  16B 最大2T Byte
+} PartTableRecord;
+</code></pre><p>恩，每个分区表占用16个字节，而MBR中只留了64个字节，这也是为什么一块硬盘最多只能创建4个主分区的原因了。多了放不下。那，为啥我们可以看到比四个还多的分区呢？因为扩展分区里面可以创建逻辑分区，这里个数不定，只要你盘符够，想创建多少就创建多少。</p><p>从结构体后的注释语句也可以知道16字节中每一位分别代表什么含义。这里需要注意的是，表示分区位置和大小的地方有两个，我们可以通过起始磁头、扇区、柱面和结束磁头、扇区、柱面来得到分区位置和大小，也可以直接通过LBA模式记录的开始扇区和分区扇区数来获取到分区的位置和大小。</p><p>那，问题来了，他们哪个是有用的？</p><p>在第二节中寻址方式里讲过，CHS能记录的最大的分区是8.4GB，超过这个大小，就无力了。那这时候32位的LBA自然就派上用场了。</p><p>我做了个实验，把所有分区表中的CHS记录全部清零，再用winhex加载，还是能够正常识别。于是，我决定了，后面所有寻址方式均以LBA方式来说。</p><p>再回到winhex中看分区信息，来对照DPT一一理解。</p><p>图6： <img alt="Alt text" img-src="b68421d3197cf836e0b756d9a449b7393da8d9f0.jpg"></p><p>上图可以看出，这块硬盘总共有5个分区。其中主分区三个，扩展分区1个，逻辑分区2个（逻辑分区是在扩展分区里面的）。也就是MBR中64个字节除了主分区就是扩展分区。</p><p>根据DPT中的起始扇区以及扇区大小，就可以得到上图中每个分区的大小、1st sector（起始扇区）了。主分区好说，我们对照着DPT中的其实位置和大小都能看得出，那扩展分区是怎么个形态呢？</p><p>我们直接看第四个DPT的信息：<code>007A300B05FE3F1880D0020000600300</code>，忽略掉CHS部分，并对照结构体来看，它告诉了我们这些信息：</p><pre><code>#!bash
+byIsBoot = 0x00   // 非引导分区
+byPartType = 0x05  // 扩展分区
+dwStartSector = 0x0002D080     //起始扇区 184448
+dwTotalSector = 0x00036000    //分区大小 221184
+</code></pre><p>这里可以看到，扩展分区的起始位置其实也就是三个主分区的总大小了，再加上自身的分区大小，就是整个磁盘的大小了。例如我这个磁盘是200MB的，现在大小应该是184448 + 221184 = 405632，注意单位是扇区，所以换算成MB应该是 405632/512 * 1024 * 1024 = 198.0625MB。为什么与文件总大小相比少了呢？因为，在分区表后面还有一些未被使用的空间。好奇的是，这个扩展分区中到底放了些什么呢？</p><p>在winhex中Ctrl+G输入扇区号184448，跟随过去：</p><p>图7： <img alt="Alt text" img-src="66b312bef76163e354677b227e5f9aed782d0713.jpg"></p><p>还是和刚才一样，黄色部分为前446字节，这里全为0，因为不需要boot_code，而后64字节为扩展分区的分区表信息。在图的左右下方分别标示出了现在所在的偏移扇区位置，以及总扇区个数和偏移位置（字节数表示）。还是来看这里的DPT信息吧，有两个分区有信息，这次直接用winhex来看：</p><p>图8： <img alt="Alt text" img-src="927da01545d34a5af3dfc6536d4ed7d13ef0b3fc.jpg"></p><p>第一个分区起始扇区是128，总大小为122880，类型是ntfs；第二个分区起始扇区是123008，总大小为94338，类型是扩展分区。需要注意的是，扩展分区的起始扇区是需要加上基地址（扩展分区偏移扇区位置）的。也就是说，我们看到的第一个分区，实际起始地址为：184448 + 128 = 184576，与图6的partition4的起始位置是一样的，那下一个呢？再来一个扩展分区的类型是怎么个意思，也还是算一下实际的起始地址：184448 + 123008 = 307456。</p><p>再次Ctrl + G跟随过去：</p><p>图9： <img alt="Alt text" img-src="aa5e77d54b036548f89325ac7c39c806d9a75312.jpg"></p><p>同样的，再次找到一个DPT信息，这里面只有一项，也就是图6中的第五个分区了，也来算一下吧：</p><p>起始扇区 = 307456 + 128 = 307584，与图6中第五个分区起始位置一致。</p><p>从上面的实例中可以得出，整个磁盘大概是这么分布的：</p><p>图10： <img alt="Alt text" img-src="49006645c3a47663898143b1572051f1cb370dac.jpg"></p><p>再看扩展分区的链接图示：</p><p>图11： <img alt="Alt text" img-src="d6a88063f8b102648a832b8c67883ebb36533b99.jpg"></p><p>于是，回到背景里提到的目标，我们要做的就是，根据磁盘中存有的信息，来重建出这么一个分区表。</p><p><strong>自然的，我们需要去知道分区表指向的内容是什么！</strong></p><h1>0x05 操作系统引导分区DBR</h1><hr><p>在上一节里面，提到了DPT，也提到了分区表的结构体，从结构体里我们可以看到偏移5的位置有键值byPartType，分区类型，去找了找资料，这里的取值非常多，常见类型大致如下：</p><pre><code>#!bash
+00H DOS或WINDOWS不允许使用，视为非法  
+01H FAT12 
+04H FAT16小于32MB  
+05H Extended 
+06H FAT16大于32MB 
+07H HPFS/NTFS 
+OBH WINDOWS95 FAT32 
+OCH WINDOWS95 FAT32 
+0EH WINDOWS FAT16  
+0FH WINDOWS95 Extended(大于8G)  
+82H Linux swap 
+83H Linux 
+85H Linux extended 
+86H NTFS volume set 
+87H NTFS volume set
+</code></pre><p>在结合上一节的分区表，这里主要关注05、07、0B，即扩展分区、NTFS、FAT32三种。而05的在上一节介绍过了，那么，我们将目光投向NTFS与FAT32两种类型。</p><h3>5.1 NTFS（New Technology File System）</h3><p>首先，从MBR中看到分区信息能知道，分区1是NTFS分区，在winhex中跟随上一节中分区1的起始位置，可以看到如下信息，图12：</p><p><img alt="Alt text" img-src="10dd3a651ad179ddc0283a92562c0b559096fb34.jpg"></p><p>已将每个数据对应的结构和数据都着色了，然后也是时候拿出NTFS文件系统中DBR的数据结构了：</p><pre><code>#!cpp
+typedef struct ntfs_boot_sector_t {
+    BYTE    ignored[3]; /* 0x00 Boot strap short or near jump */
+    char    system_id[8];   /* 0x03 Name : NTFS */
+    BYTE    sector_size[2]; /* 0x0B bytes per logical sector */
+    BYTE    sectors_per_cluster;    /* 0x0D sectors/cluster */
+    WORD    reserved;   /* 0x0E reserved sectors = 0 */
+    BYTE    fats;       /* 0x10 number of FATs = 0 */
+    BYTE    dir_entries[2]; /* 0x11 root directory entries = 0 */
+    BYTE    sectors[2]; /* 0x13 number of sectors = 0 */
+    BYTE    media;      /* 0x15 media code (unused) */
+    WORD    fat_length; /* 0x16 sectors/FAT = 0 */
+    WORD    secs_track; /* 0x18 sectors per track */
+    WORD    heads;      /* 0x1A number of heads */
+    DWORD   hidden;     /* 0x1C hidden sectors (unused) */
+    DWORD   total_sect; /* 0x20 number of sectors = 0 */
+    BYTE    physical_drive; /* 0x24 physical drive number  */
+    BYTE    unused;     /* 0x25 */
+    WORD    reserved2;  /* 0x26 usually 0x80 */
+    LCN sectors_nbr;    /* 0x28 total sectors nbr */
+    QWORD   mft_lcn;    /* 0x30 Cluster location of mft data.*/
+    QWORD   mftmirr_lcn;    /* 0x38 Cluster location of copy of mft.*/
+    char   clusters_per_mft_record;     /* 0x40 */
+    BYTE    reserved0[3];                   /* zero */
+    char    clusters_per_index_record;  /* 0x44 clusters per index block */
+    BYTE    reserved1[3];                   /* zero */
+    LCN     volume_serial_number;           /* 0x48 Irrelevant (serial number). */
+    DWORD   checksum;                       /* 0x50 Boot sector checksum. */
+    BYTE    bootstrap[426];                 /* 0x54 Irrelevant (boot up code). */
+    WORD    marker;             /* 0x1FE */
+}ntfs_boot_sector ;
+</code></pre><p>再次想想我们的目的，是要重构分区表，而且，我们可以看出，分区表中最重要的就是各分区的分区类型、起始位置以及</p><p>分区大小，三个信息了。当然，还有是否为活动分区，但这里我们主要是做数据恢复，所以，暂不考虑其是否作为引导分区了。是的，我们只要获取到每一个分区的分区类型、起始位置、分区大小三个信息。</p><p>我们来看看这个结构体中能提供给我们一些什么：</p><ul><li><code>sectors_nbr</code>：总扇区数，即分区大小</li><li><code>system_id</code>：文件系统类型，即分区类型</li></ul><p>而在刚才的试验中，我们也可以看到，分区表中每个起始位置对应的信息，都是指向DBR（Dos Boot Record操作系统引导分区）结构体的。于是，分区的起始位置也是可以获取到的。</p><p>于是，我们的思路是从磁盘中去搜索各个DBR，然后获取到分区表所需信息，再建立分区表。</p><p>既然聊到了NTFS，我们再来看看上面结构体中，还有哪些信息是我们需要的吧：</p><ul><li><code>sector_size</code>：每扇区字节数，一般情况下是固定512字节的</li><li><code>sectors_per_cluster</code>：这个也挺重要的，需要引入一个新概念，“簇”。他在后面要用的MFT中起作用。先看看这个键值是干嘛用的，它表示的是每簇的扇区数量。</li><li><code>hidden</code>：字面意思是未使用的扇区数。这里表示的是从分区表到DBR的扇区数量。若为主分区，则hidden表示的是扇区的起始位置。若是扩展分区，则hidden表示的是从扩展分区表到该分区的扇区数。</li><li><p><code>mft_lcn</code>：<code>$MFT</code>(主文件表)的偏移位置，这里的单位是簇，他LBA位置 = <code>分区offset + mft_lcn * sectors_per_cluster</code>。以 图:12 为例，分区起始位置为128，<code>sectors_per_cluster</code> = 8，<code>mft_lcn</code> = 853，所以LBA位置为：128 + 8 * 853 = 6952。</p><p>为了证实，我们在winhex中跟随到6952扇区，如下：</p><p>图13： <img alt="Alt text" img-src="9f86e538e2838f010724396147623042a3e370e8.jpg"></p><p>在这里，我们也可以用MFT作为判断某个搜索到的DBR是否正确的条件。有想更详细了解MFT的可以去找找资料继续看文件管理方式，这里就不展开了，毕竟，我们这次主要目的是恢复分区表。</p></li><li><p><code>mftmirr_lcn</code>：每个MFT表所占用的扇区数量。一般为2.</p></li></ul><p>对我们有用的信息大概也就是上面所提到的了。所以对于恢复NTFS型分区，我们的策略是，全盘搜索，找到NTFS型DBR，之后通过MFT信息来判断该分区是否正确。同时对于NTFS还需要提醒的是，其DBR扇区不仅仅在分区头部存在，在分区的最后一个扇区中也有一个备份。所以，就算分区首部的DBR被破坏了，我们也可以通过分区尾部的DBR来恢复出分区表。</p><h3>5.2 FAT32（32位文件分配表）</h3><p>上一小节中，我们知道了怎么重建NTFS型分区，接着，来看看FAT32。回到图6中，看看第三个分区。winhex跟过去，得到截图如下，这次就不上色了，太累~~~</p><p>图14： <img alt="Alt text" img-src="30526d8125636a3778d0f3ac4871075892bd6877.jpg"></p><p>找了找资料，翻出FAT32的结构体表示：</p><pre><code>#!cpp
+typedef struct fat_boot_sector_t {
+    BYTE    ignored[3]; /* 0x00 Boot strap short or near jump */
+    char    system_id[8];   /* 0x03 Name - can be used to special case
+                            partition manager volumes */
+    BYTE    sector_size[2]; /* 0x0B bytes per logical sector */
+    BYTE    sectors_per_cluster;    /* 0x0D sectors/cluster */
+    WORD    reserved;   /* 0x0E reserved sectors */
+    BYTE    fats;       /* 0x10 number of FATs */
+    BYTE    dir_entries[2]; /* 0x11 root directory entries */
+    BYTE    sectors[2]; /* 0x13 number of sectors */
+    BYTE    media;      /* 0x15 media code (unused) */
+    WORD    fat_length; /* 0x16 sectors/FAT */
+    WORD    secs_track; /* 0x18 sectors per track */
+    WORD    heads;      /* 0x1A number of heads */
+    DWORD   hidden;     /* 0x1C hidden sectors (unused) */
+    DWORD   total_sect; /* 0x20 number of sectors (if sectors == 0) */
+
+    /* The following fields are only used by FAT32 */
+    DWORD   fat32_length;   /* 0x24=36 sectors/FAT */
+    WORD    flags;      /* 0x28 bit 8: fat mirroring, low 4: active fat */
+    BYTE    version[2]; /* 0x2A major, minor filesystem version */
+    DWORD   root_cluster;   /* 0x2C first cluster in root directory */
+    WORD    info_sector;    /* 0x30 filesystem info sector */
+    WORD    backup_boot;    /* 0x32 backup boot sector */
+    BYTE    BPB_Reserved[12];   /* 0x34 Unused */
+    BYTE    BS_DrvNum;      /* 0x40 */
+    BYTE    BS_Reserved1;       /* 0x41 */
+    BYTE    BS_BootSig;     /* 0x42 */
+    BYTE    BS_VolID[4];        /* 0x43 */
+    BYTE    BS_VolLab[11];      /* 0x47 */
+    BYTE    BS_FilSysType[8];   /* 0x52=82*/
+
+    /* */
+    BYTE    nothing[420];   /* 0x5A */
+    WORD    marker;
+}fat_boot_sector;
+</code></pre><p>前面是BIOS Parameter Block结构体的一些信息，是公用的，后面的才是单纯的FAT32所需要的。用winhex的模板解析一下，得到下面的内容。</p><p>图15： <img alt="Alt text" img-src="ec5c9c60921ce350cf050c6750bcea5f982814ec.jpg"></p><p>首先，我们需要的文件类型是可以通过<code>system_id</code>来获取到的，起始扇区也是可以通过DBR所在的位置得到的，相对NTFS来说FAT32中少了<code>sectors_nbr</code>键值，那我们应该如何去获取到FAT32的总大小呢？</p><p>我采用的办法是，用搜索到的它的后一个DBR的位置减去当前位置，如果后面没有分区了，则用文件总大小减去当前偏移位置。</p><p>这样，我们也能将分区表需要的三个信息得到。再然后，我们也要来说说这结构体里还有哪些对我们有用的信息。</p><ul><li>hidden：字面意思是未使用的扇区数。这里表示的是从分区表到DBR的扇区数量。若为主分区，则hidden表示的是扇区的起始位置。若是扩展分区，则hidden表示的是从扩展分区表到该分区的扇区数。</li><li>total_sect：本来可以用来表示分区大小的，可只是个长整形变量，只能正确表示小分区的大小，对于大分区无力了。</li><li><p>reserved：保留扇区数，起始，他指的是第一个FAT1表所在的相对偏移位置，例如，在partition3中，起始地址是82048扇区，reserved扇区数量是6718扇区，可以得到，FAT1表起始扇区为82048 + 6718 = 88766。在winhex跟过去，得到信息如下：</p><p>图16： <img alt="Alt text" img-src="8bfe18bdb0c6679c9922455323e24b3f61a42d5c.jpg"></p></li><li><p>途中每一种颜色代表一个目录表项，绿色为0号FAT项，淡黄色为1号FAT项。通常0号FAT项总为0x0ffffff8。于是，这一特征也可以被我们当做判断分区表是否正确的标准。</p></li><li><p>fats：表示的是FAT表的个数，通常为2个，即FAT1和FAT2。</p></li><li><p><code>fat32_length</code>：每个FAT表的扇区数。在上面我们定位到了FAT1，那么FAT2就是用FAT1的起始位置加上每个FAT表的大小。</p></li><li><p><code>info_sector</code>：<code>filesystem_info</code>的起始位置，起始也可以作为FAT32分区是否正确的判断标志。</p></li><li><p><code>backup_boot</code>：FAT32的DBR备份文件存在的位置。上例中，<code>backup_boot</code> = 6，即DBR备份存放在分区起始扇区+6的地方。</p></li></ul><p>有关FAT的一些结构和作用：</p><ol><li>FAT32文件一般有两份FAT，他们由格式化程序在对分区进行格式化时创建，FAT1是主，FAT2是备份。</li><li>FAT1跟在DBR之后，其具体地址由DBR的BPB参数中指定，FAT2跟在FAT1的后面。</li><li>FAT表由FAT表项构成，我们把FAT表项简称FAT项，每个FAT项占用4字节。</li><li>每个FAT项都有一个固定的编号，这个编号从0开始。</li><li>FAT表项的前两个FAT项为文件系统保留使用，0号FAT为介质类型，1号FAT为文件系统错误标志。</li><li>分区的数据区中每个簇都会映射到FAT表中的唯一一个FAT项，因为0号FAT和1号FAT被系统占用，用户的数据从2号FAT开始记录。</li><li>如果某个文件占用很多个簇，则第一个FAT项记录下一个FAT项的编号（既簇号），如果这个文件结束了，则用“0F FF FF FF”表示。</li><li>分区格式化后，用户文件以簇为单位存放在数据区中，一个文件至少占用一个簇。</li><li>FAT的主要作用是标明分区存储的介质以及簇的使用情况。</li></ol><p>具体有关FAT的其他信息，还请自行收集资料，因为，有了前面的信息，我们也可以有办法恢复FAT32分区对应的分区表数据了。</p><p>了解了前面的知识之后，我们就可以开始编写程序来对分区表进行重建了。</p><h1>0x06 FileMapping（文件映射）</h1><hr><p>首先需要从磁盘、磁盘镜像中找到DBR存在的痕迹，就需要对整个磁盘或镜像文件进行遍历搜索，由于分区是线性扩展的，而且DBR所在的位置永远的是扇区开头，并且独自占有一整个扇区。于是我们可以遍历文件或磁盘中的每个扇区来快速完成搜索。</p><p>对于磁盘或者磁盘镜像文件，肯定不能是通常的直接fopen、fread读取整个文件了，因为，你没那么多内存去读，这时候就要对文件进行分片读取，比如，每10M读一次，如此循环将其遍历一次。</p><p>但考虑到吞吐率的问题，这里引用的是FileMapping文件映射的方式，将文件直接映射到内存中进行操作。当文件比较小的时候，我们可以直接全文件映射起来，但通常不太建议这么做。</p><p>我采用的也是上面说的循环读取的思路，对大的磁盘文件循环映射起来，代码如下：</p><pre><code>#!cpp
+#define MAPPING_SIZE 67108864
+#define BYTE_PER_M 1024*1024
+
+// 
+// big_file: 需要映射的文件路径
+// ll_file_size: 需要映射的文件总大小
+//
+int ToMapping(char *big_file, unsigned __int64 ll_file_size)
+{ 
+    LCN i = 0;
+    //得到系统分配粒度
+    SYSTEM_INFO sinf;
+    GetSystemInfo(&amp;sinf);
+    DWORD dwAll = sinf.dwAllocationGranularity;
+
+    printf ("Total %dM.\nSearching...\n",ll_file_size / BYTE_PER_M ;
+
+    if (ll_file_size &lt;= MAPPING_SIZE)                                      //内存镜像小于64M时，一次性挂载
+    {
+        Maping_file(big_file, 0, ll_file_size);
+    }else{
+        for (i = 0; i &lt; (ll_file_size / MAPPING_SIZE) ; i++)                 //否则以64M为一个镜像映射单位，循环挂载，直到全部映射完成
+        { 
+            if (i == 0){
+                Maping_file(big_file, (i * (MAPPING_SIZE)) - (i * (MAPPING_SIZE) % dwAll), MAPPING_SIZE);
+            }else {
+                Maping_file(big_file, (i * (MAPPING_SIZE)) - ((i * (MAPPING_SIZE)) % dwAll), MAPPING_SIZE);         
+            }
+        }
+        if (ll_file_size &gt; (i * MAPPING_SIZE)){                             //最后一次可能并不是64M，需要根据实际大小来映射
+            Maping_file(big_file, i * MAPPING_SIZE - ((i * MAPPING_SIZE) % dwAll), ll_file_size - i * MAPPING_SIZE);
+        }
+    }
+    return 0;
+}
+</code></pre><p>ToMapping完成的是将文件分片交给<code>Maping_file</code>函数处理。</p><pre><code>#!cpp
+int Maping_file(char* big_file, LCN lOffset, long lSize)
+{
+    char* pPtr_File;                                                  //存放指向内存映射文件的首地址
+        HANDLE hFile = CreateFileA(big_file, 
+        GENERIC_READ,               
+        FILE_SHARE_READ,
+        NULL, 
+        OPEN_EXISTING, 
+        FILE_FLAG_SEQUENTIAL_SCAN, 
+        NULL);
+        if ( hFile == INVALID_HANDLE_VALUE){                               //Open the data file.
+        ErrorOut("CreateFile() Error!");
+    }
+        HANDLE hFileMapping = CreateFileMapping(hFile, 
+        NULL,         //Create the file-mapping object.
+        PAGE_READONLY,
+        0, 
+        0,
+        NULL);
+    if (hFileMapping == INVALID_HANDLE_VALUE){
+        ErrorOut("CreateFileMapping() Error!");
+    }
+    PBYTE pbFile = (PBYTE) MapViewOfFile(hFileMapping, FILE_MAP_READ,
+        lOffset &amp; 0xFFFFFFFF00000000,                        // Offset high
+        lOffset &amp; 0xFFFFFFFF,                                // Offset low
+        lSize);                                             // bytes to map
+    if (pbFile == INVALID_HANDLE_VALUE){
+        ErrorOut("MapViewOfFile() Error!");
+    }
+    /////////////////////////////////////////////
+    pPtr_File = (char*)pbFile;
+    ToGetDBR(pPtr_File, lSize, lOffset);
+        //////////////////////////////////////////////
+    UnmapViewOfFile(pbFile);
+    CloseHandle(hFileMapping);
+    CloseHandle(hFile);
+    return 0;
+}
+</code></pre><p>这样，就能通过CreateFileMapping将大的镜像文件分块为64M一小块映射起来，之后调用ToGetDBR，来对磁盘中残留的DBR信息进行搜索。</p><h1>0x07 搜索DBR</h1><hr><p>这里的思路是，遍历整个磁盘，而后检测每个扇区，看是否满足NTFS或FAT32型分区格式。若满足，则键入到链表中。</p><pre><code>#!cpp
+void ToGetDBR(char* p_file, long l_size, LCN offset)
+{
+    long i = 0;
+    char *buf   = NULL;
+    char *temp  = NULL;
+    LCN ll_offset = 0;
+
+    do 
+    {
+        buf = p_file + i * SECTOR_SIZE;
+        if (!test_NTFS((ntfs_boot_sector*)buf, offset + i * SECTOR_SIZE))
+        {
+            ll_offset = offset + (i * SECTOR_SIZE);
+            temp = (char*)malloc(512);
+            memcpy(temp, buf, 512);
+            if (InsertDBRList(g_dbr_list_head, temp, 1, g_n_dbr, ll_offset)) // NTFS type is 1
+            {
+                //printf ("Found NTFS! AT %lld sectors\n", ll_offset / SECTOR_SIZE);
+            }
+            ll_offset = 0;
+            temp = NULL;
+        }
+        if(!test_FAT((fat_boot_sector*)buf, offset + i * SECTOR_SIZE))
+        {
+            ll_offset = offset + (i * SECTOR_SIZE);
+
+            temp = (char*)malloc(512);
+            memcpy(temp, buf, 512);
+            if (InsertDBRList(g_dbr_list_head, temp, 2, g_n_dbr, ll_offset)) // FAT32 type is 2
+            {
+                //printf("Found FAT! AT %lld sectors\n", ll_offset / SECTOR_SIZE);
+            }
+            ll_offset = 0;
+            temp = NULL;
+        }
+        i++;
+    } while (i * SECTOR_SIZE &lt; l_size);
+}
+</code></pre><p>检测是否为NTFS与FAT32形式的磁盘可根据NTFS及FAT32结构体特征来判断，这里判断代码如下：</p><pre><code>#!cpp
+int test_NTFS(const ntfs_boot_sector*ntfs_header, LCN l_size)
+{
+    LCN lba = l_size / SECTOR_SIZE;
+    chs tmp;
+    int verbose = 1;
+
+    if(ntfs_header-&gt;marker!=0xAA55 ||
+        (ntfs_header-&gt;reserved)&gt;0 ||
+        ntfs_header-&gt;fats&gt;0 ||
+        ntfs_header-&gt;dir_entries[0]!=0 || ntfs_header-&gt;dir_entries[1]!=0 ||
+        ntfs_header-&gt;sectors[0]!=0 || ntfs_header-&gt;sectors[1]!=0 ||
+        ntfs_header-&gt;fat_length!=0 || (ntfs_header-&gt;total_sect)!=0 ||
+        memcmp(ntfs_header-&gt;system_id,"NTFS",4)!=0)
+        return 1;
+    switch(ntfs_header-&gt;sectors_per_cluster)
+    {
+    case 1: case 2: case 4: case 8: case 16: case 32: case 64: case 128:
+        break;
+    default:
+        return 1;
+    }
+    return 0;
+
+int test_FAT(const fat_boot_sector* fat_header, LCN l_size)
+{
+    if(!(fat_header-&gt;marker==0xAA55
+        &amp;&amp; (fat_header-&gt;ignored[0]==0xeb || fat_header-&gt;ignored[0]==0xe9)
+        &amp;&amp; (fat_header-&gt;fats==1 || fat_header-&gt;fats==2)))
+        return 1;   /* Obviously not a FAT */
+    switch(fat_header-&gt;sectors_per_cluster)
+    {
+    case 1: case 2: case 4: case 8: case 16:    case 32:    case 64:    case 128:
+        break;
+    default:
+        return 1;
+    }
+    switch(fat_header-&gt;fats)
+    {
+    case 1:
+        break;
+    case 2:
+        break;
+    default:
+        return 1;
+    }
+    return 0;
+}
+</code></pre><p>而所用到的DBR链表结构体如下：</p><pre><code>#!cpp
+typedef struct dbr_list_t
+{
+    char* dbr;    // DBR content
+    int n_type;   // DBR type   ntfs = 1    fat32 = 2
+    int flag;     // Is this DBR a Available？
+    int n_is_org; // Is this DBR a orignal or copy.
+    __int64 ll_offset;       // DBR offset.
+    __int64 ll_total_sector; // Partition offset.
+    __int64 ll_start_sector; // Partition Size.
+    dbr_list_t* p_next;      // Point to next dbr
+
+    dbr_list_t()
+    {
+        dbr = NULL;
+        n_type          = 0;
+        p_next          = 0;
+        ll_offset       = 0;
+        n_is_org        = 0;
+        flag            = 0;
+        ll_total_sector = 0;
+        ll_start_sector = 0;
+    }
+}dbr_list;
+</code></pre><p>在搜索过中，对<code>dbr</code>、<code>n_type</code>、<code>ll_offset</code>、<code>p_next</code>四个键值进行赋值，得到整个磁盘中可能存在的分区信息。并将这些搜索到的DBR存放在链表中，方便进一步处理。</p><h1>0x08 判断DBR</h1><hr><p>在上一小节，我们完成了对整个磁盘中可能存在的分区信息的搜索。那，搜索到的结果肯定不会全部正确或者可用，为了使重建的分区表更加可靠，需要对搜索到的分区信息进行筛选，以及链表信息的填充。</p><p>在0x05中谈到了NTFS和FAT32类型DBR的一些特性，这里就需要用到这些特性对去进行判断。</p><p>对于NTFS型的DBR。</p><pre><code>#!cpp
+if (p_dbr_temp-&gt;n_type == 1)       //  NTFS
+{
+    p_ntfs_temp = (ntfs_boot_sector*)p_dbr_temp-&gt;dbr;
+    if (p_ntfs_temp-&gt;sectors_nbr &lt; (g_ll_file_size / SECTOR_SIZE))   // 获取到的大小不能比总大小还大
+    {
+        flag = 0;
+        flag = JudgeMFT(file_path, p_dbr_temp, p_ntfs_temp);
+
+        if (flag)
+        {
+            p_dbr_temp-&gt;flag = 1;   // 设置dbr可用标志位
+            p_dbr_temp-&gt;ll_total_sector = (LCN)p_ntfs_temp-&gt;sectors_nbr;   // 设置分区总大小
+            g_n_part++;
+        }
+        // 输出信息
+        printf("Type: NTFS.\tOffset: %I64u.\tSize %I64u.\t Hidden: %lu\tMFT at %I64u cluster.\t MFT is %s!\n",
+        p_dbr_temp-&gt;ll_offset / SECTOR_SIZE, 
+        (LCN)p_ntfs_temp-&gt;sectors_nbr, 
+        p_ntfs_temp-&gt;hidden,
+        p_ntfs_temp-&gt;mft_lcn.QuadPart,
+        flag ? "Right" : "Wrong");
+    }
+}
+</code></pre><ol><li>DBR中<code>sectors_nbr</code>不能比整个文件大小还大</li><li>MFT是否正确</li></ol><p>若两项都满足，则判定其为正确的NTFS类型DBR，即可能为正确的分区信息。那该如何判断MFT是否正确呢？在0x05中也提到过，定位到MFT的方法，定位过去之后，读取文件看是否为满足主文件记录的格式。需要注意的是，对于NTFS搜索到的DBR有可能是分区起始扇区的，也有可能是分区结束扇区的，两者都需要考虑，并且，在判断MFT的同时，需要把dbr_list中的其他信息填充完整。</p><pre><code>#!cpp
+//
+//file_path: 镜像文件路径
+//p_dbr：dbr_list结构体
+//ntfs：dbr
+//
+int JudgeMFT(char* file_path, dbr_list* p_dbr, ntfs_boot_sector* ntfs)
+{
+
+    char sz_temp1[4] = {0};
+    char sz_temp2[4] = {0};
+    DWORD readsize;
+    LARGE_INTEGER tmp1 = {0};
+    LARGE_INTEGER tmp2 = {0};
+    tmp1.QuadPart = p_dbr-&gt;ll_offset + (ntfs-&gt;mft_lcn.QuadPart * ntfs-&gt;sectors_per_cluster * SECTOR_SIZE);
+    tmp2.QuadPart = p_dbr-&gt;ll_offset - (ntfs-&gt;sectors_nbr * SECTOR_SIZE) + (ntfs-&gt;mft_lcn.QuadPart * ntfs-&gt;sectors_per_cluster * SECTOR_SIZE);
+
+    if (!ReadFileOffset(file_path, tmp1.QuadPart, 4, sz_temp1, FILE_BEGIN))
+        ErrorOut("ReadFile Error!\n");
+
+    if (!memcmp(sz_temp1, "FILE", 4))
+    {
+        p_dbr-&gt;ll_start_sector = p_dbr-&gt;ll_offset / SECTOR_SIZE;
+        return 1;
+    }else
+    {
+        if (!ReadFileOffset(file_path, tmp2.QuadPart, 4, sz_temp2, FILE_BEGIN))
+            ErrorOut("ReadFile Error!\n");
+
+        if (!memcmp(sz_temp2, "FILE", 4))
+        {
+            p_dbr-&gt;ll_start_sector = p_dbr-&gt;ll_offset / SECTOR_SIZE - ntfs-&gt;sectors_nbr;
+            p_dbr-&gt;n_is_org = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+</code></pre><p>对于FAT32型，需要考虑的似乎只有是否满足能正确找到FAT表，如0x05中所说，其大小是需要靠后一个分区的起始扇区或文件总大小来获取的。</p><pre><code>#!cpp
+if (p_dbr_temp-&gt;n_type == 2)    // FAT
+{
+    p_fat_temp = (fat_boot_sector*)p_dbr_temp-&gt;dbr;
+    if (!memcmp(p_fat_temp-&gt;BS_FilSysType, "FAT32", 5))  // 只处理FAT32
+    {
+        flag = 0;
+        flag = JudgeFAT(file_path, p_dbr_temp, p_fat_temp);
+        if (flag)
+        {
+            p_dbr_temp-&gt;flag = 1;
+            g_n_part++;
+        }
+    }
+</code></pre><p>在对于FAT32型DBR，同样，也需要考虑获取的DBR是backup的情况：</p><pre><code>#!cpp
+int JudgeFAT(char *file_path, dbr_list* p_dbr, fat_boot_sector* fat)
+{
+    char sz_temp1[4] = {0};
+    char sz_temp2[4] = {0};
+    LARGE_INTEGER tmp1 = {0};
+    LARGE_INTEGER tmp2 = {0};
+
+    char flag[4] = {'\xf8', '\xff', '\xff', '\x0f'};
+
+    DWORD readsize = 0;
+
+    tmp1.QuadPart = p_dbr-&gt;ll_offset + (fat-&gt;reserved * SECTOR_SIZE);
+    tmp2.QuadPart = p_dbr-&gt;ll_offset - ((fat-&gt;backup_boot + fat-&gt;reserved) * SECTOR_SIZE);
+
+    if (!ReadFileOffset(file_path, tmp1.QuadPart, 4, sz_temp1, FILE_BEGIN))
+        ErrorOut("ReadFile Error!\n");
+
+    if (!memcmp(sz_temp1, flag, 4))
+    {
+        p_dbr-&gt;ll_start_sector = p_dbr-&gt;ll_offset / SECTOR_SIZE;
+        return 1;
+    }else
+    {
+        if (!ReadFileOffset(file_path, tmp2.QuadPart, 4, sz_temp2, FILE_BEGIN))
+            ErrorOut("ReadFile Error!\n");
+
+        if (!memcmp(sz_temp2, flag, 4))
+        {
+            p_dbr-&gt;ll_start_sector = p_dbr-&gt;ll_offset / SECTOR_SIZE - fat-&gt;backup_boot;
+            p_dbr-&gt;n_is_org = 1; 
+            return 1;
+        }
+    }
+    return 0;
+}
+</code></pre><p>完成这一步后，我们得到了筛选出了整个磁盘中所有可用的DBR信息，并且获取到了重建分区表所需要的分区类型、起始扇区、分区大小三个信息。</p><p>可以将其输出由用户选择需要恢复的分区：</p><pre><code>#!cpp
+/*显示DPT*/
+int ShowDPT()
+{
+    dbr_list* p_dbr_temp = NULL;   
+
+    __int64 tmp = 0;
+
+    printf("\n\nChosse the partition you want to rebuild?\n");
+    for(p_dbr_temp = g_dbr_list_head-&gt;p_next; p_dbr_temp != NULL;) 
+    {
+        if (p_dbr_temp-&gt;flag) // 需要添加
+        {
+            p_dbr_temp-&gt;flag = 0;   // 清空标志位置
+            if (tmp &lt; p_dbr_temp-&gt;ll_start_sector)
+            {
+                printf("\nPartition with type %s.\tStart with %lld sectors.\t Size %lld sectors.\t End with %lld sectors.\nIs this partition you want to restore?(y/n)", 
+                    (p_dbr_temp-&gt;n_type == 1?"NTFS":"FAT32"), 
+                    p_dbr_temp-&gt;ll_start_sector,
+                    p_dbr_temp-&gt;ll_total_sector,
+                    p_dbr_temp-&gt;ll_start_sector + p_dbr_temp-&gt;ll_total_sector
+                    );
+
+                if (getchar() == 'y')
+                {
+                    p_dbr_temp-&gt;flag = 1;
+                    tmp = p_dbr_temp-&gt;ll_start_sector + p_dbr_temp-&gt;ll_total_sector;
+                    g_n_part++;
+                    getchar();
+                }else
+                    getchar();
+            }
+        }
+        p_dbr_temp = p_dbr_temp-&gt;p_next;
+    }
+    return 0;
+}
+</code></pre><h1>0x09 重构DPT</h1><hr><p>重构DPT需要考虑的问题有以下几个：</p><ol><li><p>总分区数是否大于4个</p><p>a. 若不是，则可全写入0扇区MBR中 b. 若是，则需要新建扩展分区完成扩展</p></li><li><p>获取到的DBR是否为分区起始扇区DBR</p><p>a. 若是，则无需更改 b. 若不是，则需要将作为backup的DBR复制到分区起始扇区</p></li><li><p>分区表是线性一次扩展下去的，不存在分区交叉的情况，即各分区大小之和为文件总大小，各分区无公共部分。（这一步在0x08中的showdpt中做了处理）</p></li><li><p>创建扩展分区时，主分区DPT最后一条记录是指向扩展DPT，扩展DPT的最后一条记录继续指向下一个扩展DPT。</p></li><li><p>MBR中<code>boot_code</code>部分信息可以不用考虑</p></li></ol><p>考虑完了这些问题，就可以来编码实现了。我的做法是，新建一个用于重构的链表，将所有要更改的内容、要更改的内容的大小、以及要更改的位置写入到链表中，方便后面写文件以及恢复文件。</p><pre><code>#!cpp
+void ReBuildDPT(char* sz_file_path)
+{
+    rebuild_content_t* rebuild_list = CreateReBuildHead();
+    if (g_n_part &lt;= 4)    // 小于四个分区时，只需要建立主分区表
+    {
+        sz_tmp = (char*)malloc(4 * sizeof(PartTableRecord) + 2);
+        memset(sz_tmp, 0, 4 * sizeof(PartTableRecord) + 2);
+        for(p_dbr_temp = g_dbr_list_head-&gt;p_next; p_dbr_temp != NULL;) 
+        {
+            if (p_dbr_temp-&gt;flag)  // 是否需可用信息
+            {
+                *(sz_tmp + k * 16 + 4) = (p_dbr_temp-&gt;n_type == 1) ? 0x07 : 0x0B; // byPartType
+                memcpy(sz_tmp + k * 16 + 8, (char *)&amp;(p_dbr_temp-&gt;ll_start_sector), sizeof(__int64));  // dwStartSector
+                memcpy(sz_tmp + k * 16 + 12, (char *)&amp;(p_dbr_temp-&gt;ll_total_sector), sizeof(__int64)); // dwTotalSector
+                k++;
+
+                if (p_dbr_temp-&gt;n_is_org)  // 是否起始扇区
+                {
+                    InsertRebuildList(rebuild_list, p_dbr_temp-&gt;dbr, SECTOR_SIZE, p_dbr_temp-&gt;ll_start_sector, i++);
+                }
+            }
+            p_dbr_temp = p_dbr_temp-&gt;p_next;
+        }
+        memcpy(sz_tmp + 64, sign, 2);  
+        InsertRebuildList(rebuild_list, sz_tmp, 4 * sizeof(PartTableRecord) + 2, 446, i++);
+    }
+    else   // 否则考虑扩展分区的情况
+    {
+        sz_tmp = (char*)malloc(4 * sizeof(PartTableRecord) + 2);
+        memset(sz_tmp, 0, 4 * sizeof(PartTableRecord) + 2);
+        for(p_dbr_temp = g_dbr_list_head-&gt;p_next; p_dbr_temp != NULL;) 
+        {
+            if (p_dbr_temp-&gt;flag)  // 是否需可用信息
+            {
+                if (k &lt; 3)  // 主分区只能有三个，最后一个为扩展分区
+                {
+                    if (k != 2)
+                    {
+                        *(sz_tmp + k * 16 + 4) = (p_dbr_temp-&gt;n_type == 1) ? 0x07 : 0x0B; // byPartType
+                        memcpy(sz_tmp + k * 16 + 8, (char *)&amp;(p_dbr_temp-&gt;ll_start_sector), sizeof(__int64));  // dwStartSector
+                        tmp = p_dbr_temp-&gt;ll_total_sector + 1;
+                        memcpy(sz_tmp + k * 16 + 12, (char *)&amp;tmp, sizeof(__int64)); // dwTotalSector
+                        k++;
+                    }
+                    else
+                    {
+                        *(sz_tmp + k * 16 + 4) = (p_dbr_temp-&gt;n_type == 1) ? 0x07 : 0x0B; // byPartType
+                        memcpy(sz_tmp + k * 16 + 8, (char *)&amp;(p_dbr_temp-&gt;ll_start_sector), sizeof(__int64));  // dwStartSector
+                        tmp = p_dbr_temp-&gt;ll_total_sector + 1;
+                        memcpy(sz_tmp + k * 16 + 12, (char *)&amp;tmp, sizeof(__int64)); // dwTotalSector
+                        k++;
+
+                        for (p_dbr_temp_tmp = p_dbr_temp-&gt;p_next; p_dbr_temp_tmp != NULL;)
+                        {
+                            if (p_dbr_temp_tmp-&gt;flag)
+                            {
+                                *(sz_tmp + k * 16 + 4) = 0x05; // byPartType
+                                tmp = p_dbr_temp_tmp-&gt;ll_start_sector - 1;
+                                memcpy(sz_tmp + k * 16 + 8, (char *)&amp;tmp, sizeof(__int64));  // dwStartSector
+                                tmp = (g_ll_file_size/SECTOR_SIZE) - p_dbr_temp_tmp-&gt;ll_start_sector + 1;
+                                memcpy(sz_tmp + k * 16 + 12, (char *)&amp;tmp, sizeof(__int64)); // dwTotalSector
+                                k++;
+                                memcpy(sz_tmp + 64, sign, 2);  
+                                InsertRebuildList(rebuild_list, sz_tmp, 4 * sizeof(PartTableRecord) + 2, 446, i++);
+                                break;
+                            }
+                            p_dbr_temp_tmp = p_dbr_temp_tmp-&gt;p_next;
+                        }
+                    }
+                }
+                else
+                {
+                    sz_tmp = NULL;
+                    sz_tmp = (char*)malloc(4 * sizeof(PartTableRecord) + 2);
+                    memset(sz_tmp, 0, 4 * sizeof(PartTableRecord) + 2);
+                    *(sz_tmp + 4) = (p_dbr_temp-&gt;n_type == 1) ? 0x07 : 0x0B; // byPartType
+
+                    tmp = 1;   // 扩展分区偏移地址从当前地址算起（相对地址）
+                    memcpy(sz_tmp + 8, (char *)&amp;tmp, sizeof(__int64));  // dwStartSector
+                    memcpy(sz_tmp + 12, (char *)&amp;(p_dbr_temp-&gt;ll_total_sector), sizeof(__int64)); // dwTotalSector
+
+                    if (p_dbr_temp-&gt;p_next != NULL)
+                    {
+                        for (p_dbr_temp_tmp = p_dbr_temp-&gt;p_next; p_dbr_temp_tmp != NULL;)
+                        {
+                            if (p_dbr_temp_tmp-&gt;flag)
+                            {
+                                *(sz_tmp + 16 + 4) = 0x05; // byPartType
+                                tmp = p_dbr_temp_tmp-&gt;ll_start_sector - p_dbr_temp-&gt;ll_start_sector;
+                                //tmp = 1;
+                                memcpy(sz_tmp + 16 + 8, (char *)&amp;tmp, sizeof(__int64));  // dwStartSector
+                                tmp = (g_ll_file_size/SECTOR_SIZE) - p_dbr_temp_tmp-&gt;ll_start_sector;
+                                memcpy(sz_tmp + 16 + 12, (char *)&amp;tmp, sizeof(__int64)); // dwTotalSector
+                                break;
+                            }
+                            p_dbr_temp_tmp = p_dbr_temp_tmp-&gt;p_next;
+                        }
+                    }
+                    memcpy(sz_tmp + 64, sign, 2);  
+                    InsertRebuildList(rebuild_list, sz_tmp, 66, (p_dbr_temp-&gt;ll_start_sector - 1) * SECTOR_SIZE + 446, i++);
+                }
+
+                if (p_dbr_temp-&gt;n_is_org)  // 是否起始扇区
+                {
+                    InsertRebuildList(rebuild_list, p_dbr_temp-&gt;dbr, SECTOR_SIZE, p_dbr_temp-&gt;ll_start_sector * SECTOR_SIZE, i++);
+                }
+            }
+            p_dbr_temp = p_dbr_temp-&gt;p_next;
+        }
+    }
+    HandleFile(sz_file_path, rebuild_list);
+    FreeRebuildList(rebuild_list);
+}
+</code></pre><h1>0x0A 文件处理</h1><hr><p>通过前面的操作，可以得到处理好了的rebuild_list。接下来要做的就是用它来完成重建分区表，恢复DBR的工作。</p><p>首先，我们的目的是，重建后的分区表后文件能作为VHD直接被win7以上系统加载。其次，希望能够在我卸载VHD文件后，仍然恢复到原有状态。意味着需要对更改的信息做一个备份，这没问题，因为我们替换先前rebuild_list中的content就可以完成了。</p><p>之后，需要了解VHD文件格式。找了找资料。发现，VHD文件仅仅在文件尾部添加了一个扇区的内容，其结构如下：</p><pre><code>#!cpp
+/*vhd尾部信息结构*/
+typedef struct hd_ftr_t
+{ 
+    char   cookie[8];       /* Identifies original creator of the disk      */ 
+    unsigned int    features;        /* Feature Support -- see below                 */ 
+    unsigned int    ff_version;      /* (major,minor) version of disk file           */ 
+    unsigned __int64  data_offset;     /* Abs. offset from SOF to next structure       */ 
+    unsigned int    timestamp;       /* Creation time.  secs since 1/1/2000GMT       */ 
+    char   crtr_app[4];     /* Creator application                          */ 
+    unsigned int    crtr_ver;        /* Creator version (major,minor)                */ 
+    unsigned int    crtr_os;         /* Creator host OS                              */ 
+    unsigned __int64   orig_size;       /* Size at creation (bytes)                     */ 
+    unsigned __int64  curr_size;       /* Current size of disk (bytes)                 */ 
+    unsigned int    geometry;        /* Disk geometry                                */ 
+    unsigned int    type;            /* Disk type                                    */ 
+    unsigned int    checksum;        /* 1's comp sum of this struct.                 */ 
+    unsigned char uu[16];        /* Unique disk ID, used for naming parents      */ 
+    char   saved;           /* one-bit -- is this disk/VM in a saved state? */ 
+    char   hidden;          /* tapdisk-specific field: is this vdi hidden?  */ 
+    char   reserved[426];   /* padding                                      */ 
+}hd_ftr; 
+</code></pre><p>这张表中，重要的就是<code>orig_size</code>、<code>curr_size</code>和<code>checksum</code>，通常情况下<code>orig_size</code>与<code>curr_size</code>相同，<code>checksum</code>是最后一个扇区所有字节相加后取反的值。我建了个模板来实现VHD标志位的添加。</p><p>所以，最终的文件处理模块如下：</p><pre><code>#!cpp
+void HandleFile(char* file_path, rebuild_content_t* p_rebuild_list)
+{
+    char* sz_vhd_buf = (char*)malloc(SECTOR_SIZE);
+    memset(sz_vhd_buf, 0, SECTOR_SIZE);
+
+    rebuild_content_t* p_rebuild_tmp = NULL;
+    char tmp[SECTOR_SIZE] = {0};
+////////////////////////////// Gen VHD
+    hd_ftr* vhd;
+    vhd = (hd_ftr*)data;
+    LARGE_INTEGER offset = {0};
+    DWORD readsize = 0;
+
+    /*Set hd_ftr struct*/
+    vhd-&gt;orig_size = 0;   // clear
+    vhd-&gt;orig_size = g_ll_file_size - SECTOR_SIZE;
+    vhd-&gt;orig_size = INT64_TO_NET(vhd-&gt;orig_size);
+    vhd-&gt;curr_size = vhd-&gt;orig_size;
+    vhd-&gt;checksum = 0;
+
+    /*calc checksum*/
+    unsigned int temp = 0;
+    for (int i = 0; i &lt; 512; i++)
+    {
+        temp += data[i];
+    }
+    vhd-&gt;checksum = htonl(~temp);
+//////////////////////////////////////////
+    for(p_rebuild_tmp = p_rebuild_list-&gt;p_next; p_rebuild_tmp != NULL;) 
+    {
+        if (!ReadFileOffset(file_path, p_rebuild_tmp-&gt;ll_offset, p_rebuild_tmp-&gt;n_size, tmp, FILE_BEGIN))
+            ErrorOut("Backup Read Error!\n");
+
+        if (!WriteFileOffset(file_path, p_rebuild_tmp-&gt;ll_offset, p_rebuild_tmp-&gt;n_size, p_rebuild_tmp-&gt;content, FILE_BEGIN))
+            ErrorOut("Backup Write Error!\n");
+
+        memcpy(p_rebuild_tmp-&gt;content, tmp, p_rebuild_tmp-&gt;n_size);       // BackUp SECTOR
+        p_rebuild_tmp = p_rebuild_tmp-&gt;p_next;
+    }
+
+///////////////////////////////////////////////// BackUp VHD
+    ReadFileOffset(file_path, -SECTOR_SIZE, SECTOR_SIZE, sz_vhd_buf, FILE_END);
+
+/////////////////////////////////////////////*  */// Write VHD
+    WriteFileOffset(file_path, -SECTOR_SIZE, SECTOR_SIZE, (char*)vhd, FILE_END);
+
+    printf("WriteFile Success! You can mount it as vhd file now!\n");
+    system("pause");
+
+
+////////////////////////// Restore SECTOR
+
+    for(p_rebuild_tmp = p_rebuild_list-&gt;p_next; p_rebuild_tmp != NULL;) 
+    {
+        if (!ReadFileOffset(file_path, p_rebuild_tmp-&gt;ll_offset, p_rebuild_tmp-&gt;n_size, tmp, FILE_BEGIN))
+            ErrorOut("Restore Read Error!\n");
+
+        if (!WriteFileOffset(file_path, p_rebuild_tmp-&gt;ll_offset, p_rebuild_tmp-&gt;n_size, p_rebuild_tmp-&gt;content, FILE_BEGIN))
+            ErrorOut("Restore Write Error!\n");
+        memcpy(p_rebuild_tmp-&gt;content, tmp, p_rebuild_tmp-&gt;n_size);       // BackUp SECTOR
+        p_rebuild_tmp = p_rebuild_tmp-&gt;p_next;
+    }
+
+///////////////////////// Restore VHD
+    WriteFileOffset(file_path, -SECTOR_SIZE, SECTOR_SIZE, sz_vhd_buf, FILE_END);
+
+    printf("Restore File Success!\n");
+}
+</code></pre><p>这样，重建分区表的工作就完成了。</p><h1>0x0B 程序效果</h1><hr><p>还是用前面例子中用到的VHD文件来做演示，该VHD现在的情况是：先前新建过两个NTFS的分区，之后删除了一个NTFS，并重新格式化成FAT32，再然后，我将其分区全部删除，并新建了3个NTFS与两个FAT32，最终效果如图6所示。现在我们用刚写好的工具来对它进行搜索分析。</p><p>图17： <img alt="Alt text" img-src="f976304a5dca553895ec7601dd577b4c7a328b13.jpg"></p><p>可以看到它总共搜索到了8个可用的DBR信息，但显然其中有一些是前几次分区留下的内容。选择保留1.2.3.5.7五个分区（也就是图6所示的五个分区），起始你选择保留第三个的时候，就不有机会让你选择第四个了，因为他们是冲突的。结果如图18：</p><p><img alt="Alt text" img-src="28534ae5cc24afa32162fad3cbcb956a6f9ae9fc.jpg"></p><p>提示写文件成功，并已经可以直接当做VHD文件挂载了，我们用winhex打开处理过的文件，得到图19：</p><p><img alt="Alt text" img-src="85162191039fdbeb3cbf4c01ccdde47caa3dd483.jpg"></p><p>可以看到，重构后的分区表几乎与原来的分区表一致。</p><p>接着，我们试着来恢复前几次分区留下的信息，看是否能够成功。图20：</p><p><img alt="Alt text" img-src="5d5994c0aed1f7607e63a2b2b75b3c5f32329ca0.jpg"></p><p>这里我选择恢复了一个NTFS和一个FAT32，再进winhex中查看，得到图21：</p><p><img alt="Alt text" img-src="4a27a1a84bf56d2bf8b9364416b018060df126c9.jpg"></p><p>可以看到第一个NTFS分区，是并不存在与图6的五个分区中的。</p><p>再次，我们用图1的那个TrueCrypt解密后的打不开的磁盘作为例子，看看这次能否恢复出正确的分区表，并且，实现加载。找到可用的DBR信息如图22：</p><p><img alt="Alt text" img-src="c1d8f7fb1c49b00260c2629dec17a885c648419c.jpg"></p><p>按照逻辑，选择了第一个后，就只能选择1和2。已提示写文件成功，图23：</p><p><img alt="Alt text" img-src="1a2b7a66d64aff3bada603971498f834c5901eef.jpg"></p><p>Winhex解析如图24：</p><p><img alt="Alt text" img-src="5aa2efdce66007ed0d1780148bf91b1a9ebf5018.jpg"></p><p>正确完整恢复，所有文件也能正确解析，图25：</p><p><img alt="Alt text" img-src="07a3282f811eae53e7c2564e6f11ce86df0e7e74.jpg"></p><p>接着，在做只留下尾部备份分区测试程序需找情况的时候，发现起始我们程序中并没有必要将备份分区复制到起始扇区，因为，也能正常解析。</p><p>于是，完工！（不过，还有个小细节需要注意，如果起始位置是个DBR头部的话，系统将不会当做MBR处理，而是当做DBR，所以，清除头部信息也很重要！）</p><h1>0x0C Summarize</h1><hr><p>加上写代码的时间和些这文章的时间，大概花费了近十天吧。各种找资料、调程序、做样本，也算是把恢复分区表的原理弄清楚了。同时，也把忘得差不多的磁盘格式、文件系统什么的再捡起来看了看。当然文章其实并不详细，因为关注点不一样，就没讲太多关于文件系统的内容了。再往下，可以详细到文件的恢复等等，当然，起始也没必要去做，毕竟现有的工具一大堆，我只是突然感兴趣就拿来实现了一把。</p><p>再者，本程序暂时只支持NTFS和FAT32两种类型，若有其他类型的原理应该也是一致，大家仔细琢磨。</p><p>写文章也比较仓促，也没校稿习惯，若有勘误，还请谅解并提醒更正。感谢！</p><blockquote><p>源码下载地址：<a href="https://github.com/purpleroc/hand_disk">https://github.com/purpleroc/hand_disk</a><br>另推荐学习源码：testdisk、ReadPartTable<br>——Tracy_梓朋<br>2016年1月6日21:31:52</p></blockquote><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4412" rel="bookmark" id="re1">Pcshare远控源码偏重分析（一）</a></li><li><a href="http://drops.wooyun.org/papers/13433" rel="bookmark" id="re2">CVE-2016-0799简单分析</a></li><li><a href="http://drops.wooyun.org/tips/10384" rel="bookmark" id="re3">动手实现代码虚拟机</a></li><li><a href="http://drops.wooyun.org/tips/1376" rel="bookmark" id="re4">使用netcat进行反弹链接的shellcode</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">purpleroc</span> <span class="reply-time">2016-01-18 15:45:04</span></div><p></p><p>@BeenQuiver 对有用的人来说，它便有用，对没用的人来说，它便没用。我就提个思路而已，别无他意，而且，市场已有那么多成熟工具。倘若代码真丑到你了，还请原谅。不过，我是的确代码写的丑的~~/shuai</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BeenQuiver</span> <span class="reply-time">2016-01-17 14:56:22</span></div><p></p><p>代码写得不好就不要拿出来秀好么?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jack</span> <span class="reply-time">2016-01-15 00:38:25</span></div><p></p><p>无法直视。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无人知晓</span> <span class="reply-time">2016-01-14 13:15:29</span></div><p></p><p>膜拜大神</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rainism</span> <span class="reply-time">2016-01-13 19:55:43</span></div><p></p><p>看不懂啊 梓朋大大</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2016-01-13 19:52:20</span></div><p></p><p>壮哉我大 0xFA</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">梓朋大大粉丝</span> <span class="reply-time">2016-01-13 19:49:28</span></div><p></p><p>看不懂啊 梓朋大大</p><p></p></div></div></div></div></div></main>

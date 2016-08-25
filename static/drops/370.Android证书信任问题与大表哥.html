@@ -1,0 +1,214 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android证书信任问题与大表哥</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2014/10/23 12:14" ui-time="" datetime="2014/10/23 12:14" class="published ng-binding ng-isolate-scope">2014/10/23 12:14</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 起因</h2><hr><p>1、近期icloud.com、yahoo.com、apple.com遭遇到大规模劫持</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-080117">WooYun: Yahoo雅虎在国内访问遭遇SSL中间人攻击（被替换为自签名证书）</a></p><p>2、乌云平台、CVE都收到大量有关Android APP信任所有证书的漏洞</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-079358">WooYun: 国内绝大部分Android APP存在信任所有证书漏洞</a></p><p>3、老外写有关大表哥的文章中提到MITM时360浏览器不提示证书错误</p><p><a href="http://www.computerworld.com/article/2836084/chinese-big-brother-launches-nationwide-attack-on-icloud.html">http://www.computerworld.com/article/2836084/chinese-big-brother-launches-nationwide-attack-on-icloud.html</a></p><p>之前信任证书问题一直都有被提到，但是普遍不受大家重视，因为这个漏洞是利用是需要场景的：MITM（中间人攻击 Man-in-the-middle attack）。一般情况下MITM相对其他攻击是比较少见的，如果有良好的上网习惯如不接入不受信任的网络，那就更少可能受此类攻击了。但是近期发生的MITM据传是在核心骨干网BGP上做了改动所以劫持范围非常之广，真是防不胜防呀，你被劫持了么？</p><h2>0x01 科普</h2><hr><p><strong>https&amp;&amp;ssl</strong></p><p>为了提高网站的安全性，一般会在比较敏感的部分页面采用https传输，比如注册、登录、控制台等。像Gmail、网银、icloud等则全部采用https传输。https/ssl主要起到两个作用：网站认证、内容加密传输和数据一致性。经CA签发的证书才起到认证可信的作用，所有有效证书均可以起到加密传输的作用。</p><p><strong>数字证书</strong></p><p>主要在互联网上的用于身份验证的用途。 安全站点在获得CA（Certificate Authority数字证书认证机构）认证后，获得一个数字证书，以此来标识其合法身份的真实性。数字证书主要分为服务器证书和客户端证书。服务器证书（SSL证书）用来进行身份验证和通信的加密，客户端证书主要用于身份验证和电子签名。找CA申请证书是要收费的。</p><p><strong>自签名证书</strong></p><p>非CA颁发的证书，通过自签名的方式得到的证书。通常Web浏览器会显示一个对话框，询问您是否希望信任一个自签名证书。这个是不用花钱的。</p><p><strong>中间人攻击</strong></p><p>是指攻击者与通讯的两端分别创建独立的联系，并交换其所收到的数据，使通讯的两端认为他们正在通过一个私密的连接与对方直接对话，但事实上整个会话都被攻击者完全控制。在中间人攻击中，攻击者可以拦截通讯双方的通话并插入新的内容。在许多情况下这是很简单的。</p><h2>0x02 分析</h2><hr><p>如果自己简单的实现android webview加载网页，如果直接访问可信证书的站点是可以正常显示，但是如果访问自签名的证书的站点就会显示notfound的页面。(写本文时apple.com以及apple.com.cn处于劫持状态)</p><p><img alt="" img-src="470130ebfe595dcde7e71a02b53e2ae20f86876b.jpg"></p><p>logcat会输出网页显示不安全的内容</p><pre><code>Web Console:The page displayed insecure content!
+</code></pre><p>功能健全的手机浏览器访问自签名证书的站点会如下提醒</p><p><img alt="" img-src="f5211bb2a252bb2c28d542b15c579db6f5183370.jpg"></p><p>在PC端如果访问自签名证书的站点则会出现如下图左侧的提醒</p><p><img alt="" img-src="9d72d696347e0aa11487ddb8e6fd3ddbdc8bfdea.jpg"></p><p>为解决<code>javax.net.ssl.SSLPeerUnverifiedException: No peer certificate</code>的异常，开发者往往会采用以下的错误解决方案。如此是浏览器应用采用此类解决方案，那么风险就更大了。</p><p>覆盖google默认的证书检查机制</p><pre><code>#!java
+class bv
+  implements X509TrustManager
+{
+  bv(bu parambu) {}
+
+  public void checkClientTrusted(X509Certificate[] paramArrayOfX509Certificate, String paramString) {// Do nothing -&gt; accept any certificates}
+
+  public void checkServerTrusted(X509Certificate[] paramArrayOfX509Certificate, String paramString) {// Do nothing -&gt; accept any certificates}
+
+  public X509Certificate[] getAcceptedIssuers()
+  {
+    return null;
+  }
+}
+</code></pre><p>信任所有主机名</p><pre><code>#!java
+public static HttpClient getNewHttpClient() {  
+    try {  
+        //获得密匙库
+        KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());  
+        trustStore.load(null, null);  
+
+        SSLSocketFactory sf = new SSLSocketFactoryEx(trustStore); 
+        //信任所有主机名 
+        sf.setHostnameVerifier(SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);  
+
+        HttpParams params = new BasicHttpParams();  
+        HttpProtocolParams.setVersion(params, HttpVersion.HTTP_1_1);  
+        HttpProtocolParams.setContentCharset(params, HTTP.UTF_8);  
+
+        SchemeRegistry registry = new SchemeRegistry();  
+        registry.register(new Scheme("http", PlainSocketFactory.getSocketFactory(), 80));  
+        registry.register(new Scheme("https", sf, 443));  
+
+        ClientConnectionManager ccm = new ThreadSafeClientConnManager(params, registry);  
+
+        return new DefaultHttpClient(ccm, params);  
+    } catch (Exception e) {  
+        return new DefaultHttpClient();  
+    }  
+}  
+</code></pre><p>empty HostnameVerifier</p><pre><code>#!java
+HostnameVerifier hv = new HostnameVerifier() {
+@Override
+public boolean verify(String hostname, SSLSession session) {
+// Always return true -&gt; Accespt any host names
+return true;
+}
+};
+</code></pre><p>忽略WebView证书错误继续加载</p><pre><code>#!java
+    myWebView.setWebViewClient(new WebViewClient(){
+
+        @Override
+        public void onReceivedError(WebView view, int errorCode,
+                String description, String failingUrl) {
+            // TODO Auto-generated method stub
+            super.onReceivedError(view, errorCode, description, failingUrl);
+        }
+
+        @Override
+        public void onReceivedSslError(WebView view,
+                SslErrorHandler handler, SslError error) {
+            // TODO Auto-generated method stub
+            handler.proceed();
+        }});
+</code></pre><p>其实早在14年2月<a href="http://drops.wooyun.org/papers/959">窃听风暴： Android平台https嗅探劫持漏洞</a>文中就有提到android平台的app因为覆盖google默认的证书检查机制（X509TrustManager）之后没有对证书进行应有的安全性检查，直接接受了所有异常的https证书，不提醒用户存在安全风险，也不终止这次危险的连接。文中对证书域名检查（HostnameVerifier）部分没有细说。</p><p>上文有提到PC版的360浏览器访问被劫持网站居然没有证书错误提示，让人很不敢相信。加上最近android app 证书问题频发，猜想是否有可能一些手机浏览器也会有此类漏洞了。测试过程中发现360手机浏览器、和搜狗浏览器存在此风险。</p><p>百度和遨游轻松检测出证书异常</p><p><img alt="" img-src="4ccb0e33dc67a7030e4af51d6925984db1cfd2a5.jpg"></p><p><img alt="" img-src="80270a402cf71b9a9e97bcb1b3737b9b5f69a352.jpg"></p><p>而360和搜狗直接加载进入了被劫持的网站。</p><p><img alt="" img-src="a404bd7bc2ecacffd7c41abe16d32142a86c8d66.jpg"></p><p><img alt="" img-src="2e05bbe9a055fe0765e6be8563585d1ce01ce4e8.jpg"></p><p>反编译查看遨游浏览器的代码，针对证书异常做了处理</p><p><img alt="" img-src="b42200a6dd3e6c0dfbfeb1341a1c5ea084ce6476.jpg"></p><p><img alt="" img-src="c3a1bd17652d28c13d00cba822dbfab83040d6b7.jpg"></p><p>而搜狗浏览器则是做了证书信任所有主机名不当处理</p><p><img alt="" img-src="8fd84c632568376b4c5ce2fce608dd5c5e362beb.jpg"></p><p>关键字：checkServerTrusted、setHostnameVerifier、ALLOW&#95;ALL&#95;HOSTNAME_VERIFIER、X509TrustManager、onReceivedSslError</p><h2>0x03 对比</h2><hr><p>对主流手机浏览器进行了横向对比，测试对象包括：firefox、chrome、UC浏览器、搜狗浏览器、百度浏览器、360安全浏览器、欧鹏浏览器、遨游云浏览器、猎豹浏览器。</p><p>测试方法：手机访问<a href="https://example.com/">https://example.com/</a>,观察是否有安全提醒。(update:此方法已经无效.)</p><p>未做提醒直接加载网页：360安全浏览器、猎豹浏览器、搜狗浏览器</p><p>正常做出安全提醒：firefox、chrome、UC浏览器、百度浏览器、欧鹏浏览器、遨游云浏览器</p><h2>0x04 建议</h2><hr><p>开发者：</p><p>1、非浏览器app，有钱申请ca证书没钱在客户端中添加证书,切勿信任所有证书。</p><p>2、浏览器app，严格按照客户端校验服务器证书流程处理:</p><ul><li>查看证书是否过期</li><li>CA是否可靠</li><li>CA的公钥能否正确解开服务器证书的CA数字签名，即证书的签名值</li><li>服务器证书上的域名是否和服务器的实际域名相匹配</li></ul><p>3、建议使用setHostnameVerifier(SSLSocketFactory.STRICT&#95;HOSTNAME&#95;VERIFIER)</p><p>一个SSLSocketFactory的example</p><pre><code>#!java
+java public class SecureSocketFactory extends SSLSocketFactory {
+
+    private static final String LOG_TAG = "SecureSocketFactory";
+
+    private final SSLContext sslCtx;
+    private final X509Certificate[] acceptedIssuers;
+
+    /**
+     * Instantiate a new secured factory pertaining to the passed store. Be sure to initialize the
+     * store with the password using <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ceb58ea2a7a0a5">[email&#160;protected]</a> java.security.KeyStore#load(java.io.InputStream,
+     * char[])} method.
+     *
+     * @param store The key store holding the certificate details
+     * @param alias The alias of the certificate to use
+     */
+    public SecureSocketFactory(KeyStore store, String alias)
+            throws
+            CertificateException,
+            NoSuchAlgorithmException,
+            KeyManagementException,
+            KeyStoreException,
+            UnrecoverableKeyException {
+
+        super(store);
+
+        // Loading the CA certificate from store.
+        final Certificate rootca = store.getCertificate(alias);
+
+        // Turn it to X509 format.
+        InputStream is = new ByteArrayInputStream(rootca.getEncoded());
+        X509Certificate x509ca = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(is);
+        AsyncHttpClient.silentCloseInputStream(is);
+
+        if (null == x509ca) {
+            throw new CertificateException("Embedded SSL certificate has expired.");
+        }
+
+        // Check the CA's validity.
+        x509ca.checkValidity();
+
+        // Accepted CA is only the one installed in the store.
+        acceptedIssuers = new X509Certificate[]{x509ca};
+
+        sslCtx = SSLContext.getInstance("TLS");
+        sslCtx.init(
+                null,
+                new TrustManager[]{
+                        new X509TrustManager() {
+                            @Override
+                            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                            }
+
+                            @Override
+                            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                                Exception error = null;
+
+                                if (null == chain || 0 == chain.length) {
+                                    error = new CertificateException("Certificate chain is invalid.");
+                                } else if (null == authType || 0 == authType.length()) {
+                                    error = new CertificateException("Authentication type is invalid.");
+                                } else {
+                                    Log.i(LOG_TAG, "Chain includes " + chain.length + " certificates.");
+                                    try {
+                                        for (X509Certificate cert : chain) {
+                                            Log.i(LOG_TAG, "Server Certificate Details:");
+                                            Log.i(LOG_TAG, "---------------------------");
+                                            Log.i(LOG_TAG, "IssuerDN: " + cert.getIssuerDN().toString());
+                                            Log.i(LOG_TAG, "SubjectDN: " + cert.getSubjectDN().toString());
+                                            Log.i(LOG_TAG, "Serial Number: " + cert.getSerialNumber());
+                                            Log.i(LOG_TAG, "Version: " + cert.getVersion());
+                                            Log.i(LOG_TAG, "Not before: " + cert.getNotBefore().toString());
+                                            Log.i(LOG_TAG, "Not after: " + cert.getNotAfter().toString());
+                                            Log.i(LOG_TAG, "---------------------------");
+
+                                            // Make sure that it hasn't expired.
+                                            cert.checkValidity();
+
+                                            // Verify the certificate's public key chain.
+                                            cert.verify(rootca.getPublicKey());
+                                        }
+                                    } catch (InvalidKeyException e) {
+                                        error = e;
+                                    } catch (NoSuchAlgorithmException e) {
+                                        error = e;
+                                    } catch (NoSuchProviderException e) {
+                                        error = e;
+                                    } catch (SignatureException e) {
+                                        error = e;
+                                    }
+                                }
+                                if (null != error) {
+                                    Log.e(LOG_TAG, "Certificate error", error);
+                                    throw new CertificateException(error);
+                                }
+                            }
+
+                            @Override
+                            public X509Certificate[] getAcceptedIssuers() {
+                                return acceptedIssuers;
+                            }
+                        }
+                },
+                null
+        );
+
+        setHostnameVerifier(SSLSocketFactory.STRICT_HOSTNAME_VERIFIER);
+    }
+
+    @Override
+    public Socket createSocket(Socket socket, String host, int port, boolean autoClose)
+            throws IOException {
+
+        injectHostname(socket, host);
+        Socket sslSocket = sslCtx.getSocketFactory().createSocket(socket, host, port, autoClose);
+
+        // throw an exception if the hostname does not match the certificate
+        getHostnameVerifier().verify(host, (SSLSocket) sslSocket);
+
+        return sslSocket;
+    }
+
+    @Override
+    public Socket createSocket() throws IOException {
+        return sslCtx.getSocketFactory().createSocket();
+    }
+
+    /**
+     * Pre-ICS Android had a bug resolving HTTPS addresses. This workaround fixes that bug.
+     *
+     * @param socket The socket to alter
+     * @param host   Hostname to connect to
+     * @see &lt;a href="https://code.google.com/p/android/issues/detail?id=13117#c14"&gt;https://code.google.com/p/android/issues/detail?id=13117#c14&lt;/a&gt;
+     */
+    private void injectHostname(Socket socket, String host) {
+        try {
+            if (Integer.valueOf(Build.VERSION.SDK) &gt;= 4) {
+                Field field = InetAddress.class.getDeclaredField("hostName");
+                field.setAccessible(true);
+                field.set(socket.getInetAddress(), host);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+
+} 
+</code></pre><p>用户：使用安全性较好的app</p><h2>0x05 参考</h2><hr><p><a href="http://drops.wooyun.org/tips/2775" title="http://drops.wooyun.org/tips/2775">http://drops.wooyun.org/tips/2775</a></p><p><a href="http://drops.wooyun.org/papers/959" title="http://drops.wooyun.org/papers/959">http://drops.wooyun.org/papers/959</a></p><p><a href="http://developer.android.com/reference/javax/net/ssl/HttpsURLConnection.html" title="http://developer.android.com/reference/javax/net/ssl/HttpsURLConnection.html">http://developer.android.com/reference/javax/net/ssl/HttpsURLConnection.html</a></p><p><a href="http://developer.android.com/reference/javax/net/ssl/X509TrustManager.html">http://developer.android.com/reference/javax/net/ssl/X509TrustManager.html</a></p><p><a href="http://developer.android.com/training/articles/security-ssl.html">http://developer.android.com/training/articles/security-ssl.html</a></p><p><a href="http://developer.android.com/reference/org/apache/http/conn/ssl/SSLSocketFactory.html">http://developer.android.com/reference/org/apache/http/conn/ssl/SSLSocketFactory.html</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">叶歪歪</span> <span class="reply-time">2016-03-19 19:08:40</span></div><p></p><p>好文章，太好啦！！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DNS</span> <span class="reply-time">2016-01-07 18:01:20</span></div><p></p><p>讲的比较细致，通俗易懂，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-01-19 17:36:50</span></div><p></p><p>测试方法：手机访问https://example.com/,观察是否有安全提醒。此方法已经无效.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2014-10-24 17:48:27</span></div><p></p><p>qq浏览器有个很不错的功能，一直没舍得升级。。http://www.wooyun.org/bugs/wooyun-2010-073875</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">姿势不行</span> <span class="reply-time">2014-10-24 16:32:59</span></div><p></p><p>为何不把QQ浏览器放眼里。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">橘子</span> <span class="reply-time">2014-10-23 22:03:37</span></div><p></p><p>标注安全的浏览器，都覆盖了0w&lt;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯子</span> <span class="reply-time">2014-10-23 16:25:27</span></div><p></p><p>good nice</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狗</span> <span class="reply-time">2014-10-23 14:32:13</span></div><p></p><p>up up</p><p></p></div></div></div></div></div></main>

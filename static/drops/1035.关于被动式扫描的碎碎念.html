@@ -1,0 +1,206 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">关于被动式扫描的碎碎念</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">pr0mise</a> <span class="bull">·</span> <time title="2016/02/05 10:10" ui-time="" datetime="2016/02/05 10:10" class="published ng-binding ng-isolate-scope">2016/02/05 10:10</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>分布式扫描好多人都写过，例如：</p><p>burp的sqli插件</p><p>Matt前辈的<a href="http://zone.wooyun.org/content/24172">http://zone.wooyun.org/content/24172</a></p><p>猪猪侠前辈的<a href="http://zone.wooyun.org/content/21289">http://zone.wooyun.org/content/21289</a></p><p>Ver007前辈的<a href="http://zone.wooyun.org/content/24333">http://zone.wooyun.org/content/24333</a></p><p>0x_Jin前辈的<a href="http://zone.wooyun.org/content/24341">http://zone.wooyun.org/content/24341</a></p><p>填上个坑填的心烦,想着也造个轮子，忙活了几天,写了一个简单的雏形</p><p>Github: <a href="https://github.com/liuxigu/ScanSqlTestchromeExtensions">https://github.com/liuxigu/ScanSqlTestchromeExtensions</a></p><p>在此感谢bstaint、sunshadow的帮助</p><p>Sqlmapapi本来就是为了实现分布式注入写的,在被动扫描的基础上 加节点就实现分布式了</p><p>最初想的是用chrome插件来实现代码注入</p><ol><li>用js来获取<code>&lt;a&gt;</code>标签的同域url,用js是防止一些站的反爬虫措施,还有对于a href指向相对链接的的情况,用js会自动补全域名.</li><li>Chrome webRequest API OnBeforeRequest获取即将请求的url</li></ol><p>设想获取url后 喂给sqlmapapi, 将能注入的url写入到文本里,js 的 FileSystemObject gg.. 本来是准备用php实现文件io的…</p><p>talk is cheap show me the code.</p><h1>0x01 Chrome manifest.json</h1><hr><pre><code>#!js
+{  
+  "name": "sqlInjectionTest",  
+  "version": "0.1",  
+  "description": "you know...",  
+  "manifest_version": 2,
+
+  "content_scripts": [{
+    "matches":["*://*/*"],
+    "js": ["inject.js"]
+    }],
+
+  "permissions": [
+    "*://*/*",
+    "webRequest", 
+    "webRequestBlocking"
+    ],
+
+
+  "browser_action": {  
+    "default_icon": "icon.png" ,
+    "default_title": "scan url inject"
+    }  
+}
+</code></pre><h1>0x02 Sqlmapapi.py code</h1><hr><h3>一:固定Admin Id</h3><p>Sqlmapapi启动后 是这样子：</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1d6f7272695d767c7174">[email&#160;protected]</a>:~/桌面/sqlmap# python sqlmapapi.py -s
+[22:02:17] [INFO] Running REST-JSON API server at '127.0.0.1:8775'..
+[22:02:17] [INFO] Admin ID: 7c4be58c7aab5f38cb09eb534a41d86b
+[22:02:17] [DEBUG] IPC database: /tmp/sqlmapipc-5JVeNo
+[22:02:17] [DEBUG] REST-JSON API server connected to IPC database
+</code></pre><p>AdminID每次都会变,这样导致任务管理不方便,我们更改一下sqlmap的源码</p><p>定位到<code>/sqlmap/lib/utils/api.py</code> 的server函数</p><p><img alt="p1" img-src="3b31c8f72c76014e8f25005cd5132b4a3522e872.jpg"></p><p>看到644行的os.urandom,直接改成一个固定字符串就行了</p><p>例如 我改成了<code>DataStore.admin_id = hexencode('wooyun')</code></p><p>以后就固定是Admin ID: 776f6f79756e</p><p>还有个更简单的办法</p><p><img alt="p2" img-src="712af14eb908fdc151cba3a7580a9a5e448c21ee.jpg"></p><p><img alt="p3" img-src="b373953f2514af0ef0682ac9b63000ea7031cb4f.jpg"></p><p>return True</p><h3>二:sqlmap扫描任务结束自动写入文本</h3><p>判断当前任务是否扫描完成 访问<a href="http://127.0.0.1:8775/admin/ss/list">http://127.0.0.1:8775/admin/ss/list</a></p><pre><code>#!python
+{
+    "tasks": {
+        "4db4e3bd4410efa9": "terminated"
+    }, 
+    "tasks_num": 1, 
+    "success": true
+}
+</code></pre><p>Terminated代表任务已终止,</p><p><a href="http://127.0.0.1:8775/scan/4db4e3bd4410efa9/data">http://127.0.0.1:8775/scan/4db4e3bd4410efa9/data</a></p><pre><code>#!python
+{
+    "data": [], 
+    "success": true, 
+    "error": []
+}
+</code></pre><p>“data”存放了sqlmapapi检测时用的payload, “data”非空就代表当前任务是可注入的,sqlmapapi并没有自带回调方式…轮询浪费开销,这里我选择修改源码</p><p><img alt="p4" img-src="7d3a34ccb23edb41dea4ccfef3ce03c4f3686938.jpg"></p><p>定位到<code>scan_data</code>函数 ,可以看到,假如可注入,就会从data表检索数据并写入到<code>json_data_message</code>,表名为data, 代码向上翻,定位到将数据入库的代码</p><p>在StdDbOut类里,第230行，在insert前 插入</p><pre><code>#!python
+with open('/tmp/'+str(self.taskid)+'.txt','a+') as fileHandleTemp,\
+                    closing(requests.get('http://127.0.0.1:8775/option/'+str(self.taskid)+'/list', stream=True)) as reqTemp:
+
+                        fileHandleTemp.write(
+                                json.loads(reqTemp.text)['options']['url']+'\n'+
+                                json.loads(reqTemp.text)['options']['data']+'\n'+
+                                json.loads(reqTemp.text)['options']['Cookie']+'\n'+
+                                json.loads(reqTemp.text)['options']['Referer']+'\n'
+                            )
+</code></pre><p>记得加载三个模块</p><pre><code>#!python
+import json
+import requests
+from contextlib import closing
+</code></pre><p>本意是获取能注入的url写入到文本里,在源码里没找到继承这个类的地方…懒得去找了</p><p>访问<a href="http://127.0.0.1:8775/option/id/list">http://127.0.0.1:8775/option/id/list</a></p><pre><code>#!python
+Response:
+{
+    "options": {
+        ......
+        "url": http://58.59.39.43:9080/wscgs/xwl.do?smid=02&amp;bgid=01&amp;bj=8
+        ……
+        }
+    "success":{
+        ...
+    }
+</code></pre><p><img alt="p5" img-src="b240e8228975212e8324659930f7d22e6b0ec1d4.jpg"></p><h1>0x03 inject.js code</h1><hr><h3>1.</h3><p>那么要过滤掉javascript::伪协议和无sql操作的href</p><p>看到有这样写的:</p><pre><code>#!js
+if re.match('^(javascript|:;|#)',_url) or _url is None or re.match('.(jpg|png|bmp|mp3|wma|wmv|gz|zip|rar|iso|pdf|txt|db)$',_url):
+</code></pre><p>甚至这样的:</p><pre><code>#!js
+filename=urlpath[i+1:len(urlpath)]
+    print "Filename: ",filename
+    res=filename.split('.')
+    if(len(res)&gt;1):
+        extname=res[-1]
+        ext=["css","js","jpg","jpeg","gif","png","bmp","html","htm","swf","ico","ttf","woff","svg","cur","woff2"]
+        for blacklist in ext:
+            if(extname==blacklist):
+                return False
+</code></pre><p>这两种方式假如遇到这样的url: <code>http://xxx/aaa/</code> ,就会造成无意义的开销.</p><p>判断是否可以进行get注入测试,其实只需要</p><p><code>str.match(/[\?]/);</code> 无get参数的页面会返回null</p><p>我们这样写: <code>/http(s)?:\/\/ ([\w\W-]+\/)+ ([\w\W]+\?)+/;</code></p><p>再加上同域过滤，js中没有php那样可以在字符串中用{}引用变量的值，要在正则中拼接变量需要用RegExp对象:</p><pre><code>#!js
+var urlLegalExpr="http(s)?:\/\/"+document.domain+"([\\/\\w\\W]+\\?)+";
+var objExpr=new RegExp(urlLegalExpr,"gi");
+</code></pre><h3>2.</h3><p>Js是在http response后执行的,要进行post注入，必须在OnBeforeRequest之前获取,chrome提供了相关的api,这个没什么可说的 ,看代码吧</p><p>inject.js code:</p><pre><code>#!js
+main();
+
+function main(){
+
+    var urlLegalExpr="http(s)?:\/\/"+document.domain+"([\\/\\w\\W]+\\?)+";
+    var objExpr=new RegExp(urlLegalExpr,"gi");
+    urlArray=document.getElementsByTagName('a');
+
+    for(i=0;i&lt;urlArray.length;i++){
+        if(objExpr.test(urlArray[i].href)){
+            sqlScanTest(urlArray[i].href);
+        }
+    }
+
+}
+
+function sqlScanTest(url,payload){
+
+
+    sqlmapIpPort="http://127.0.0.1:8775";
+    var payload=arguments[1] ||'{"url": "'+url+'","User-Agent":"wooyun"}';
+
+    Connection('GET',sqlmapIpPort+'/task/new','',function(callback){
+
+            var response=JSON.parse(callback);      
+
+            if(response.success){
+                Connection('POST',sqlmapIpPort+'/scan/'+response.taskid+'/start',payload,function(callback){
+                        var responseTemp=JSON.parse(callback);
+                        if(!responseTemp.success){
+                            alert('url send to sqlmapapi error');
+                        }
+                    }
+                )
+            }
+            else{
+                alert('sqlmapapi create task error');
+            }
+        }
+    )
+}
+
+
+function Connection(Sendtype,url,content,callback){ 
+    if (window.XMLHttpRequest){ 
+        var xmlhttp=new XMLHttpRequest(); 
+    } 
+    else{ 
+        var xmlhttp=new ActiveXObject("Microsoft.XMLHTTP"); 
+    } 
+    xmlhttp.onreadystatechange=function(){ 
+        if(xmlhttp.readyState==4&amp;&amp;xmlhttp.status==200) 
+        { 
+            callback(xmlhttp.responseText); 
+        } 
+    } 
+    xmlhttp.open(Sendtype,url,true); 
+    xmlhttp.setRequestHeader("Content-Type","application/json"); 
+    xmlhttp.send(content); 
+} 
+
+
+
+function judgeUrl(url){
+    var objExpr=new RegExp(/^http(s)?:\/\/127\.0\.0\.1/);
+    return objExpr.test(url);
+}
+
+var payload={};
+
+chrome.webRequest.onBeforeRequest.addListener(
+    function(details){ 
+
+        if(details.method=="POST" &amp;&amp; !judgeUrl(details.url)){
+            var saveParamTemp="";
+            for(var i in details.requestBody.formData){
+
+                saveParamTemp+="&amp;"+i+"="+details.requestBody.formData[i][0];
+            }
+            saveParamTemp=saveParamTemp.replace(/^&amp;/,'');
+            //console.log(saveParamTemp);
+            payload["url"]=details.url;
+            payload["data"]=saveParamTemp;
+        }
+        //console.log(details);
+    },
+    {urls: ["&lt;all_urls&gt;"]},
+    ["requestBody"]);
+
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+    function(details) {
+        if(details.method=="POST" &amp;&amp; !judgeUrl(details.url)){
+            //var cookieTemp="",uaTemp="",refererTemp="";
+
+            for(var ecx=0;ecx&lt;details.requestHeaders.length;ecx++){
+
+
+                switch (details.requestHeaders[ecx].name){
+                    case "Cookie":
+                        payload["Cookie"]=details.requestHeaders[ecx].value;
+                        break;
+                    case "User-Agent":
+                        payload["User-Agent"]=details.requestHeaders[ecx].value;
+                        break;
+                    case "Referer":
+                        payload["Referer"]=details.requestHeaders[ecx].value;
+                        break;
+                    default:
+                        break;
+                }
+
+            }
+            sqlScanTest("test",JSON.stringify(payload));
+            return {requestHeaders: details.requestHeaders};
+        }
+
+    },
+    {urls: ["&lt;all_urls&gt;"]},
+    ["requestHeaders"]);
+</code></pre><p>Sqlmap能用的选项都可以在<code>http://ip:port/option/taskid/list</code>里查看,用到哪项写到payload里就行了,最好是做成实时刷新代理,之前写过爬虫的时候写过一个python版的，有空的话会改成js加入到inject.js里.</p><p><img alt="p6" img-src="278931fc46d92b8ab320473c2a9c79e79673a8a5.jpg"></p><h1>0x04 参考文献</h1><hr><ul><li>《使用sqlmapapi.py批量化扫描实践》 <a href="http://drops.wooyun.org/tips/6653">http://drops.wooyun.org/tips/6653</a></li><li>《chrome webRequest API》 <a href="https://developer.chrome.com/extensions/webRequest">https://developer.chrome.com/extensions/webRequest</a></li></ul><hr><p><img alt="p7" img-src="7f7371f112334bee840ec841b9e82db29fc1a033.jpg"></p><p>马上2016了,希望在年前把上个坑填完</p><p>也祝各位心想事成</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/127" rel="bookmark" id="re1">浅谈互联网中劫持的一些事情</a></li><li><a href="http://drops.wooyun.org/papers/382" rel="bookmark" id="re2">闲扯下午引爆乌云社区“盗窃”乌云币事件</a></li><li><a href="http://drops.wooyun.org/papers/6630" rel="bookmark" id="re3">JSONP挖掘与高级利用</a></li><li><a href="http://drops.wooyun.org/tips/2671" rel="bookmark" id="re4">无声杯 xss 挑战赛 writeup</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">恶魔奶爸 丶</span> <span class="reply-time">2016-06-24 09:44:19</span></div><p></p><p>思路很赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三秋</span> <span class="reply-time">2016-02-16 18:31:24</span></div><p></p><p>我写了一个类似的，一直私藏压箱底。<br>https://github.com/zhanghangorg/sqlinj-ant<br>分布式，自动sql注入漏洞挖掘</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">LoveSnow</span> <span class="reply-time">2016-02-12 20:13:25</span></div><p></p><p>辛苦楼主，来点赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Moonbow</span> <span class="reply-time">2016-02-09 19:59:21</span></div><p></p><p>前辈发的我一个都没搭建成功 哎</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">l0wK3y</span> <span class="reply-time">2016-02-07 23:31:58</span></div><p></p><p>@Tai7sy 因为写起来快啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-02-07 08:29:24</span></div><p></p><p>@cc 我测试没问题啊.<br>可能你chrome版本问题,有几个版本webrequest api没毕业,你升级新版本就好了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cc</span> <span class="reply-time">2016-02-07 03:01:31</span></div><p></p><p>用了一下 表示post请求没反应，ajax的也是，不知道是不是我姿势问题</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-02-05 20:58:58</span></div><p></p><p>@Black-Hole 我不信你12破处</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Black-Hole</span> <span class="reply-time">2016-02-05 20:15:19</span></div><p></p><p>学习，点赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-02-05 16:18:20</span></div><p></p><p>@winsyk 感谢阁下的支持</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">winsyk</span> <span class="reply-time">2016-02-05 15:18:01</span></div><p></p><p>点个赞。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-02-05 11:12:38</span></div><p></p><p>@Tai7sy<br>sorry 技术渣渣 看官息怒....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Tai7sy</span> <span class="reply-time">2016-02-05 10:56:13</span></div><p></p><p>表示用这种单线程的脚本语言来扫描,远不如用C或者D写...<br>效率这么坑爹,为什么还有那么多人用Py写爬虫,我非常郁闷</p><p></p></div></div></div></div></div></main>

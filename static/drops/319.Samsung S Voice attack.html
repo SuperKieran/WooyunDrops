@@ -1,0 +1,68 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Samsung S Voice attack</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2014/08/08 15:01" ui-time="" datetime="2014/08/08 15:01" class="published ng-binding ng-isolate-scope">2014/08/08 15:01</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>参考：http://arxiv.org/pdf/1407.4923.pdf</p><h2>0x00 三星S voice</h2><hr><p>三星s voice是类似apple siri以及google voice的一款语音助手软件，通过此款软件可以释放双手通过语音命令操作手机。执行如拨打电话、发送短信、拍照等功能。由此可见此软件的权限是非常宽广的。</p><p><img alt="enter image description here" img-src="7662d72a10bef499eac999bb432a183c9d3755fe.jpg"></p><p>App申请的权限如下：</p><pre><code>&lt;uses-permission android:name="android.permission.BROADCAST_STICKY"/&gt;
+&lt;uses-permission android:name="android.permission.READ_CALENDAR"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_CALENDAR"/&gt;
+&lt;uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/&gt;
+&lt;uses-permission android:name="android.permission.CALL_PHONE"/&gt;
+&lt;uses-permission android:name="android.permission.INTERNET"/&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS"/&gt;
+&lt;uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/&gt;
+&lt;uses-permission android:name="android.permission.READ_CONTACTS"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_CONTACTS"/&gt;
+&lt;uses-permission android:name="android.permission.READ_PHONE_STATE"/&gt;
+&lt;uses-permission android:name="android.permission.READ_SMS"/&gt;
+&lt;uses-permission android:name="android.permission.READ_USER_DICTIONARY"/&gt;
+&lt;uses-permission android:name="android.permission.RECEIVE_SMS"/&gt;
+&lt;uses-permission android:name="android.permission.RECORD_AUDIO"/&gt;
+&lt;uses-permission android:name="android.permission.SEND_SMS"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_SMS"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_SETTINGS"/&gt;
+&lt;uses-permission android:name="android.permission.VIBRATE"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/&gt;
+&lt;uses-permission android:name="android.permission.WRITE_USER_DICTIONARY"/&gt;
+&lt;uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/&gt;
+&lt;uses-permission android:name="android.permission.BLUETOOTH"/&gt;
+&lt;uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/&gt;
+&lt;uses-permission android:name="android.permission.WAKE_LOCK"/&gt;
+&lt;uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT"/&gt;
+&lt;uses-permission android:name="android.permission.DISABLE_KEYGUARD"/&gt;
+&lt;uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/&gt;
+&lt;uses-permission android:name="com.android.alarm.permission.SET_ALARM"/&gt;
+&lt;uses-permission android:name="com.android.vending.BILLING"/&gt;
+&lt;uses-permission android:name="android.permission.GET_TASKS"/&gt;
+&lt;uses-permission android:name="android.permission.GET_ACCOUNTS"/&gt;
+&lt;uses-permission android:name="com.android.alarm.permission.SET_ALARM"/&gt;
+&lt;uses-permission android:name="com.sec.android.widgetapp.q1_penmemo.permission.READ"/&gt;
+&lt;uses-permission android:name="com.sec.android.widgetapp.q1_penmemo.permission.WRITE"/&gt;
+&lt;uses-permission android:name="com.sec.android.permission.READ_MEMO"/&gt;
+&lt;uses-permission android:name="com.sec.android.permission.WRITE_MEMO"/&gt;
+&lt;uses-permission android:name="com.android.email.permission.ACCESS_PROVIDER"/&gt;
+&lt;uses-permission android:name="com.android.email.permission.READ_ATTACHMENT"/&gt;
+&lt;uses-permission android:name="com.sec.android.app.clockpackage.permission.READ_ALARM"/&gt;
+&lt;uses-permission android:name="com.sec.android.app.clockpackage.permission.WRITE_ALARM"/&gt;
+&lt;uses-permission android:name="com.sec.android.app.twdvfs.DVFS_BOOSTER_PERMISSION"/&gt;
+&lt;uses-permission android:name="android.Manifest.permission.DISABLE_KEYGUARD"/&gt;
+&lt;uses-permission android:name="android.permission.DISABLE_KEYGUARD"/&gt;
+&lt;uses-permission android:name="com.infraware.provider.SNoteProvider.permission.READ"/&gt;
+&lt;uses-permission android:name="com.infraware.provider.SNoteProvider.permission.WRITE"/&gt;
+&lt;uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/&gt;
+&lt;uses-permission android:name="android.permission.READ_CALL_LOG"/&gt;
+&lt;uses-permission android:name="com.sec.android.app.sns3.permission.SNS_FB_ACCESS_TOKEN"/&gt;
+&lt;uses-permission android:name="com.samsung.music.permission.READ_MUSIC_STORAGE"/&gt;
+&lt;uses-permission android:name="com.sec.android.daemonapp.ap.yonhapnews.permission.YONHAP_DAEMON_ACCESS_PROVIDER"/&gt;
+&lt;uses-permission android:name="com.sec.android.app.music.permission.READ_MUSICPROVIDER"/&gt;
+</code></pre><h2>0x01 Android permission</h2><hr><p>应用在执行某项敏感操作时（例如发送短信）必须在程序安装时就对此项权限进行申明</p><p>参考：</p><p>http://developer.android.com/guide/topics/manifest/uses-permission-element.html http://developer.android.com/guide/topics/manifest/manifest-intro.html#perms http://developer.android.com/reference/android/Manifest.permission.html</p><p><img alt="enter image description here" img-src="cbd03b94f0c3c6708725b536da5befb09617a08d.jpg"></p><p>恶意软件要获取手机通讯录中的联系人信息就必须申请READ&#95;CONTACTS 权限，读取信必须申请READ&#95;SMS ，发现短信要申请 SEND_SMS 权限。利用这一机制小伙伴如果发现某些不知名软件申请这些权限就果断点取消。更机智小伙伴就会利用权限管理软件把看片神器的除网络访问权限以为的权限都关闭掉。</p><p><img alt="enter image description here" img-src="272e15dafb700fbcbc3e971c639831ad170734ec.jpg"></p><h2>0x02 攻击思路</h2><hr><p>在权限管理软件的控制下恶意软件视乎难以再有所作为，是否有零权限的攻击方法了？ 这就要借助上文提到高权限软件s voice了，我们可以伪装一个恶意软件不申请任何敏感权限再借助S voice“提升权限”达到攻击效果。</p><p><img alt="enter image description here" img-src="661fb2ba44a09501d2df1db4005d66decc7f9cd1.jpg"></p><h2>0x03 Demo</h2><p>设计思路： 1、 设置intent启动S Voice</p><pre><code>Intent intent = new Intent();
+intent.setAction("android.intent.action.VOICE_COMMAND");
+startActivity(intent);
+</code></pre><p>2、 调用MediaPalyer类播放攻击语音</p><pre><code>private MediaPlayer mp4;
+mp4 = MediaPlayer.create(MainActivity.this, R.raw.confirm); 
+mp4.start();
+</code></pre><p>demo应用未申请任何权限</p><p><img alt="enter image description here" img-src="a65fd322ed4d86d34f862cc3e18fc07f410833b2.jpg"></p><p>演示视频： http://v.youku.com/v&#95;show/id&#95;XNzUyNzk3MzYw.html</p><h2>0x04 补充说明</h2><hr><pre><code>1. 因为google voice的谷歌类产品被严重河蟹基本无法使用，不考虑这种情况下音频文件过大可使用google TTS 文字转语音。
+2. 其他语音助手软件：百度语音….
+3. 即使声音很小也能成功被s voice识别，睡眠时小于55分贝不易被发现。可以通过监视系统状态、传感器判断手机运行状态。
+4. 安卓系统中录音方法是synchronized,也就是通过sdk api多个应用是无法同时访问麦克风的。想无声攻击可以考虑NDK。
+5. 通过传感器、系统状态信息判断手机是否被使用，再未使用的情况下唤醒屏幕，发出攻击指令。（s voice在屏幕关闭时候无法运行，用户在使用时攻击指令发声易被发现）
+6. 锁屏下攻击思路：
+</code></pre><p><img alt="enter image description here" img-src="ab2ae55023e35e7be1b629546232ac26e7fb3af5.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2014-08-26 19:02:58</span></div><p></p><p>http://v.youku.com/v_show/id_XNzUyNzk3MzYw.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Luobogao</span> <span class="reply-time">2014-08-15 21:26:38</span></div><p></p><p>幸好我root之后把S voice卸掉了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-08-12 08:57:48</span></div><p></p><p>演示视频呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">思密达</span> <span class="reply-time">2014-08-08 17:36:35</span></div><p></p><p>原文在此：http://arxiv.org/pdf/1407.4923.pdf</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-08-08 17:01:36</span></div><p></p><p>。。。。玩的好嗨。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2014-08-08 16:38:51</span></div><p></p><p>漏点了...</p><p></p></div></div></div></div></div></main>

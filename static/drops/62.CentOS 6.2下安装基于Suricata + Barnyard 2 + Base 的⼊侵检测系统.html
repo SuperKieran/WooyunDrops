@@ -1,0 +1,103 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">CentOS 6.2下安装基于Suricata + Barnyard 2 + Base 的⼊侵检测系统</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">五道口杀气</a> <span class="bull">·</span> <time title="2013/08/05 19:24" ui-time="" datetime="2013/08/05 19:24" class="published ng-binding ng-isolate-scope">2013/08/05 19:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 准备工作</h2><hr><p>CentOS 6.2我是最小化安装，同时使用163的源进行update，所以还需要安装如下的依赖包：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cab8a5a5be8ab8a5a5be">[email&#160;protected]</a> ~]$ sudo yum install gcc make pcre pcre-devel libpcap libpcap-devel
+</code></pre><p>同时需要关闭iptables、ip6tables：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b4c6dbdbc0f4c6dbdbc0">[email&#160;protected]</a> ~]$ sudo service iptables stop
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7f0d10100b3f0d10100b">[email&#160;protected]</a> ~]$ sudo service ip6tables stop
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3a4855554e7a4855554e">[email&#160;protected]</a> ~]$ sudo chkconfig --level 2345 iptables off
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="96e4f9f9e2d6e4f9f9e2">[email&#160;protected]</a> ~]$ sudo chkconfig --level 2345 ip6tables off
+</code></pre><p>需要下载的软件：</p><pre><code>Suricata
+http://www.openinfosecfoundation.org/index.php/downloads
+Barnyard 2
+http://www.securixlive.com/barnyard2/
+Base
+http://base.secureideas.net/
+yaml
+http://pyyaml.org/
+adodb
+http://sourceforge.net/projects/adodb/
+rules
+http://rules.emergingthreats.net/open/suricata/emerging.rules.tar.gz
+Image_Canvas
+http://download.pear.php.net/package/Image_Canvas-0.3.3.tgz
+Image_Graph
+http://download.pear.php.net/package/Image_Graph-0.8.0.tgz
+</code></pre><h2>0x01 配置APM环境</h2><hr><p>Base需要APM（Apache、PHP、Mysql）环境，通过yum来进行安装。</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5d2f3232291d2f323229">[email&#160;protected]</a> ids]$ sudo yum install httpd php mysql mysql-server mysql-devel php-mysql php-gd php-pear
+</code></pre><p>启动httpd、mysql服务</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="aad8c5c5deead8c5c5de">[email&#160;protected]</a> ids]$ sudo /etc/init.d/httpd start
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="43312c2c3703312c2c37">[email&#160;protected]</a> ids]$ sudo /etc/init.d/mysqld start
+</code></pre><p>默认的web根目录是<code>/var/www/html</code>，在此目录新建phpinfo测试文件，来确认配置是否正确。</p><p>PS：mysql安装后root账号默认口令为空，通过下面命令可以修改root账号口令</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a8dac7c7dce8dac7c7dc">[email&#160;protected]</a> ~]$ mysqladmin -uroot -p password [新密码]
+</code></pre><h2>0x02 安装Barnyard 2</h2><hr><p>安装过程如下：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="780a17170c380a17170c">[email&#160;protected]</a> ids]$ tar zxvf barnyard2-1.9.tar.gz
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="83f1ececf7c3f1ececf7">[email&#160;protected]</a> ids]$ cd barnyard2-1.9
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a9dbc6c6dde9dbc6c6dd">[email&#160;protected]</a> barnyard2-1.9]$ ./configure --with-mysql
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="06746969724674696972">[email&#160;protected]</a> barnyard2-1.9]$ make
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c8baa7a7bc88baa7a7bc">[email&#160;protected]</a> barnyard2-1.9]$ sudo make install
+</code></pre><h2>0x03 安装Suricata</h2><hr><p>安装过程如下：</p><p>Suricata需要依赖yaml，首先安装yaml</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fd8f929289bd8f929289">[email&#160;protected]</a> ids]$ tar zxvf yaml-0.1.4.tar.gz
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="daa8b5b5ae9aa8b5b5ae">[email&#160;protected]</a> ids]$ cd yaml-0.1.4
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="790b16160d390b16160d">[email&#160;protected]</a> yaml-0.1.4]$ ./configure
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="64160b0b1024160b0b10">[email&#160;protected]</a> yaml-0.1.4]$ make
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c8baa7a7bc88baa7a7bc">[email&#160;protected]</a> yaml-0.1.4]$ sudo make install
+
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="33415c5c4773415c5c47">[email&#160;protected]</a> ids]$ tar zxvf suricata-1.1.1.tar.gz
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f0829f9f84b0829f9f84">[email&#160;protected]</a> ids]$ cd suricata-1.1.1
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5c2e3333281c2e333328">[email&#160;protected]</a> suricata-1.1.1]$ ./configure
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="87f5e8e8f3c7f5e8e8f3">[email&#160;protected]</a> suricata-1.1.1]$ make
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="bfcdd0d0cbffcdd0d0cb">[email&#160;protected]</a> suricata-1.1.1]$ sudo make install
+</code></pre><h2>0x04 配置Suricata、Barnyard 2</h2><hr><h3>配置Barnyard 2</h3><p>把Barnyard 2安装源文件中的<code>etc/barnyard2.conf</code>文件拷贝到Suricata的配置目录下</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="51233e3e2511233e3e25">[email&#160;protected]</a> ids]$ cd barnyard2-1.9
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a2d0cdcdd6e2d0cdcdd6">[email&#160;protected]</a> barnyard2-1.9]$ sudo cp etc/barnyard2.conf /etc/suricata/
+</code></pre><p>创建barnyard2日志目录<code>/var/log/barnyard2</code></p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="30425f5f4470425f5f44">[email&#160;protected]</a> ~]$ sudo mkdir /var/log/barnyard2
+</code></pre><h3>配置数据库</h3><p>需要创建数据库和相应的账号</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3c4e5353487c4e535348">[email&#160;protected]</a> ~]$ mysql -uroot –p
+mysql&gt; create database ids;
+mysql&gt; grant create,select,update,insert,delete on ids.* to <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="41282532012d2e22202d292e3235">[email&#160;protected]</a> identified by 'ids123';
+</code></pre><p>Barnyard 2安装源文件中的schemas/create_mysql是创建表的sql文件，通过如下方式建表：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="87f5e8e8f3c7f5e8e8f3">[email&#160;protected]</a> ~]$ mysql -uids -p -Dids &lt; ids/barnyard2-1.9/schemas/create_mysql
+</code></pre><h3>配置Suricata</h3><p>创建Suricata配置目录和日志目录</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="06746969724674696972">[email&#160;protected]</a> ~]$ sudo mkdir /var/log/suricata
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f5879a9a81b5879a9a81">[email&#160;protected]</a> ~]$ sudo mkdir /etc/suricata
+</code></pre><p>把规则文件拷贝到Suricata配置目录下</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="06746969724674696972">[email&#160;protected]</a> ids]$ tar zxvf emerging.rules.tar.gz
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="40322f2f3400322f2f34">[email&#160;protected]</a> ids]$ sudo cp -R rules/ /etc/suricata/
+</code></pre><p>把Suricata安装源文件中的<code>suricata.yaml/classification.config/reference.config</code>文件拷贝到Suricata的配置目录下</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8bf9e4e4ffcbf9e4e4ff">[email&#160;protected]</a> ids]$ cd suricata-1.1.1
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="63110c0c1723110c0c17">[email&#160;protected]</a> suricata-1.1.1]$ sudo cp suricata.yaml classification.config reference.config /etc/suricata/
+</code></pre><p>编辑barnyard2.conf文件</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ea9885859eaa9885859e">[email&#160;protected]</a> ~]$ cd /etc/suricata/
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cebca1a1ba8ebca1a1ba">[email&#160;protected]</a> suricata]$ sudo vim barnyard2.conf
+</code></pre><p>找到下面的内容</p><pre><code>config reference_file:      /etc/snort/reference.config
+config classification_file: /etc/snort/classification.config
+config gen_file:            /etc/snort/gen-msg.map
+config sid_file:                /etc/snort/sid-msg.map
+</code></pre><p>更改为的内容如下：</p><pre><code>config reference_file:      /etc/suricata/reference.config
+config classification_file: /etc/suricata/classification.config
+config gen_file:            /etc/suricata/rules/gen-msg.map
+config sid_file:            /etc/suricata/rules/sid-msg.map
+</code></pre><p>同时在文件的末尾添加如下行，红色的mysql数据库、账号信息根据实际情况填写</p><pre><code>output database: log, mysql, user=ids password=ids123 dbname=ids host=localhost
+</code></pre><p>编辑suricata.yaml文件</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0b7964647f4b7964647f">[email&#160;protected]</a> suricata]$ sudo vim suricata.yaml
+</code></pre><p>找到</p><pre><code>HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+</code></pre><p>这一行，根据实际的网络情况来修改，在这里我修改为</p><pre><code>HOME_NET: "[192.168.0.0/16]"
+</code></pre><p>找到下面的内容：</p><pre><code>host-os-policy:
+  # Make the default policy windows.
+  windows: [0.0.0.0/0]
+  bsd: []
+  bsd_right: []
+  old_linux: []
+  linux: [10.0.0.0/8, 192.168.1.100, "8762:2352:6241:7245:E000:0000:0000:0000"]
+  old_solaris: []
+  solaris: ["::1"]
+  hpux10: []
+  hpux11: []
+  irix: []
+  macos: []
+  vista: []
+  windows2k3: []
+</code></pre><p>根据实际网络情况修改。</p><p>启动Suricata、Barnyard 2</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="63110c0c1723110c0c17">[email&#160;protected]</a> ~]$ sudo /usr/local/bin/barnyard2 -c /etc/suricata/barnyard2.conf -d /var/log/suricata -f unified2.alert -w /var/log/suricata/suricata.waldo -D
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="51233e3e2511233e3e25">[email&#160;protected]</a> ~]$ sudo /usr/local/bin/suricata -c /etc/suricata/suricata.yaml -i eth1 -D
+</code></pre><p>启动suricata的-i参数是镜像流量的网卡。</p><p>测试suricata工作是否正常，可以通过如下命令：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b5c7dadac1f5c7dadac1">[email&#160;protected]</a> suricata]$ curl www.testmyids.com
+</code></pre><p>执行后，/var/log/suricata目录下的fast.log/suricata.waldo/unified2.alert*文件大小发生变化，同时查看fast.log文件有如下类似的内容则表示suricata工作正常：</p><pre><code>01/12/2012-02:16:27.964981  [**] [1:2013028:3] ET POLICY curl User-Agent Outbound [**] [Classification: Attempted Informa
+tion Leak] [Priority: 2] {TCP} 192.168.230.100:56260 -&gt; 217.160.51.31:80
+01/12/2012-02:16:28.309707  [**] [1:2100498:7] GPL ATTACK_RESPONSE id check returned root [**] [Classification: Potential
+ly Bad Traffic] [Priority: 2] {TCP} 217.160.51.31:80 -&gt; 192.168.230.100:56260
+</code></pre><h2>0x05 配置Base</h2><hr><p>Base需要用到adodb以及Image&#95;Canvas、Image&#95;Graph绘图组件，配置过程如下：</p><p>解压adodb514.zip</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="63110c0c1723110c0c17">[email&#160;protected]</a> ids]$ unzip adodb514.zip
+</code></pre><p>把adodb5拷贝到/usr/local/lib/目录下，这个目录随意指定，记下来后面要用到</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="57253838231725383823">[email&#160;protected]</a> ids]$ sudo cp -R adodb5 /usr/local/lib/
+</code></pre><p>安装Image&#95;Canvas、Image&#95;Graph</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7d0f1212093d0f121209">[email&#160;protected]</a> ids]$ sudo pear install Image_Canvas-0.3.3.tgz
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="60120f0f1420120f0f14">[email&#160;protected]</a> ids]$ sudo pear install Image_Graph-0.8.0.tgz 
+</code></pre><p>解压base-1.4.5.tar.gz</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="31435e5e4571435e5e45">[email&#160;protected]</a> ids]$ tar zxvf base-1.4.5.tar.gz
+</code></pre><p>拷贝base-1.4.5到/var/www/html目录下</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f684999982b684999982">[email&#160;protected]</a> ids]$ sudo cp -R base-1.4.5 /var/www/html/base
+</code></pre><p>更改/var/www/html/base的属主为apache</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c4b6ababb084b6ababb0">[email&#160;protected]</a> ids]$ cd /var/www/html/
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fa8895958eba8895958e">[email&#160;protected]</a> html]$ sudo chown -R apache:apache base
+</code></pre><p>然后通过浏览器访问http://192.168.230.100/base</p><p>￼<img alt="enter image description here" img-src="a6046c969595f3c03d9a0aa5789ae1f195fd395b.jpg"></p><p>根据页面中红色的部分提示来进行操作。</p><p>修改php.ini</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="295b46465d695b46465d">[email&#160;protected]</a> html]$ sudo vim /etc/php.ini
+</code></pre><p>找到</p><pre><code>error_reporting = E_ALL &amp; ~E_DEPRECATED
+</code></pre><p>内容，修改为如下：</p><pre><code>error_reporting = E_ALL &amp; ~E_DEPRECATED &amp; ~E_NOTICE
+</code></pre><p>重新载入apache配置</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b4c6dbdbc0f4c6dbdbc0">[email&#160;protected]</a> html]$ sudo /etc/init.d/httpd reload
+</code></pre><p>然后点击“Continue”到下一步 ￼ <img alt="enter image description here" img-src="f97b5405ec99f044e105aa1d48a0ff2806b32d2d.jpg"></p><p>选择语言，和前面我们的adodb5的路径，然后点击“Continue” ￼ <img alt="enter image description here" img-src="b6a92e37db152a6e5fce211ad88aae7ceeb91e35.jpg"></p><p>填写mysql相关信息，点击“Continue”继续 ￼ <img alt="enter image description here" img-src="a7d248280e84f07af64542416ff8cf96d58caeb3.jpg"></p><p>填写认证的相关信息，如果需要验证身份，请勾上“Use Authentication System”,点击“Continue” ￼ <img alt="enter link description here" img-src="ebac45798fa206a4ab22326d72653c774acc6ffc.jpg"></p><p>点击“Create BASE AG” ￼ <img alt="enter image description here" img-src="2763ed27615885abd9948c1a03cd67b2e74bd0c1.jpg"></p><p>点击“step 5”，跳到首页。</p><p><img alt="enter image description here" img-src="5a70eb6e656734666078bef2b864d221aa099ba5.jpg"> ￼</p><h2>0x06 最后</h2><hr><p>以上是整个安装过程，IDS的价值在于规则设置的是否合适，根据实际情况设置合适的规则才能够体现IDS的强大。规则的设置见以后的文章。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/653" rel="bookmark" id="re1">搭建基于Suricata+Barnyard2+Base的IDS前端Snorby</a></li><li><a href="http://drops.wooyun.org/tips/132" rel="bookmark" id="re2">waf 绕过的技巧</a></li><li><a href="http://drops.wooyun.org/tips/8166" rel="bookmark" id="re3">使用exp进行SQL报错注入</a></li><li><a href="http://drops.wooyun.org/tips/737" rel="bookmark" id="re4">Tomcat的8009端口AJP的利用</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">her0ma</span> <span class="reply-time">2014-05-16 15:50:47</span></div><p></p><p>按照文章参考其它资料基本部署了一下，总结点经验贴上：</p><p>1，Barnyard2启动出错，要注意/etc/suricata/barnyard2.conf文件，注意根据提示修改其中的项<br>2，Suricata启动总是出错，需要注意看看配置文件/etc/suricata/suricata.yaml 文件中的一些选项</p><p>这俩配置文件很重要 ，遇到的错误通过修改配置文件基本都能解决。再贴篇老外写的更加详细的：</p><p>http://cyruslab.net/2012/10/18/building-an-ids-part-1-installing-pre-requisites-and-snorby/</p><p>希望对后来的童鞋有所帮助！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x334</span> <span class="reply-time">2013-10-17 23:23:13</span></div><p></p><p>额，http://blog.csdn.net/zhulinu/article/details/7699439<br>同学，你是zhulinu？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">噬魂</span> <span class="reply-time">2013-08-23 12:07:55</span></div><p></p><p>挺好的，。看了看</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Hxai11</span> <span class="reply-time">2013-08-07 09:24:30</span></div><p></p><p>这篇文章我转载了，挺好的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lion(lp)</span> <span class="reply-time">2013-08-06 09:38:50</span></div><p></p><p>不错啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Demon</span> <span class="reply-time">2013-08-05 23:03:51</span></div><p></p><p>学习了</p><p></p></div></div></div></div></div></main>

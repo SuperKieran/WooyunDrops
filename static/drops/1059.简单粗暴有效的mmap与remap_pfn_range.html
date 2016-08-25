@@ -1,0 +1,49 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">简单粗暴有效的mmap与remap_pfn_range</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小叮当</a> <span class="bull">·</span> <time title="2016/02/29 10:38" ui-time="" datetime="2016/02/29 10:38" class="published ng-binding ng-isolate-scope">2016/02/29 10:38</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>众所周知，现代操作系统为了安全和统筹硬件的原因，采用了一套非常复杂的管理内存的方式，并由此产生了物理地址，逻辑地址，虚拟地址等概念。这部分内容不负累述，简单来说如下图</p><p><img alt="p1" img-src="82af0e953525771d34630cc8933d5ccff85e70dc.jpg"></p><p>kernel与用户态进程拥有不同的逻辑地址空间，kernel所在的页面拥有更高的权限，用户权限是不可以随意更改的，否则岂不是可以改掉自己的权限，为所欲为。</p><p><img alt="p2" img-src="d6a83d84e35c4d86fc9a0ca54ffdaa224b845006.jpg"></p><p>不过这也不是完全密不透风的墙，内核提供了多种途径供用户态交流数据。其中如果需要在短时间内交换大量数据，并且有实时的要求，linux kernel 提供了一种简单有效的方式：共享内存——mmap syscall。</p><p>原理也非常简单，映射给kernel的物理页面也同样映射一份给用户进程，并且修改掉权限属性。这样的话分属不同地址空间的两块内存实际上对应的是同一个物理页面，一方修改数据，另一方也能够实时看到变化。</p><p><img alt="p3" img-src="5caf9bc26ccdf0dde04dec595269ac2e216a140e.jpg"></p><p>一般的应用场景是在嵌入式设备的外设中，比如要实施刷新LED显示屏，实施记录大量传感器数据，等。这需要开发人员在自己的驱动程序和用户代码中同时实现mmap的逻辑才能够实现。</p><p>首先，在自定义的驱动文件中要提供这样的接口函数：</p><p><img alt="p4" img-src="3ca8c21d46c6455f28da5821b6466be7f3391522.jpg"></p><p>内核函数<code>remap_pfn_range()</code>会根据需求映射页面进用户进程。</p><p>详见：<a href="http://www.makelinux.net/ldd3/chp-15-sect-2">http://www.makelinux.net/ldd3/chp-15-sect-2</a></p><p>随后在用户程序中简单掉用这个自定义的mmap函数就可以建立起页面映射，达到共享内存的目的了。</p><h1>0x01 漏洞</h1><hr><p>越是简单好用的，就越容易出现问题。</p><p>函数<code>remap_pfn_range()</code>并不会检查传入的参数，它会完全按照需求的内存起始位置，所需长度，访问权限，去映射页面进用户态。所有这些检查都需要自定义的驱动中实现的mmap函数去完成。</p><p>上面的截图是官方文档中给出的例子，当然不能用这段代码直接用到产品中！</p><p>比如如下的这个产品实现：<br><a href="https://github.com/rajamalw/galaxy-s5360/blob/master/modules/drivers/video/hantro/ldriver/kernel_26x/hx170dec.c">https://github.com/rajamalw/galaxy-s5360/blob/master/modules/drivers/video/hantro/ldriver/kernel_26x/hx170dec.c</a></p><pre><code>#!cpp
+/*------------------------------------------------------------------------------
+    Function name   : hx170dec_mmap
+    Description     : mmap method
+    Return type     : int
+------------------------------------------------------------------------------*/
+static int hx170dec_mmap(struct file *file, struct vm_area_struct *vma)
+{
+    if (vma-&gt;vm_end - vma-&gt;vm_start &gt;
+        ((DEC_IO_SIZE + PAGE_SIZE - 1) &amp; PAGE_MASK))
+        return -EINVAL;
+
+    vma-&gt;vm_page_prot = pgprot_noncached(vma-&gt;vm_page_prot);
+    /* Remap-pfn-range will mark the range VM_IO and VM_RESERVED */
+    if (remap_pfn_range(vma,
+                vma-&gt;vm_start,
+                (DEC_IO_BASE &gt;&gt; PAGE_SHIFT),
+                vma-&gt;vm_end - vma-&gt;vm_start, vma-&gt;vm_page_prot)) {
+        pr_err("%s(): remap_pfn_range() failed\n", __FUNCTION__);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+</code></pre><p>只是稍微对申请的长度做了检查，其他的理所当然地相信了用户代码。</p><p>造成的后果很严重：</p><ul><li><a href="https://labs.mwrinfosecurity.com/system/assets/762/original/mwri_advisory_huawei_driver-root-exploit.pdf">https://labs.mwrinfosecurity.com/system/assets/762/original/mwri&#95;advisory&#95;huawei_driver-root-exploit.pdf</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-021778">WooYun: MTK相机内核驱动缺陷导致的权限提升</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-026290">WooYun: 华为最新Ascend P6手机内核缺陷造成本地权限提升</a></li><li><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-021777">WooYun: 华为海思平台解码器驱动缺陷以及权限设置不当</a></li></ul><p>我们再来看一个比较好的例子：<br><a href="https://github.com/nirodg/android_device_huawei_hwp7/blob/master/kernel/huawei/hwp7/drivers/hik3/g1dec/hx170dec.c">https://github.com/nirodg/android&#95;device&#95;huawei_hwp7/blob/master/kernel/huawei/hwp7/drivers/hik3/g1dec/hx170dec.c</a></p><pre><code>#!cpp
+static int hx170dec_mmap(struct file *file, struct vm_area_struct *vma)
+{
+    unsigned long start = vma-&gt;vm_start;
+    unsigned long size = vma-&gt;vm_end - vma-&gt;vm_start;
+    int retval = 0;
+
+    unsigned long pyhs_start = vma-&gt;vm_pgoff &lt;&lt; PAGE_SHIFT;
+    unsigned long pyhs_end = pyhs_start + size;
+    if(!(pyhs_start &gt;= hisi_reserved_codec_phymem//not codec memory
+            &amp;&amp; pyhs_end &lt;= hisi_reserved_codec_phymem + HISI_MEM_CODEC_SIZE)
+        &amp;&amp; !(pyhs_start &gt;= hx170dec_data.iobaseaddr//not io address
+            &amp;&amp; pyhs_end &lt;= hx170dec_data.iobaseaddr + hx170dec_data.iosize)) {
+        printk(KERN_ERR "%s(%d) failed map:0x%lx-0x%lx\n", __FUNCTION__, __LINE__, pyhs_start, pyhs_end);
+        return -EFAULT;
+    }
+    /* make buffers write-thru cacheable */
+
+    vma-&gt;vm_page_prot = pgprot_noncached(vma-&gt;vm_page_prot);
+    if (remap_pfn_range(vma, start, vma-&gt;vm_pgoff, size, vma-&gt;vm_page_prot))
+        retval = -ENOBUFS;
+
+    return retval;
+}
+</code></pre><p>在调用<code>remap_pfn_range</code>函数之前做了诸多检查，限制了申请地址的起始和结束位置。</p><h1>0x02 其他</h1><hr><p>android系统的整体安全架构是很繁复庞大的，上文中出现的漏洞如果发生在某个驱动中是不能单独被利用提权的。因为其他应用没有权限去访问这个有问题的驱动。但是如果这个驱动的访问权限再出错，比如：</p><p><img alt="P5" img-src="192e27d11316fb0dbb0da8927d505c6fcde823d9.jpg"></p><p>那么连续的犯错下来，对于攻击者来说，就真的是666了。</p><h1>0x03 结语</h1><hr><p>本文所讨论的安全问题在某厂商的设备中经常出现，并且时间跨度长达几年，希望贵厂能够提高安全意识，加班赶工的同时也注意下代码质量。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/3795" rel="bookmark" id="re1">CVE-2014-0038内核漏洞原理与本地提权利用代码实现分析</a></li><li><a href="http://drops.wooyun.org/papers/346" rel="bookmark" id="re2">终端机的安全性</a></li><li><a href="http://drops.wooyun.org/papers/345" rel="bookmark" id="re3">在线支付逻辑漏洞总结</a></li><li><a href="http://drops.wooyun.org/papers/8814" rel="bookmark" id="re4">恶意软件PE文件重建指南</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x4d5c</span> <span class="reply-time">2016-03-06 17:17:25</span></div><p></p><p>楼主对这漏洞了解太浅了，就不要写 tips了哈 .</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大梦</span> <span class="reply-time">2016-03-04 21:25:34</span></div><p></p><p>许多代码并不是华为自己写的，相机、音频这些芯片厂商的代码拿来直接用了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2016-02-29 14:20:51</span></div><p></p><p>&quot;那么连续的犯错下来，对于攻击者来说，就真的是666了。&quot;----赞</p><p></p></div></div></div></div></div></main>

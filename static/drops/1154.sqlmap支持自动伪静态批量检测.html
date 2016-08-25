@@ -1,0 +1,118 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">sqlmap支持自动伪静态批量检测</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路飞</a> <span class="bull">·</span> <time title="2016/04/19 10:31" ui-time="" datetime="2016/04/19 10:31" class="published ng-binding ng-isolate-scope">2016/04/19 10:31</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>由于还没有找到一款比较适合批量检测sql注入点的工具（proxy+sqlmapapi的方式批量检测之类的批量sql注入点检测），我的目光就转向了sqlmap。虽然sqlmap没有支持伪静态注入点的测试(需要手动添加注入标记)，由于是python写的，可以快速方便的进行二次开发。</p><h1>0x01 思路</h1><hr><p>我的思路是在有.html之类的后缀或者既没有.html或者包含"?"的url进行修改。</p><p>伪静态注入点一般都在数字，所以我就在数字后面添加注入标记。字符串的伪静态就不搞了，搞了工作量就会添加很多。</p><p>用如下的URL进行测试</p><pre><code>#!bash
+http://www.site.com/index.php/index/id/14
+http://www.site.com/index.php/newsContent/id/341.html
+http://www.site.com/show/?29-575.html
+</code></pre><p>结果如下</p><pre><code>#!bash
+http://www.site.com/index.php/index/id/14*
+http://www.site.com/index.php/newsContent/id/341*.html
+http://www.site.com/show/?29*-575*.html
+</code></pre><p>代码如下：</p><pre><code>#!python
+if re.search('html|htm|sthml',url) or url.find("?") == -1:
+    flag = 0
+    suffix = ""
+    if re.search('html|htm|sthml',url):
+        suffix = "." + re.search('html|htm|sthml',url).group()
+    urlList = url.split("/")
+
+    returnList = []
+
+    for i in urlList:
+        i = re.sub('\.html|\.htm','', i)
+        if i.isdigit():
+            returnList.append(i + "*")
+            flag = 1
+        else:
+            returnList.append(i)
+    url = '/'.join(returnList) + suffix
+
+    returnList = []
+    if flag == 0:
+        for i in urlList:
+            if re.search('html|htm|sthml',i):
+                digitList = re.findall('\d+',i)
+                for digit in digitList:
+                    i = i.replace(digit, digit + "*")
+                returnList.append(i)
+            else:
+                returnList.append(i)
+        url = '/'.join(returnList)    
+    print url
+</code></pre><h1>0x02 sqlmap支持单个自动检测伪静态</h1><hr><p>相关文件</p><ul><li><a href="https://github.com/sqlmapproject/sqlmap/blob/master/sqlmap.py">https://github.com/sqlmapproject/sqlmap/blob/master/sqlmap.py</a></li><li><a href="https://github.com/sqlmapproject/sqlmap/blob/master/lib/controller/controller.py">https://github.com/sqlmapproject/sqlmap/blob/master/lib/controller/controller.py</a></li><li><a href="https://github.com/sqlmapproject/sqlmap/blob/master/lib/core/target.py">https://github.com/sqlmapproject/sqlmap/blob/master/lib/core/target.py</a></li></ul><p><strong>流程</strong></p><blockquote><p>Sqlmap.py 116行start()->controller.py 256行setupTargetEnv()->target.py 72行_setRequestParams()->target.py 117行</p></blockquote><pre><code>#!python
+if kb.processUserMarks is None and CUSTOM_INJECTION_MARK_CHAR in conf.data:
+message = "custom injection marking character ('%s') found in option " % CUSTOM_INJECTION_MARK_CHAR
+message += "'--data'. Do you want to process it? [Y/n/q] "
+test = readInput(message, default="Y")
+if test and test[0] in ("q", "Q"):
+raise SqlmapUserQuitException
+else:
+kb.processUserMarks = not test or test[0] not in ("n", "N")
+
+if kb.processUserMarks:
+kb.testOnlyCustom = True
+</code></pre><p>这里检测是否使用了注入标记。</p><p>sqlmap获取完所有你指定的信息后，开始正式检测是否有注入之前，会检测是否使用了注入标记"<code>*</code>"，如果有的话就先处理这个注入标记的点进行测试。</p><p>这样就明白注入标记的流程，只要_setRequestParams函数调用之前处理好URL，就可以支持自动的伪静态注入的测试了。</p><p>只要在260行处添加</p><pre><code>#!python
+if re.search('html|htm|sthml',conf.url) or conf.url.find("?") == -1:
+    flag = 0
+    suffix = ""
+    if re.search('html|htm|sthml',conf.url):
+        suffix = "." + re.search('html|htm|sthml',conf.url).group()
+    urlList = conf.url.split("/")
+
+    returnList = []
+
+    for i in urlList:
+        i = re.sub('\.html|\.htm','', i)
+        if i.isdigit():
+            returnList.append(i + "*")
+            flag = 1
+        else:
+            returnList.append(i)
+    conf.url = '/'.join(returnList) + suffix
+
+    returnList = []
+    if flag == 0:
+        for i in urlList:
+            if re.search('html|htm|sthml',i):
+                digitList = re.findall('\d+',i)
+                for digit in digitList:
+                    i = i.replace(digit, digit + "*")
+                returnList.append(i)
+            else:
+                returnList.append(i)
+        conf.url = '/'.join(returnList)
+    logger.info(conf.url)
+</code></pre><p>这样就可以了。</p><p>效果图</p><p><img alt="pic1" img-src="4f568d905782e7ab0b3bfd2a41801a473a228975.jpg"></p><p>这里只是单个的，要支持批量检测注入点。修改这里是不行的。</p><h1>0x03 sqlmap支持批量自动检测伪静态</h1><hr><p>相关文件<br><a href="https://github.com/sqlmapproject/sqlmap/blob/master/lib/core/option.py">https://github.com/sqlmapproject/sqlmap/blob/master/lib/core/option.py</a></p><p>583行处</p><pre><code>#!python
+for line in getFileItems(conf.bulkFile):
+    if re.match(r"[^ ]+\?(.+)", line, re.I) or CUSTOM_INJECTION_MARK_CHAR in line:
+        found = True
+        kb.targets.add((line.strip(), conf.method, conf.data, conf.cookie, None))
+</code></pre><p>一行一行读取文件里面的url。只要匹配到有问号"?"或者有注入标记"*"才进行测试。</p><p>在583处添加</p><pre><code>#!python
+    if re.search('html|htm|sthml',line) or line.find("?") == -1:
+        flag = 0
+        suffix = ""
+        if re.search('html|htm|sthml',line):
+            suffix = "." + re.search('html|htm|sthml',line).group()
+        urlList = line.split("/")
+
+        returnList = []
+
+        for i in urlList:
+            i = re.sub('\.html|\.htm','', i)
+            if i.isdigit():
+                returnList.append(i + "*")
+                flag = 1
+            else:
+                returnList.append(i)
+        line = '/'.join(returnList) + suffix
+
+        returnList = []
+        if flag == 0:
+            for i in urlList:
+                if re.search('html|htm|sthml',i):
+                    digitList = re.findall('\d+',i)
+                    for digit in digitList:
+                        i = i.replace(digit, digit + "*")
+                    returnList.append(i)
+                else:
+                    returnList.append(i)
+            line = '/'.join(returnList)
+</code></pre><p>效果图：</p><p><img alt="pic2" img-src="3d09882a027b9d5e220268f16e43200d32a54391.jpg"></p><h1>0x04 最后</h1><hr><p>如果有好的建议，可以在评论中给我留言。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mujahideen</span> <span class="reply-time">2016-04-29 10:48:51</span></div><p></p><p>感觉和新代码有点出入，大牛可否留个方式请教一下？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑客小白</span> <span class="reply-time">2016-04-27 10:57:39</span></div><p></p><p>爬虫+检测注入</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hear7v</span> <span class="reply-time">2016-04-25 20:16:52</span></div><p></p><p>如果是api+代理这样的批量检测，是不是添加第一处就行了啊，还没整体看过源码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dragon110</span> <span class="reply-time">2016-04-20 17:41:17</span></div><p></p><p>学习。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路人</span> <span class="reply-time">2016-04-20 12:42:28</span></div><p></p><p>http://zone.wooyun.org/content/21978</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Hxai11</span> <span class="reply-time">2016-04-20 10:07:23</span></div><p></p><p>@杨某某 nice!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">斯洛伐克</span> <span class="reply-time">2016-04-19 20:22:28</span></div><p></p><p>飞哥，不研究缠论了吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路飞</span> <span class="reply-time">2016-04-19 16:45:42</span></div><p></p><p>@D＆G 嗯，情况肯定很多的。我考虑的情况肯定也不全的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路飞</span> <span class="reply-time">2016-04-19 16:41:50</span></div><p></p><p>@蓝冰 稍微改一下<br>把<br>digitList = re.findall(&#039;\d+&#039;,i)<br>改成这样<br>digitList = re.findall(&#039;\d+\w+&#039;,i)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路飞</span> <span class="reply-time">2016-04-19 16:39:11</span></div><p></p><p>@杨某某 嗯。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hear7v</span> <span class="reply-time">2016-04-19 14:30:18</span></div><p></p><p>是呀，最近也在想这个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2016-04-19 13:42:29</span></div><p></p><p>伪静态的情况应该还有比较多种</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蓝冰</span> <span class="reply-time">2016-04-19 13:35:09</span></div><p></p><p>http://www.site.com/show/hash-3a39ab.html<br>这种不应该加星号注入<br>用你的代码处理的话会变成<br>http://www.site.com/show/hash-3*a3*9*ab.html<br>造成了较多的不必要的开销</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蓝冰</span> <span class="reply-time">2016-04-19 13:18:48</span></div><p></p><p>真是心有灵犀 前几天 想了很久 也是这种方案 放弃字符串的检测 循环在纯数字后面加*号</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">杨某某</span> <span class="reply-time">2016-04-19 12:35:53</span></div><p></p><p>思路是写个爬取程序，配合sqlmap批量检测来使用？</p><p></p></div></div></div></div></div></main>

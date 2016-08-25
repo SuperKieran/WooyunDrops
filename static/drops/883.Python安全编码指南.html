@@ -1,0 +1,480 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Python安全编码指南</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Larry</a> <span class="bull">·</span> <time title="2015/11/12 10:58" ui-time="" datetime="2015/11/12 10:58" class="published ng-binding ng-isolate-scope">2015/11/12 10:58</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>from:<a href="http://sector.ca/Portals/17/Presentations15/SecTor_Branca.pdf">http://sector.ca/Portals/17/Presentations15/SecTor_Branca.pdf</a></p><p>这个pdf中深入Python的核心库进行分析，并且探讨了在两年的安全代码审查过程中，一些被认为是最关键的问题，最后也提出了一些解决方案和缓解的方法。我自己也在验证探究过程中添油加醋了一点，如有错误还请指出哈。</p><p>下面一张图表示他们的方法论：</p><p><img alt="" img-src="d9b72f6369ad44094d04ca049b0abc6a7051e581.jpg"></p><p>探究的场景为：</p><ul><li>输入的数据是"未知"的类型和大小</li><li>使用RFC规范构建Libraries</li><li>数据在没有经过适当的验证就被处理了</li><li>逻辑被更改为是独立于操作系统的</li></ul><h1>0x01 Date and time —> time, datetime, os</h1><hr><h2>time</h2><h3>asctime</h3><pre><code>#!python
+import time 
+initial_struct_time = [tm for tm in time.localtime()]       
+
+# Example on how time object will cause an overflow 
+# Same for: Year, Month, Day, minutes, seconds  
+invalid_time = (2**63)      
+
+# change ‘Hours' to a value bigger than 32bit/64bit limit   
+initial_struct_time[3] = invalid_time       
+
+overflow_time = time.asctime(initial_struct_time)
+</code></pre><p>这里面<code>asctime()</code>函数是将一个tuple或者是<code>struct_time</code>表示的时间形式转换成类似于<code>Sun Jun 20 23:21:05 1993</code>的形式，可以<code>time.asctime(time.localtime())</code>验证一下。对<code>time.struct_time(tm_year=2015, tm_mon=11, tm_mday=7, tm_hour=20, tm_min=58, tm_sec=57, tm_wday=5, tm_yday=311, tm_isdst=0)</code>中每一个键值设置invalid_time可造成溢出错误。</p><ul><li><p>在<strong>Python 2.6.x</strong>中报错为<em>OverflowError: long int too large to convert to int</em></p></li><li><p>在<strong>Python 2.7.x</strong>中报错为</p><ul><li><em>OverflowError: Python int too large to convert to C long</em></li><li><em>OverflowError: signed integer is greater than maximum</em></li></ul></li></ul><p>自己在64位Ubuntu Python2.7.6也测试了一下，输出结果为：</p><pre><code>[-] hour:
+    [+] OverflowError begins at 31: signed integer is greater than maximum
+    [+] OverflowError begins at 63: Python int too large to convert to C long
+...
+</code></pre><h2>gmtime</h2><pre><code>#!python
+import time 
+print time.gmtime(-2**64)   
+print time.gmtime(2**63)
+</code></pre><p><code>time.gmtime()</code>为将秒数转化为struct&#95;time格式，它会基于time&#95;t平台进行检验，如上代码中将秒数扩大进行测试时会产生报错<em>ValueError: timestamp out of range for platform time_t</em>。如果数值在-2^63到-2^56之间或者2^55到2^62之间又会引发另一种报错<em>ValueError: (84, 'Value too large to be stored in data type')</em>。我自己的测试结果输出如下：</p><pre><code>[-] 2 power:
+    [+] ValueError begins at 56: (75, 'Value too large for defined data type')
+    [+] ValueError begins at 63: timestamp out of range for platform time_t
+[-] -2 power:
+    [+] ValueError begins at 56: (75, 'Value too large for defined data type')
+    [+] ValueError begins at 64: timestamp out of range for platform time_t
+</code></pre><h2>os</h2><pre><code>#!python
+import os   
+TESTFILE = 'temp.bin'       
+
+validtime = 2**55   
+os.utime(TESTFILE,(-2147483648, validtime)) 
+stinfo = os.stat(TESTFILE)  
+print(stinfo)       
+
+invalidtime = 2**63 
+os.utime(TESTFILE,(-2147483648, invalidtime))   
+stinfo = os.stat(TESTFILE)  
+print(stinfo)
+</code></pre><p>这里的<code>os.utime(path, times)</code>是设置对应文件的access和modified时间，时间以<code>(atime, mtime)</code>元组的形式传入，代码中将modified time设置过大也会产生报错。</p><ul><li><p>在<strong>Python 2.6.x</strong>中报错为<em>OverflowError: long int too large to convert to int</em></p></li><li><p>在<strong>Python 2.7.x, Python 3.1</strong>中报错为<em>OverflowError: Python int too large to convert to C long</em></p></li></ul><p>如果我们将其中的modified time设置为2^55，<code>ls</code>后会有：</p><pre><code>#!bash
+$ ls -la temp.bin   
+-rw-r--r-- 1 user01 user01 5 13 Jun 1141709097 temp.bin
+$ stat temp.bin 
+A:"Oct 10 16:31:45 2015"    
+M:"Jun 13 01:26:08 1141709097"  
+C: ”Oct 10 16:31:42 2015"
+</code></pre><p>在某些操作系统上如果我们将值设为2^56，将会有以下输出（<strong>也有造成系统崩溃和数据丢失的风险</strong>）：</p><pre><code>#!bash
+$ ls -la temp.bin   
+Segmentation fault: 11  
+$ stat temp.bin 
+A:"Oct 10 16:32:50 2015"    
+M:"Dec 31 19:00:00 1969"    
+C:"Oct 10 16:32:50 2015"
+</code></pre><p>Modules通常没有对无效输入进行检查或者测试。例如，对于64位的操作系统，最大数可以达到2^63-1，但是在不同的情况下使用数值会造成不同的错误，任何超出有效边界的数字都会造成溢出，所以要对有效的数据进行检验。</p><h1>0x02 Numbers —> ctypes, xrange, len, decimal</h1><h2>ctype</h2><p>ctypes是Python的一个外部库，提供和C语言兼容的数据类型,具体可见<a href="https://docs.python.org/2/library/ctypes.html#fundamental-data-types">官方文档</a></p><p>测试代码：</p><pre><code>#!python
+import ctypes       
+
+#32-bit test with max 32bit integer 2147483647  
+ctypes.c_char * int(2147483647)     
+
+#32-bit test with max 32bit integer 2147483647 + 1  
+ctypes.c_char * int(2147483648)     
+
+#64-bit test with max 64bit integer 9223372036854775807 
+ctypes.c_char * int(9223372036854775807)        
+
+#64-bit test with max 64bit integer 9223372036854775807 + 1 
+ctypes.c_char * int(9223372036854775808)
+</code></pre><p>举个栗子，可以在64位的操作系统上造成溢出：</p><pre><code>#!python
+&gt;&gt;&gt; ctypes.c_char * int(9223372036854775808)
+Traceback (most recent call last):
+File "&lt;stdin&gt;", line 1, in &lt;module&gt;
+OverflowError: cannot fit 'long' into an index-sized integer
+</code></pre><p>Python ctypes 可调用的数据类型有：</p><p><img alt="" img-src="ce397bfd9e6e262025a05227423b10e022bb0b83.jpg"></p><p>问题在于：</p><ul><li>ctypes对内存大小<strong>没有</strong>限制</li><li>也<strong>没有</strong>对溢出进行检查</li></ul><p>所以，在32位和64位操作系统上都可以造成溢出，解决方案就是也要对数据的有效性和溢出进行检查。</p><h2>xrange()</h2><p>演示代码：</p><pre><code>#!python
+valid = (2 ** 63) -1    
+invalid = 2 ** 63       
+
+for n in xrange(invalid):   
+    print n 
+</code></pre><p>报错为：<em>OverflowError: Python int too large to convert to C long</em>。虽然这种行为是“故意”的和在预期之内的，但在这种情况下依旧没有进行检查而导致数字溢出，这是因为<code>xrange</code>使用Plain Integer Objects而无法接受任意长度的对象。解决方法就是使用Python的long integer object，这样就可以使用任意长度的数字了，限制条件则变为操作系统内存的大小了。</p><h2>len()</h2><p>演示代码：</p><pre><code>#!python
+valid = (2**63)-1   
+invalid = 2**63     
+
+class A(object):    
+    def __len__(self):  
+        return invalid      
+
+print len(A())
+</code></pre><p>这里也会报错：<em>OverflowError: long int too large to convert to int</em>。因为<code>len()</code>函数<strong>没有</strong>对对象的长度进行检查，也没有使用python int objects（使用了就会没有限制），当对象可能包含一个“.length”属性的时候，就有可能造成溢出错误。解决办法同样也是使用python int objects。</p><h2>Decimal</h2><pre><code>#!python
+from decimal import Decimal 
+try:    
+    # DECIMAL '1172837167.27'   
+    x = Decimal("1172837136.0800")  
+    # FLOAT '1172837167.27' 
+    y = 1172837136.0800 
+    if y &gt; x:   
+        print("ERROR: FLOAT seems comparable with DECIMAL") 
+    else:   
+        print("ERROR: FLOAT seems comparable with DECIMAL") 
+except Exception as e:  
+    print("OK: FLOAT is NOT comparable with DECIMAL")
+</code></pre><p>以上代码是将<a href="https://docs.python.org/2/library/decimal.html#decimal-objects">Decimal</a>实例和浮点值进行比较，在不同Python版本中如果无法比较则用except捕获异常，输出情况为：</p><ul><li><p>在<strong>Python 2.6.5, 2.7.4, 2.7.10</strong>中输出<em>ERROR: FLOAT seems comparable with DECIMAL</em> <strong>(WRONG)</strong></p></li><li><p>在<strong>Python 3.1.2</strong>中输出<em>OK: FLOAT is NOT comparable with DECIMAL</em> <strong>(CORRECT)</strong></p></li></ul><h2>Type Comparsion</h2><pre><code>#!python
+try:    
+    # STRING 1234567890 
+    x = "1234567890"    
+    # FLOAT '1172837167.27' 
+    y = 1172837136.0800 
+    if y &gt; x:   
+        print("ERROR: FLOAT seems comparable with STRING")  
+    else:   
+        print("ERROR: FLOAT seems comparable with STRING")  
+except Exception as e:  
+    print("OK: FLOAT is NOT comparable with STRING")
+</code></pre><p>以上代码是将字符串和浮点值进行比较，在不同Python版本中如果无法比较则用except捕获异常，输出情况为：</p><ul><li><p>在<strong>Python 2.6.5, 2.7.4, 2.7.10</strong>中输出<em>ERROR: FLOAT seems comparable with STRING</em> <strong>(WRONG)</strong></p></li><li><p>在<strong>Python 3.1.2</strong>中输出<em>OK: FLOAT is NOT comparable with STRING</em> <strong>(CORRECT)</strong></p></li></ul><p>在使用同一种类型的对象进行比较之后，Python内置的比较函数就不会进行检验。但在以上两个代码例子当中Python并不知道该如何把STRING和FLOAT进行比较，就会直接返回一个FALSE而不是产生一个Error。同样的问题也发生于在将DECIMAL和FLOATS时。解决方案就是使用强类型（strong type）检测和数据验证。</p><h1>0x03 Strings —> input, eval, codecs, os, ctypes</h1><hr><h2>eval()</h2><pre><code>#!python
+import os   
+try:    
+    # Linux/Unix    
+    eval("__import__('os').system('clear')", {})    
+    # Windows   
+    #eval("__import__('os').system(cls')", {})  
+    print "Module OS loaded by eval"    
+except Exception as e:  
+    print repr(e)
+</code></pre><p>关于<code>eval()</code>函数，<a href="http://drops.wooyun.org/tips/7710">Python中eval带来的潜在风险</a>这篇文章也有提到过，使用<code>__import__</code>导入<code>os</code>,再结合eval()就可以执行命令了。只要用户加载了解释器就可以没有限制地<strong>执行任何命令</strong>。</p><h2>input()</h2><pre><code>#!python
+Secret = "42"       
+
+value = input("Answer to everything is ? ")     
+
+print "The answer to everything is %s" % (value,)
+</code></pre><p>在以上的代码中input()会接受原始输入，如何这里用户传入一个dir()再结合print，就会执行<code>dir()</code>的功能返回一个对象的<strong>大部分</strong>属性：</p><pre><code>#!python
+Answer to everything is ? dir() 
+The answer to everything is 
+[‘Secret’, '__builtins__', '__doc__', '__file__', '__name__',
+'__package__']
+</code></pre><p>我在这里看到了有一个<strong>Secret</strong>对象，然后借助原来程序的功能就可以得到该值：</p><pre><code>#!python
+Answer to everything is ? Secret    
+The answer to everything is 42
+</code></pre><h2>codecs</h2><pre><code>#!python
+import codecs   
+import io       
+
+b = b'\x41\xF5\x42\x43\xF4' 
+print("Correct-String %r") % ((repr(b.decode('utf8', 'replace'))))      
+
+with open('temp.bin', 'wb') as fout:    
+    fout.write(b)   
+with codecs.open('temp.bin', encoding='utf8', errors='replace') as fin:
+    print("CODECS-String %r") % (repr(fin.read()))  
+with io.open('temp.bin', 'rt', encoding='utf8', errors='replace') as fin:
+    print("IO-String %r") % (repr(fin.read()))
+</code></pre><p>以上的代码将<code>\x41\xF5\x42\x43\xF4</code>以二进制的形式写入文件，再分别用<code>codecs</code>和<code>io</code>模块进行读取，编码形式为utf-8，对<code>\xF5</code>和<code>\xF4</code>不能编码的设置<code>errors='replace'</code>，编码成为<code>\\ufffd</code>，最后结果如下：</p><pre><code>Correct-String —&gt; "u'A\\ufffdBC\\ufffd'"
+CODECS-String —&gt; "u'A\\ufffdBC'" (WRONG)
+IO-String —&gt; "u'A\\ufffdBC\\ufffd'" (OK)
+</code></pre><p>当<strong>codecs</strong>在读取<code>\x41\xF5\x42\x43\xF4</code>这个字符串的时候，它期望接收到包含4个字节的序列，而且因为在读入<code>\xF4</code>的时候它还会再等待其他3个字节，而没有进行编码，结果就是得到的字符串有一段被<strong>删除</strong>了。更好且安全的方法就是使用<code>os</code>模块，读取整个数据流，然后进行解码处理。解决方案就是使用<code>io</code>模块或者对字符串进行识别和确认来检测畸形字符。</p><h2>os</h2><pre><code>#!python
+import os   
+os.environ['a=b'] = 'c' 
+try:    
+    os.environ.clear()  
+    print("PASS =&gt; os.environ.clear removed variable 'a=b'")    
+except: 
+    print("FAIL =&gt; os.environ.clear removed variable 'a=b'")    
+    raise
+</code></pre><p>在不同的平台上，环境变量名的名称和语法都是基于不同的规则。但Python并<strong>不</strong>遵守同样的逻辑，它尽量使用一种普遍的接口来兼容大多数的操作系统。这种<strong>重视兼容性大于安全</strong>的选择，使得用于环境变量的逻辑存在缺陷。</p><pre><code>#!bash
+$ env -i =value python -c 'import pprint, os;
+pprint.pprint(os.environ); del os.environ[""]'      
+
+environ({'': 'value'})  
+Traceback (most recent call last):  
+    File "&lt;string&gt;", line 1, in &lt;module&gt;    
+    File "Lib/os.py", line 662, in __delitem__  
+        self.unsetenv(encodedkey)   
+OSError: [Errno 22] Invalid argument
+</code></pre><p>上面的代码使用<code>env -i</code>以一个空的环境开始，再设置一个键为空值为value的环境变量，使用python打印出来再删除。这样就可以定义一个键为空的环境变量了，也可以设置在键名中包含"="，但是会无法<strong>移除</strong>它：</p><pre><code>#!bash
+$ env -i python -c 'import pprint, posix, os;
+os.environ["a="]="1"; print(os.environ); posix.unsetenv("a=")'      
+
+environ({'a=': ‘1'})    
+Traceback (most recent call last):  
+    File "&lt;string&gt;", line 1, in &lt;module&gt;    
+OSError: [Errno 22] Invalid argument
+</code></pre><p>根据不同的版本，Python也会有不同的反应：</p><ul><li>Python 2.6 —> <strong>NO ERRORS</strong>，允许无效操作！</li><li>PYTHON 2.7 —> <em>OSError: [Errno 22] Invalid argument</em></li><li>PYTHON 3.1 —> <strong>NO ERRORS</strong>，允许无效操作！</li></ul><p>解决方案是对基础设施和操作系统进行检测，检测和环境变量相关的键值对，阻止一些对操作系统为空或者无效键值对的使用。</p><h2>ctypes</h2><pre><code>#!python
+buffer=ctypes.create_string_buffer(8)       
+
+buffer.value='a\0bc1234'        
+
+print "Original value =&gt; %r" % (buffer.raw,)    
+print "Interpreted value =&gt; %r" % (buffer.value,)
+</code></pre><p>ctypes模块在包含空字符的字符串中会产生<strong>截断</strong>，上面代码输出如下：</p><pre><code>Original value =&gt; 'a\x00bc1234' 
+Interpreted value =&gt; 'a'
+</code></pre><p>这一点和C处理字符串是一样的，会把空字符作为一行的终止。Python在这种情况下使用<code>ctypes</code>，就会继承相同的逻辑，所以字符串就被截断了。解决方案就是对数据进行确认，删除字符串中的空字符来保护字符串或者是禁止使用<code>ctypes</code>。</p><h2>Python Interpreter</h2><pre><code>#!python
+try:    
+    if 0:   
+        yield 5 
+    print("T1-FAIL")    
+except Exception as e:  
+    print("T1-PASS")    
+    pass        
+
+try:    
+    if False:   
+        yield 5 
+    print("T2-FAIL")    
+except Exception as e:  
+    print(repr(e))  
+    pass
+</code></pre><p>以上的测试代码应该返回一个语法错误：<em>SyntaxError: 'yield' outside function</em>。在不同版本的Python上运行结果如下：</p><p><img alt="" img-src="46a307ca828770f282fbe11a87e587ba905d5b6f.jpg"></p><p>这个问题在最新的Python 2.7.x版本中已经解决，而且避免使用像"<strong>if 0:</strong>"，"<strong>if False:</strong>"，"<strong>while 0:</strong>"，"<strong>while False:</strong>"之类的结构。</p><h1>0x04 Files —> sys, os, io, pickle, cpickl</h1><hr><h2>pickle</h2><pre><code>#!python
+import pickle   
+import io   
+badstring = "cos\nsystem\n(S'ls -la /'\ntR."    
+badfile = "./pickle.sec"    
+with io.open(badfile, 'wb') as w:   
+    w.write(badstring)  
+obj = pickle.load(open(badfile))    
+print "== Object =="    
+print repr(obj)
+</code></pre><p>这里构造恶意序列化字符串，以二进制的形式写入文件中，使用<code>pickle.load()</code>函数加载进行反序列化，还原出原始python对象，从而使用os的<code>system()</code>函数来执行命令"<code>ls -la /</code>"。由于<code>pickle</code>这样<strong>不</strong>安全的设计，就可以借此来<strong>执行命令</strong>了。代码输出结果如下：</p><ul><li><p>Linux</p><pre><code>total 104
+drwxr-xr-x  23 root root  4096 Oct 20 11:19 .
+drwxr-xr-x  23 root root  4096 Oct 20 11:19 ..
+drwxr-xr-x   2 root root  4096 Oct  4 00:05 bin
+drwxr-xr-x   4 root root  4096 Oct  4 00:07 boot
+...
+</code></pre></li><li><p>Mac OS X</p><pre><code>total 16492 
+drwxr-xr-x    31 root wheel     1122 12 Oct 18:58 . 
+drwxr-xr-x    31 root wheel     1122 12 Oct 18:58 ..    
+drwxrwxr-x+  122 root wheel     4148 10 Oct 15:19 Applications
+drwxr-xr-x+   68 root wheel     2312  3 Sep 10:47 Library
+...
+</code></pre></li></ul><h2>pickle / cPickle</h2><pre><code>#!python
+import cPickle  
+import traceback    
+import sys  
+# bignum = int((2**31)-1) # 2147483647 -&gt; OK    
+bignum = int(2**31) # 2147483648 -&gt; Max 32bit -&gt; Crash  
+random_string = os.urandom(bignum)  
+print ("STRING-LENGTH-1=%r") % (len(random_string)) 
+fout = open('test.pickle', 'wb')    
+try:    
+    cPickle.dump(random_string, fout)   
+except Exception as e:  
+    print "###### ERROR-WRITE ######"   
+    print sys.exc_info()[0] 
+    raise   
+fout.close()    
+fin = open('test.pickle', 'rb') 
+try:    
+    random_string2 = cPickle.load(fin)  
+except Exception as e:  
+    print "###### ERROR-READ ######"    
+    print sys.exc_info()[0] 
+    raise   
+print ("STRING-LENGTH-2=%r") % (len(random_string2))    
+print random_string == random_string2   
+sys.exit(0)
+</code></pre><p>在上面的代码中，根据使用的Python版本不同，<code>pickle</code>或<code>cPickle</code>要么保存截断的数据而没有错误要么就会保存限制为32bit的部分。而且根据Python在操作系统上安装时编译的情况，它会返回在请求随机数据大小上的错误，或者是报告无效参数的OS错误：</p><ul><li><p>cPickle (debian 7 x64)</p><pre><code>#!python
+STRING-LENGTH-1=2147483648  
+###### ERROR-WRITE ######   
+&lt;type 'exceptions.MemoryError'&gt; 
+Traceback (most recent call last):  
+....    
+    pickle.dump(random_string, fout)    
+SystemError: error return without exception set
+</code></pre></li><li><p>pickle (debian 7 x64)</p><pre><code>#!python
+STRING-LENGTH-1=2147483648  
+###### ERROR-WRITE ######   
+&lt;type 'exceptions.MemoryError'&gt; 
+Traceback (most recent call last):  
+....    
+File "/usr/lib/python2.7/pickle.py", line 488,
+in save_string
+self.write(STRING + repr(obj)+ '\n')    
+MemoryError
+</code></pre></li></ul><p>解决方案就是执行强大的数据检测来确保不会执行危险行为，还有即使在64位的操作系统上也要限制数据到32位大小。</p><h2>File Open</h2><pre><code>#!python
+import os   
+import sys  
+FPATH = 'bug2091.test'  
+# ==========================    
+print 'wa (1)_write1'   
+with open(FPATH, 'wa') as fp:   
+    fp.write('test1-')  
+with open(FPATH, 'rb') as fp:   
+    print repr(fp.read())   
+# ==========================    
+print 'rU+_write2'  
+with open(FPATH, 'rU+') as fp:  
+    fp.write('test2-')  
+with open(FPATH, 'rb') as fp:   
+    print repr(fp.read())   
+# ==========================    
+print 'wa (2)_write3'   
+with open(FPATH, 'wa+') as fp:  
+    fp.write('test3-')  
+with open(FPATH, 'rb') as fp:   
+    print repr(fp.read())   
+# ==========================    
+print 'aw_write4'   
+with open(FPATH, 'aw') as fp:   
+    fp.write('test4-')  
+with open(FPATH, 'rb') as fp:   
+    print repr(fp.read())   
+# ==========================    
+print 'rU+_read1',  
+with open(FPATH, 'rU+') as fp:  
+    print repr(fp.read())   
+# ==========================    
+print 'read_2', 
+with open(FPATH, 'read') as fp: 
+    print repr(fp.read())   
+# ==========================    
+os.unlink(FPATH)    
+sys.exit(0)
+</code></pre><p>以上代码主要是测试各种文件的打开模式，其中<code>U</code>是指以统一的换行模式打开（不赞成使用），各个平台的测试结果如下：</p><ul><li><p>Linux and Mac OS X</p><p><img alt="" img-src="03b1b919b56e45e977cb1e35e6feb36bcc7dfe90.jpg"></p></li><li><p>Windows</p><p><img alt="" img-src="5ee8109134d8666f35e4437a05580e14bb4e3cf9.jpg"></p></li></ul><h3>INVALID stream operations - Linux / OS X</h3><pre><code>#!python
+import sys  
+import io   
+fd = io.open(sys.stdout.fileno(), 'wb') 
+fd.close()  
+try:    
+    sys.stdout.write("test for error")  
+except Exception:   
+    raise
+</code></pre><p>代码在这里使用<a href="https://docs.python.org/2/library/stdtypes.html?highlight=fileno#file.fileno">fileno()</a>来获取<code>sys.stdout</code>的文件描述符，在读写后就关闭，之后便无法从标准输入往标准输出中发送数据流了。输出如下：</p><ul><li><p>在<strong>Python 2.6.5, 2.7.4</strong>中</p><pre><code>#!python
+close failed in file object destructor: 
+sys.excepthook is missing   
+lost sys.stderr
+</code></pre></li><li><p>在<strong>Python 2.7.10</strong>中</p><pre><code>#!python
+Traceback (most recent call last):  
+    File "tester.py", line 6, in &lt;module&gt;   
+        sys.stdout.write("test for error")  
+IOError: [Errno 9] Bad file descriptor
+</code></pre></li></ul><h3>INVALID stream operations - Windows</h3><pre><code>#!python
+import io
+import sys    
+
+fd = io.open(sys.stdout.fileno(), 'wb')
+fd.close()
+sys.stdout.write(“Crash")
+</code></pre><p>在windows上也是类似的，如图：</p><p><img alt="" img-src="d3fec3647d868b05e872d5483b27e216748dbedf.jpg"></p><p>解决方案就是file和stream库虽然不遵循OS规范，但它们使用一个通用的逻辑，有必要为每个OS使用有处理能力的库，来设置正确的调用过程。</p><h2>File Write</h2><pre><code>#!python
+import os
+import sys  
+testfile = 'tempA'  
+with open(testfile, "ab") as f: 
+    f.write(b"abcd")    
+    f.write(b"x" * (1024 ** 2)) 
+#########################################   
+import io   
+testfilea = 'tempB' 
+with io.open(testfilea, "ab") as f: 
+    f.write(b"abcd")    
+    f.write(b"x" * (1024 ** 2))
+</code></pre><p>我们在Linux上使用<code>strace python -OOBRttu script.py</code>来检测Python的写文件行为：</p><p>在这里我们想要写入的字符数目是<code>4 + 1048576 = 1048580</code>，在不同的版本上对调用<code>open()</code>和使用<code>io</code>模块进行比较：</p><ul><li><p><strong>PYTHON 2.6</strong></p><ul><li><p>调用<code>open()</code>的输出为：</p><pre><code>write(3, "abcdxxxxxxxxxxxxxxxxxxxxxxxxxxxx"..., 4096) = 4096
+write(3, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"..., 1044480) = 1044480
+</code></pre><p>第一次调用的时候被缓冲，不仅仅是写入了4个字符（<code>abcd</code>），还写入了4092个<code>x</code>；第2次调用总共写入1044480个<code>x</code>。这样加起来<code>1044480 + 4096 = 1.048.576</code>，相比1048580就<strong>少了4个</strong><code>x</code>。等待5秒就可以解决这个问题，因为操作系统flush了缓存。</p></li><li><p>调用<code>io</code>模块的输出为：</p><pre><code>write(3, "abcd", 4)                     = 4
+write(3, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"..., 1048576) = 1048576
+</code></pre><p>这样一切就很正常</p></li></ul></li><li><p><strong>PYTHON 2.7</strong></p><ul><li><p>用<code>open()</code>的输出为：</p><pre><code>write(3, "abcdxxxxxxxxxxxxxxxxxxxxxxxxxxxx"..., 4096) = 4.096
+write(3, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"..., 1044480) = 1.044.480
+write(3, "xxxx", 4) = 4
+</code></pre><p>在这里进行了三次调用，最后再写入4个<code>x</code>，保证整体数据的正确性。问题就在于这里使用了<strong>3次调用</strong>而不是我们预期的2次调用。</p></li><li><p>调用<code>io</code>模块则一切正常</p></li></ul></li><li><p><strong>PYTHON 3.x</strong></p><p>在Python3中用<code>open()</code>函数和<code>io</code>模块则一切都很正常</p></li></ul><p>在Python2中没有包含原子操作，核心库是在使用缓存进行读写。所以应该尽量去使用<code>io</code>模块。</p><h1>0x05 Protocols —> socket, poplib, urllib, urllib2</h1><hr><h2>httplib, smtplib, ftplib...</h2><p>核心库是独立于操作系统的，开发者必须要知道如何为每一个操作系统构建合适的通信通道，而且这些库将会运行执行那些不安全且不正确的操作</p><pre><code>#!python
+import SimpleHTTPServer 
+httplib, smtplib, ftplib...
+import SocketServer 
+PORT = 45678    
+def do_GET(self):   
+    self.send_response(200) 
+    self.end_headers()  
+Handler = SimpleHTTPServer.SimpleHTTPRequestHandler 
+Handler.do_GET = do_GET 
+httpd = SocketServer.TCPServer(("", PORT), Handler) 
+httpd.serve_forever()
+</code></pre><p>在上面的代码中构造了一个HTTP服务端，如果一个客户端连接进来，再去关闭服务端，Python将<strong>不会</strong>释放资源，操作系统也<strong>不会</strong>释放socket，引发报错为<em>socket.error: [Errno 48] Address already in use</em>。可以通过以下代码来解决：</p><pre><code>#!python
+import socket   
+import SimpleHTTPServer 
+import SocketServer 
+PORT = 8080 
+# ESSENTIAL: socket resuse is setup BEFORE it is bound. 
+# This will avoid TIME_WAIT issues and socket in use errors 
+class MyTCPServer(SocketServer.TCPServer):  
+    def server_bind(self):  
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   
+        self.socket.bind(self.server_address)   
+def do_GET(self):   
+    self.send_response(200) 
+    self.end_headers()  
+Handler = SimpleHTTPServer.SimpleHTTPRequestHandler 
+Handler.do_GET = do_GET 
+httpd = MyTCPServer(("", PORT), Handler)    
+httpd.serve_forever()
+</code></pre><p>解决方案就是每一个协议库都应该由这样的库封装：为每一个OS和协议都适当地建立和撤销通信，并释放资源</p><h2>poplib, httplib ...</h2><p>服务端：</p><pre><code>#!python
+import socket   
+HOST = '127.0.0.1'  
+PORT = 45678    
+NULLS = '\0' * (1024 * 1024) # 1 MB 
+try:    
+    sock = socket.socket()  
+    sock.bind((HOST, PORT)) 
+    sock.listen(1)  
+    while 1:    
+        print "Waiting connection..."   
+        conn, _ = sock.accept() 
+        print "Sending welcome..."  
+        conn.sendall("+OK THIS IS A TEST\r\n")  
+        conn.recv(4096) 
+        DATA = NULLS    
+        try:    
+            while 1:    
+                print "Sending 1 GB..." 
+                for _ in xrange(1024):  
+                    conn.sendall(DATA)  
+        except IOError, ex: 
+            print "Error: %r" % str(ex) 
+        print "End session."    
+        print   
+finally:    
+    sock.close()    
+print "End server."
+</code></pre><p>客户端：</p><pre><code>#!python
+import poplib   
+import sys  
+HOST = '127.0.0.1'  
+PORT = 45678    
+try:    
+    print "Connecting to %r:%d..." % (HOST, PORT)   
+    pop = poplib.POP3(HOST, PORT)   
+    print "Welcome:", repr(pop.welcome) 
+    print "Listing..."  
+    reply = pop.list()  
+    print "LIST:", repr(reply)  
+except Exception, ex:   
+    print "Error: %r" % str(ex) 
+print "End."    
+sys.exit(0)
+</code></pre><p>以上代码当中，首先开启一个虚拟的服务端，使用客户端去连接服务端，然后服务端开始发送空字符，客户端持续性接收空字符，最后到客户端<strong>内存填满，系统崩溃</strong>，输出如下：</p><ul><li><p>服务端</p><pre><code>#!python
+Waiting connection...   
+Sending welcome...  
+Sending 1 GB... 
+Error: '[Errno 54] Connection reset by peer'    
+End session.
+</code></pre></li><li><p>客户端</p><ul><li><p><strong>Python >= 2.7.9, 3.3</strong></p><pre><code>#!python
+Connecting to '127.0.0.1':45678...  
+Welcome: '+OK THIS IS A TEST'   
+Listing...  
+Error: 'line too long'  
+End.
+</code></pre></li><li><p><strong>Python &lt; 2.7.9, 3.3</strong></p><pre><code>#!python
+Client!
+Connecting to '127.0.0.1':45678...  
+Welcome: '+OK THIS IS A TEST'   
+........    
+Error: 'out of memory'
+</code></pre></li></ul></li></ul><p>解决方案就是如果无法控制检查数据的类型和大小，就使用Python > 2.7.9'或者'Python > 3.3'的版本</p><p>对数据没有进行限制的库：</p><p><img alt="" img-src="7e7673707ffc8ab96211f6e9e8e9fa72746fef9c.jpg"></p><h2>urllib, urllib2</h2><pre><code>#!python
+import io   
+import os   
+import urllib2 #but all fine with urllib    
+domain = 'ftp://ftp.ripe.net'   
+location = '/pub/stats/ripencc/'    
+file = 'delegated-ripencc-extended-latest'  
+url = domain + location + file  
+data = urllib2.urlopen(url).read()  
+with io.open(file, 'wb') as w:  
+    w.write(data)   
+file_size = os.stat(file).st_size   
+print "Filesize: %s" % (file_size)
+</code></pre><p><code>urllib2</code>并没有合适的逻辑来处理数据流而且每次都会失败，将上次代码运行三次都会得到错误的文件大小的输出：</p><pre><code>Filesize: 65536
+Filesize: 32768
+Filesize: 49152
+</code></pre><p>如果使用以下的代码则会产生正确的输出：</p><pre><code>#!python
+import os   
+import io   
+import urllib2  
+domain = 'ftp://ftp.ripe.net'   
+location = '/pub/stats/ripencc/'    
+file = 'delegated-ripencc-extended-latest'  
+with io.open(file, 'wb') as w:  
+    url = domain + location + file  
+    response = urllib2.urlopen(url) 
+    data = response.read()  
+    w.write(data)   
+file_size = os.stat(file).st_size   
+print "Filesize: %s" % (file_size)
+</code></pre><p>输出为：</p><pre><code>Filesize: 6598450
+Filesize: 6598450
+Filesize: 6598450
+</code></pre><p>通过以上的例子可以看出，解决方案为利用操作系统来保证数据流的正确性</p><p>已知不安全的库：</p><p><img alt="" img-src="b41be0e0e3e9917b5b6a139638a0eb5b15bd855c.jpg"></p><p>最后，当数百万人在使用它的时候，永远不要以为它会一直按你期望的那样运作，也绝对不要以为在使用它的时候是安全的</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2420" rel="bookmark" id="re1">下载文件的15种方法</a></li><li><a href="http://drops.wooyun.org/tips/2719" rel="bookmark" id="re2">从内存中窃取未加密的SSH-agent密钥</a></li><li><a href="http://drops.wooyun.org/tips/1951" rel="bookmark" id="re3">渗透技巧之SSH篇</a></li><li><a href="http://drops.wooyun.org/tips/4715" rel="bookmark" id="re4">如何发现 NTP 放大攻击漏洞</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ubuntu</span> <span class="reply-time">2015-11-12 17:54:20</span></div><p></p><p>先顶再看</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zkc</span> <span class="reply-time">2015-11-12 17:30:30</span></div><p></p><p>这些大部分都是历史性的安全问题。<br>应该给回个完整的原 PDF 结尾评论：</p><p>&gt; Closing comments:<br>&gt;<br>&gt; • Python is a great language, we like it very much and we will keep using it.<br>&gt; • Everything used to make this slides has been in the public domain for years, is just difficult to find.<br>&gt; • Do NOT assume something is working as it should just because millions of people are using it, and definitely do NOT assume is doing it safely.</p><p>应该在此文章结尾处也给出原 PDF 最后附上的项目地址吧：<br>OWASP Python Security project<br>https://github.com/ebranca/owasp-pysec/wiki</p><p>然后这个项目已经好久没有更新了，特别是 wiki</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2015-11-12 16:45:05</span></div><p></p><p>先顶再看</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2015-11-12 15:38:01</span></div><p></p><p>先支持再细看</p><p></p></div></div></div></div></div></main>

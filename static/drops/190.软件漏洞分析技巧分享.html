@@ -1,0 +1,189 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">软件漏洞分析技巧分享</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">腾讯安全中心</a> <span class="bull">·</span> <time title="2014/03/20 11:03" ui-time="" datetime="2014/03/20 11:03" class="published ng-binding ng-isolate-scope">2014/03/20 11:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>作者：riusksk</p><h2>0x00 背景</h2><hr><p>在日常分析软件漏洞时，经常需要耗费比较长的分析时间，少则几小时，多则数天，甚至更久。因此，经常总结一些分析技巧是非常有必要的，针对不同的漏洞类型采取不同的分析思路和技巧，可以有效地提高分析速度。对于一些被曝出来的热门0day，网上一般都会有分析文章，但一般都是“结论性分析”，也就是直接帖漏洞代码，指出哪里出错，而非“思路性分析”。如果你经常分析漏洞的话，会发现占用你分析时间的往往不是分析漏洞代码，而是定位漏洞代码。所以说，调试分析漏洞有时就是看下断点下得准不，再加上一些胡猜乱想来推测，最后才是分析漏洞代码了，如果熟悉汇编指令，这个就不是问题了。</p><p>下面是笔者就以往分析过的若干实例漏洞，总结出的一些小技巧。不过，技巧甚多，篇幅有限，此处仅列举一些比较个人常用的方法，也欢迎各位分享自己的一些分析技巧，大家共同学习探讨。</p><h2>0x01 技巧</h2><hr><h3>技巧一：快速定位JS代码调用的IE类成员函数</h3><p>CVE-2011-0027 Microsoft Data Access组件整数溢出漏洞是Pwn2Own 2010黑客大赛中被用来攻破IE8浏览器的漏洞，其中关键的漏洞触发代码如下：</p><pre><code>#!js
+localxmlid1 = document.getElementById('xmlid1').recordset; // 获取xml元素xmlid1的recordset，即数据库表的记录集
+localxmlid1.CacheSize = 0x40000358; // 设置能够被保存的记录条数，此值最终造成整数溢出
+</code></pre><p>现在我们就介绍一种快速定位上述两行代码将对应调用的IE类成员函数，首先用IDA加载漏洞文件msado15.dll，并允许加载微软符号表，然后选中“Function name”一栏，按“Alt + T”快捷键弹出搜索框，输入搜索关键字“cachesize”：</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="350" height="105" border="0" img-src="6a593b6e15454f5853903186d4623c94fcab4d29.jpg"></p><p>通过按“Ctrl+T”可继续搜索下一个，最后找到两个相关函数：</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="380" height="535" border="0" img-src="480d90681b462057ad6932e5e6c56b0448a3b0d2.jpg"></p><p>根据函数名猜测下面的函数可能就是用于设置和获取cachesize属性值的：</p><pre><code>#!cpp
+CRecordset::put*CacheSize(long *)
+CRocordset::get*CacheSize(long)
+</code></pre><p>我们对<code>CRecordset::put_CacheSize</code>下断点验证下前面的猜测，用Windbg附加IE进程运行后打开poc.html，确实断在put_CacheSize，通过查看参数可以看到poc.html中设置的CacheSize值0x40000358，说明<code>CRecordset::put_CacheSize</code>确实是设置CacheSize值的函数：</p><pre><code>#!bash
+0:005&gt; g
+Breakpoint 1 hit
+eax=40000358 ebx=04bdcfd8 ecx=6e61d340 edx=00000000 esi=01fbf144 edi=00000000
+eip=6e6ac957 esp=01fbeb58 ebp=01fbf040 iopl=0         nv up ei pl zr na pe nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000246
+msado15!CRecordset::put_CacheSize:
+6e6ac957 8bff            mov     edi,edi
+0:005&gt; dd esp
+01fbeb58  6e62f3ec 04bdcfd8 40000358 00000000
+01fbeb68  01fbf074 04bdcfd8 11000011 00000000
+01fbeb78  03570ae8 004ad070 00538a30 00000088
+01fbeb88  00470000 00000002 03570760 01fbec84
+01fbeb98  76fc3193 00470138 76fc316f 764736b8
+01fbeba8  00000000 00470000 03570768 00518a78
+01fbebb8  004767b8 004768e4 00559258 00476db8
+01fbebc8  76f8d74d 0051d968 00472a98 01fbedc0
+</code></pre><p>说明 localxmlid1.CacheSize = 0x40000358 这行设置CacheSize的JS代码对应调用的就是CRecordset::put_CacheSize 函数。采用同类方法也很容易确认 document.getElementById('xmlid1').recordset 调用的是CGenericElement::get_recordset函数，各位朋友可以自己动手试下。</p><h3>技巧二：通过页堆快速定位堆漏洞代码</h3><p>页堆是windows 2000 引入的调试支持功能，简称DPH（Debug Page Heap），启用该机制后，堆管理器会在堆块后增加专门用于检测溢出的栅栏页，当数据溢出触及栅栏页便会立刻触发异常，此时往往就是触发漏洞的最及时的位置，它不仅适用于堆溢出，对于其它类型的堆漏洞也是适用的。</p><p>以CVE-2013-0077 微软DirectShow堆溢出漏洞为例，通过以下命令开启页堆（gflags）：</p><pre><code>#!bash
+gflags.exe –i player.exe +hpa 
+</code></pre><p>开启页堆hpa后，重新附加运行后，在复制数据到堆边界时断下：</p><pre><code>#!bash
+(4b8.358): Access violation - code c0000005 (first chance)
+First chance exceptions are reported before any exception handling.
+This exception may be expected and handled.
+eax=000000c3 ebx=003fac98 ecx=00000003 edx=000000f7 esi=001bbdd4 edi=003fb000
+eip=7d0706d0 esp=02a5f650 ebp=02a5f658 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=0038  gs=0000             efl=00010202
+quartz!ParseSequenceHeader+0x114:
+7d0706d0 f3a5            rep movs dword ptr es:[edi],dword ptr [esi]
+</code></pre><p>上面就是断在复制数据导致溢出的指令，通过分析其所在函数往往很容易定位漏洞代码。如果不开启页堆，直接以默认形式调试的话，你会发现是断在以下指令：</p><pre><code>#!bash
+(4c8.6bc): Access violation - code c0000005 (first chance)
+First chance exceptions are reported before any exception handling.
+This exception may be expected and handled.
+eax=41414141 ebx=003f0000 ecx=41414141 edx=03128e40 esi=03128e38 edi=00000012
+eip=7c930efe esp=0465f998 ebp=0465fbb8 iopl=0         nv up ei pl zr na pe nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00010246
+ntdll!RtlAllocateHeap+0x653:
+7c930efe 8b39            mov     edi,dword ptr [ecx]  ds:0023:41414141=????????
+</code></pre><p>这已经是堆溢出后导致的内存读取异常了，不再是触发漏洞时最原始的场景了。因此开启页堆后，会更方便你去定位漏洞代码。</p><h3>技巧三：基于堆分配记录定位整数溢出漏洞代码</h3><p>以CVE-2011-0027 Microsoft Data Access组件整数溢出漏洞为例，这个漏洞就是在Pwn2Own 2010黑客大赛中，荷兰黑客Peter Vreugdenhil利用它来攻破Win7上的IE8浏览器的。</p><p>下面是打开poc.html后的异常情况：</p><pre><code>#!bash
+(7b8.278): Access violation - code c0000005 (first chance)
+First chance exceptions are reported before any exception handling.
+This exception may be expected and handled.
+eax=0000036b ebx=0000035b ecx=00000000 edx=00000001 esi=088c8000 edi=00000000
+eip=6887746f esp=044dee84 ebp=044dee88 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00010202
+mshtml!CImpIRowset::HRowNumber2HROWQuiet+0x23:
+6887746f 8906            mov     dword ptr [esi],eax  ds:0023:088c8000=????????
+0:005&gt; !heap -p -a 088c8000
+    address 088c8000 found in
+    _DPH_HEAP_ROOT @ 8821000
+    in busy allocation (  DPH_HEAP_BLOCK:         UserAddr         UserSize -         VirtAddr         VirtSize)
+                                 88227ec:          88c7298              d64 -          88c7000             2000
+    72eb8e89 verifier!AVrfDebugPageHeapAllocate+0x00000229
+    77034ea6 ntdll!RtlDebugAllocateHeap+0x00000030
+    76ff7d96 ntdll!RtlpAllocateHeap+0x000000c4
+    76fc34ca ntdll!RtlAllocateHeap+0x0000023a
+    730d975d MSDART!MpHeapAlloc+0x00000029
+    6e5406e7 msado15!CRecordGroup::AllocateHRowRange+0x00000085
+    6e540650 msado15!CRecordset::PrepareForFetch+0x000000e2
+    6e5d44ae msado15!CRecordset::MoveAbsolute+0x000003e3
+    6e5680a5 msado15!CRecordset::_MoveFirst+0x0000007d
+    6e5d7957 msado15!CRecordset::MoveFirst+0x00000221
+    6e54fde6 msado15!CRecordset::Invoke+0x00001560
+    71dcdb38 jscript!IDispatchInvoke2+0x000000f0
+    71dcda8c jscript!IDispatchInvoke+0x0000006a
+    71dcd9ff jscript!InvokeDispatch+0x000000a9
+    71dcdb8a jscript!VAR::InvokeByName+0x00000093
+    71dcd8c8 jscript!VAR::InvokeDispName+0x0000007d
+    71dcd96f jscript!VAR::InvokeByDispID+0x000000ce
+    71dce3e7 jscript!CScriptRuntime::Run+0x00002b80
+    71dc5c9d jscript!ScrFncObj::CallWithFrameOnStack+0x000000ce
+    71dc5bfb jscript!ScrFncObj::Call+0x0000008d
+    71dc5e11 jscript!CSession::Execute+0x0000015f
+    71dbf3ee jscript!NameTbl::InvokeDef+0x000001b5
+    71dbea2e jscript!NameTbl::InvokeEx+0x0000012c
+    71db96de jscript!NameTbl::Invoke+0x00000070
+    685aaa7b mshtml!CWindow::ExecuteTimeoutScript+0x00000087
+    685aab66 mshtml!CWindow::FireTimeOut+0x000000b6
+    685d6af7 mshtml!CStackPtrAry&lt;unsigned long,12&gt;::GetStackSize+0x000000b6
+    685d1e57 mshtml!GlobalWndProc+0x00000183
+    770e86ef USER32!InternalCallWinProc+0x00000023
+    770e8876 USER32!UserCallWinProcCheckWow+0x0000014b
+    770e89b5 USER32!DispatchMessageWorker+0x0000035e
+    770e8e9c USER32!DispatchMessageW+0x0000000f
+</code></pre><p>根据上面异常的信息，可以知道程序是在向地址为0x88c7298，大小0xd64的堆块写入数据时造成堆溢出了。再根据!heap命令中返回的栈回溯信息可以知道，被溢出的堆块是在<code>CRecordset::MoveFirst</code>函数中调用MpHeapAlloc函数分配的，调用该分配函数的上层函数是<code>CRecordGroup::AllocateHRowRange</code>，对此函数下断，跟进后：</p><pre><code>#!bash
+Breakpoint 0 hit
+eax=00000001 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=40000358
+eip=69da06be esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl zr na pe nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000246
+msado15!CRecordGroup::AllocateHRowRange+0x5e:
+69da06be 85ff            test    edi,edi
+0:005&gt; p
+eax=00000001 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=40000358
+eip=69da06c0 esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x60:
+69da06c0 0f8e34380200    jle     msado15!CRecordGroup::AllocateHRowRange+0x62 (69dc3efa) [br=0]
+0:005&gt; p
+eax=00000001 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=40000358
+eip=69da06c6 esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x64:
+69da06c6 8bc7            mov     eax,edi    // eax = edi = 0x40000358，即CacheSize
+0:005&gt; p
+eax=40000358 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=40000358
+eip=69da06c8 esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x66:
+69da06c8 8b3dfc10d969    mov     edi,dword ptr [msado15!_imp__MpHeapAlloc (69d910fc)] ds:0023:69d910fc={MSDART!MpHeapAlloc (72de9730)}
+0:005&gt; p
+eax=40000358 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06ce esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x6c:
+69da06ce 89460c          mov     dword ptr [esi+0Ch],eax ds:0023:09759d7c=00000000
+0:005&gt; p
+eax=40000358 ebx=40000358 ecx=76fc316f edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06d1 esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x6f:
+69da06d1 8b0d10f0e569    mov     ecx,dword ptr [msado15!g_hHeapHandle (69e5f010)] ds:0023:69e5f010=096f0000
+0:005&gt; p
+eax=40000358 ebx=40000358 ecx=096f0000 edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06d7 esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x75:
+69da06d7 8d048504000000  lea     eax,[eax*4+4]  // 分配的堆块大小= 0x40000358*4+4 = 0xd64，这里eax的最大值是0xFFFFFFFF，经eax*4+4后变成0x100000D64 &gt; 0xFFFFFFFF造成整数溢出，结果溢出后等于0xD64。如果我们把CacheSize设置成0x3FFFFFFF，那么后面分配的堆块就是0了。
+0:005&gt; p
+eax=00000d64 ebx=40000358 ecx=096f0000 edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06de esp=0446eeec ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x7c:
+69da06de 50              push    eax    // 堆块大小=0xd64
+0:005&gt; p
+eax=00000d64 ebx=40000358 ecx=096f0000 edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06df esp=0446eee8 ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x7d:
+69da06df 680000a000      push    0A00000h
+0:005&gt; p
+eax=00000d64 ebx=40000358 ecx=096f0000 edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06e4 esp=0446eee4 ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x82:
+69da06e4 51              push    ecx
+0:005&gt; p
+eax=00000d64 ebx=40000358 ecx=096f0000 edx=096f2d34 esi=09759d70 edi=72de9730
+eip=69da06e5 esp=0446eee0 ebp=0446eef8 iopl=0         nv up ei pl nz na po nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000202
+msado15!CRecordGroup::AllocateHRowRange+0x83:
+69da06e5 ffd7            call    edi {MSDART!MpHeapAlloc (72de9730)}
+</code></pre><p>该漏洞主要是由于对CacheSize整数值未作有效判断，导致经CacheSize<em>4+4造成整数溢出，当以CacheSize</em>4+4结果作为分配堆块的大小时，由于分配过小堆块就会造成堆溢出。</p><h3>技巧四：基于条件记录断点的漏洞分析技巧</h3><p>以CVE-2012-0774 Adobe Reader TrueType字体整数溢出漏洞为例，该漏洞主要是在解析TTF字体中的虚拟指令导致的溢出，为了确定导致溢出的是哪条虚拟指令，就可以通过设置条件记录断点来实现。 打开poc触发崩溃后，通过栈回溯定位漏洞函数，此处标记为VulFunction，它就是用于索引虚拟指令处理函数的。</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="557" height="114" border="0" img-src="c1373b5c251734f0b957108dc6ddc067fefc9efd.jpg"></p><p>通过快捷键Shift + F4对VulFunction下条件记录断点，记录每次调用VulFunction时对应的虚拟指令索引号</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="342" height="305" border="0" img-src="ce34937e3f825ec6489421698db8a0c787a787c5.jpg"></p><p>设置好后重新加载AcroRd32.exe运行（不要关闭调试器否则前面设置的断点可能失效），打开poc.pdf运行后查看日志窗口：</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="401" height="656" border="0" img-src="9f600ac592506bccc302a68e8579ef8a5e07627b.jpg"></p><p>导致漏洞的虚拟指令索引号为0x26，通过苹果官方提供的指令集https://developer.apple.com/fonts/ttrefman/RM05/Chap5.html，可以查到字节码0x26对应的虚拟指令为MINDEX，正是该条指令导致的溢出。</p><h3>技巧五：基于JS日志的漏洞分析技巧</h3><p>有时在调试IE漏洞时，我们需要样本中的JS代码的执行先后情况，通过添加一些数学函数，比如math.atan2、math.asin等，还可以使用其它函数，然后通过对<code>jscript!Js::Math::Atan</code>（或者其它函数）下断点来输出log，以方便分析者观察执行情况。比如poc中有如下js，其中的math.atan2是我们添加的：</p><pre><code>#!cpp
+Math.atan2(0xbabe, "[*] Creating object button...");
+    var obj = document.createElement("button");
+
+    Math.atan2(0xbabe, "[*] Assigning data to title...");
+    obj.title = data.substring(0,0x40000-0x58); 
+
+    Math.atan2(0xbabe, "[*] Let's AppendChild");
+    div_container.appendChild(obj);
+</code></pre><p>通过设置以下断点：</p><pre><code>#!bash
+bu jscript!JsAtan2 ".printf \"%mu\", poi(poi(poi(esp+14)+8)+8);.echo;g"
+</code></pre><p>运行后在windbg上的输出窗口就会看到：</p><pre><code>#!bash
+[*] Creating object button...
+[*] Assigning data to title...
+[*] Let's AppendChild
+</code></pre><h3>技巧六：通过虚拟机快照来固定堆地址</h3><p>最早听到这个方法，是instruder在QQ群里面提到的。由于在分析漏洞时，尤其是堆漏洞时，每个重新加载运行时，分配的堆地址都是固定，无论是分析还是写文档，都不太利用于我们分析和描述。因此我们可以先将程序调试已经完成堆分配的某个地址，然后将其保存为虚拟机快照，等我们需要再重新开始调试时，可通过恢复先前保存的快照来重新调试，那么此时的堆地址跟之前分析的地址都是固定的。</p><h3>技巧七：监控堆分配释放动作来分析UAF、double free漏洞</h3><p>以之前分配libpng某个double free漏洞的分析为例，主要是通过对释放函数free进行监控并输出记录来分析的。程序崩溃时的栈回溯如下：</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="560" height="128" border="0" img-src="dcd7ce8758aa8ae90d34bc558bcecf60c2765923.jpg"></p><p>重新用windbg加载，通过监控堆块的释放过程，可以发现它在对其中某堆块进行了双重释放，先下断：</p><pre><code>#!bash
+bu 3440D279 ".if(1){.echo EnterVulnFunc;gc}"
+bu 6e264b6c ".if(1){.echo Free heap block; dd esp l4;gc}"
+</code></pre><p>输出结果：</p><pre><code>#!bash
+EnterVulnFunc
+Free heap block
+0011bc5c  3441e2a2 138f0020 3b906313 10027b64
+Free heap block
+0011bc5c  3441dc6c 138f0020 3b906313 10027b64
+(1508.e84): Access violation - code c0000005 (first chance)
+First chance exceptions are reported before any exception handling.
+This exception may be expected and handled.
+eax=138f0018 ebx=138f0020 ecx=6e287a7e edx=10028a70 esi=008a0000 edi=00000000
+eip=77691f88 esp=0011bbe8 ebp=0011bbf8 iopl=0         nv up ei pl zr na pe nc
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00010246
+ntdll!RtlFreeHeap+0x3a:
+77691f88 80780705        cmp     byte ptr [eax+7],5         ds:0023:138f001f=??
+</code></pre><p>可以看到它对同一个堆块进行多次释放。在IE漏洞分析中最常见的还是UAF，如果想快速定造成UAF的IE对象，就需要对对象的分配的释放进行释放，这个可通过调试器脚本来实现，或者像之前h4ckmp同学基于Windbg接口写的EXE工具，可以快速分析出导致UAF漏洞的对象，如下图所示。</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="437" height="279" border="0" img-src="62fb7119b9e14920a72e7e818b8f78c098782770.jpg"></p><h3>技巧八：基于污点追踪的分析方法</h3><p>污点追踪理论挺好的，但成品往往不容乐观。污点追踪犹如“七伤拳”一般，“先伤己，再伤人”，开发污点追踪工具，不仅费时费力，而且开发完成后，运行比较大的工具往往需要运行很长时间，比如IE、Adobe等软件，有时甚至需要整整一天的时间，这种一般是在调试分析不方便的时候才使用的，主要针对文件格式漏洞。另外，你也可利用pin等动态插桩框架开发出动态分析工具，针对特定函数挂钩，比如堆分配与释放函数，也可以用它来实现快速分析。</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="558" height="133" border="0" img-src="d527e17ca84b99c5f16320d9b93ec22f7ff17f6a.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/8053" rel="bookmark" id="re1">IE安全系列之：中流砥柱（II）—Jscript 9处理浅析</a></li><li><a href="http://drops.wooyun.org/tips/10382" rel="bookmark" id="re2">Exploit开发系列教程-Exploitme2 (Stack cookies &amp; SEH)</a></li><li><a href="http://drops.wooyun.org/papers/7049" rel="bookmark" id="re3">Hacking Team攻击代码分析Part 4: Flash 0day漏洞 CVE-2015-5122</a></li><li><a href="http://drops.wooyun.org/tips/7715" rel="bookmark" id="re4">学习/认识CPU的GDT</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-03-20 22:46:30</span></div><p></p><p>是不是又了解到了一位好基友</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-03-20 20:04:13</span></div><p></p><p>其实这篇文章很好……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龙臣</span> <span class="reply-time">2014-03-20 14:52:23</span></div><p></p><p>good job！！</p><p></p></div></div></div></div></div></main>

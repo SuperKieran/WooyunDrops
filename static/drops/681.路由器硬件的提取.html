@@ -1,0 +1,94 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">路由器硬件的提取</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">博文视点安全技术大系</a> <span class="bull">·</span> <time title="2015/08/05 14:54" ui-time="" datetime="2015/08/05 14:54" class="published ng-binding ng-isolate-scope">2015/08/05 14:54</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>本文节选自《揭秘家用路由器0day漏洞挖掘技术》一书，电子工业出版社，2015年8月上市</p><p>在前面的章节中，我们已经学习了如何从路由器固件中提取根文件系统，以及如何进行漏洞的分析和挖掘。从本章开始，我们会学习路由器硬件方面的一些基本知识。 通常我们都是通过路由器厂商获取可用的固件，但并不是每一个路由器厂商都提供了固件下载，或者部分型号的产品没有提供固件下载，这时我们就需要使用本章的技术，通过路由器硬件提供的接口将计算机与路由器主板连接，从当前的路由器中提取需要的数据。</p><h1>16.1　硬件基础知识</h1><hr><p>本节我们来了解一下与路由器硬件相关的基础知识。</p><h3>16.1.1　路由器FLASH</h3><p>FLASH也叫闪存，是路由器中常用的一种内存类型。它是可读写的存储器，在系统重新启动或关机之后仍能保存数据。FLASH中存放着当前正在使用的路由器操作系统等信息。 路由器的FLASH就像计算机的硬盘。我们的硬盘通常会被格式化成多个分区。同样的原理，FLASH也被格式化为多个分区。通常情况下，FLASH分成4个区块，其作用大致如下。</p><ul><li>bootloader：主要功能是对硬件环境进行初始化、更新固件及认识操作系统的文件格式并将内核加载到内存中去执行。“CFE”是“Common Firmware Environment”（统一固件环境）的缩写，它是Broadcom公司专门针对自己生产的MIPS架构的处理器开发的一款Bootloader软件，Linksys WRT54G v2路由器使用的就是CFE。</li><li>Kernel：操作系统的内核。</li><li>Root Filesystem：操作系统的根文件系统，如squashfs、rootfs等。</li><li>NVRAM：作用是保存路由器中的配置文件。路由器在启动之后会从NVRAM中读取配置文件，对路由器进行设置。用户修改路由器设置后，系统会将修改后的参数写回NVRAM中。</li></ul><p>路由器的FLASH中存储的数据对于我们进行路由器安全研究具有十分重要的意义。我们可以读取NVRAM中的配置信息，以了解当前路由器中的敏感信息，还可以从FLASH中提取固件，然后运用前面学过的知识进行漏洞分析和挖掘。接下来，我们就给出从硬件中提取这些数据的一些思路。</p><h3>16.1.2　硬件提取数据的思路</h3><p>通过接触硬件进行数据提取的方法可谓多种多样，通常情况下可以考虑以下3种方案。</p><ul><li>通过路由器主板上的JTAG接口提取FLASH、NVRAM等。这种方法的优点是只需要一根JTAG线，不需要太多的辅助设备，缺点是需要路由器CPU支持JTAG，主板上要有JTAG接口。</li><li>从主板上取下的FLASH芯片中提取。这种方法可以在路由器不支持JTAG方式时使用，但缺点也很明显——从主板上取出芯片可能会对路由器造成物理损伤。</li><li>使用测试夹从FLASH芯片中提取。使用测试夹的优点是不需要从路由器上取下芯片，只需要用测试夹夹住芯片引脚即可，缺点是对不同引脚数的FLASH芯片需要使用对应的测试夹。</li></ul><h1>16.2　路由器串口</h1><hr><p>路由器的串口对于开发人员来说是很有用的，通常可以用串口实现以下功能。</p><ul><li>访问路由器的CFE。</li><li>观察boot和调试信息。</li><li>通过一个Shell与系统进行交互异步串行通信。</li></ul><p>因此，这些功能对于我们进行路由器安全研究也具有相当大的益处。 在路由器中，我们要寻找的串口不是指通常所见的RS232，而是指UART（通用异步收发器），它是路由器设备中比较常见的一种接口。虽然RS-232和UART在协议方面是兼容的，但在电压上却不兼容。UART通常在3.3伏特进行操作，但也可运行在其他标准电压（如5伏特、1.8伏特等）下。在后文中，凡是关于路由器串口的描述，在没有特殊说明的情况下，都是指UART。 如下图所示是Linksys WRT54G v2.2路由器主板上的串行接口。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-1.jpg"><img alt="" title="图16-1" class="alignnone size-full wp-image-7692" img-src="2015080407425785876.jpg"></a></p><h3>16.2.1　探测串口</h3><p>下面我们使用基本的观察法和万用表从复杂的路由器主板中找出UART，并确定UART的每一个引脚的用途。由于UART的非标准化，这里演示的方法并非“放之四海而皆准”。本节以Linksys WRT54G v2路由器为例，其主板上一共有2个串口，接下来就演示一些基本的判定路由器串口的方法。 首先，我们通过肉眼观察路由器主板上的引脚。一般来说，UART至少包含以下4个引脚。</p><ul><li>Vcc（VCC）：电源电压。该引脚电压较稳定。</li><li>Ground（GND）：接地。该引脚电压通常为0。</li><li>Transmit（TXD）：数据发送引脚。</li><li>Receive（RXD）：数据接收引脚。</li></ul><p>也就是说，我们首先要注意在路由器主板上那些单行具有4～6个引脚的位置。但这种方法不一定在任何时候都有效，因为这些引脚的位置是由各个厂商设计的，没有统一的标准。WRT54G路由器主板上的UART的位置如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-2.jpg"><img alt="" title="图16-2" class="alignnone size-full wp-image-7693" img-src="2015080407425730179.jpg"></a></p><p>通过观察发现，“JP1”字样的方框内是最符合URAT标志的WRT54G路由器主板的串口位置，在主板上已经标明了引脚的编号，以此来定位每一个引脚。 找到路由器串口以后，我们需要区分这些引脚的功能。这里给出以下两种方法，通过这两种方法的配合，可以快速识别每一个引脚的作用。</p><h4>1．目测法</h4><p>主板在印刷时都会遵循一些规律，这些规律可以帮助我们识别串口的引脚。</p><p>（1）VCC引脚的特点</p><p>VCC引脚通常被做成方形，如WRT54G路由器主板上的1号引脚。从路由器主板上可以看到较宽的走线，那么该引脚极有可能也是VCC引脚，如WRT54G路由器主板上的2号引脚。</p><p>（2）GND引脚的特点</p><p>GND引脚通常存在多条走线连接到周围的地线（GND）。如下图所示，将WRT54G路由器主板放大后，可以看到9号和10号引脚都有2条走线连接周围的地线。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-4.jpg"><img alt="" title="图16-4" class="alignnone size-full wp-image-7695" img-src="2015080407425892588.jpg"></a></p><p>如果说在WRT54G路由器的主板上看起来还不是那么明显，那么WRT120N路由器主板上的9号引脚就显得尤为突出了，一共有8条较细的走线连接周围的地线，如下图所示。</p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-3.jpg"><img alt="" title="图16-3" class="alignnone size-full wp-image-7694" img-src="2015080407425853643.jpg"></a></p><p>通过目测法可以初步判断WRT54G路由器主板上的1号和2号引脚为VCC引脚，9号和10号引脚为GND引脚，但是仍然存在6个引脚。在这6个引脚中，我们需要区分TXD引脚和RXD引脚。在剩余的6个引脚中，可以看到3号、4号、5号、6号这4个引脚分别有4条较细的走线连接，那么可以初步判断TXD和RXD在这4个引脚当中。但遗憾的是，如果想知道哪个引脚是TXD引脚，哪个引脚是RXD引脚，使用目测法无法得出确切的答案。通过目测法仅仅是初步判断，不能完全肯定，因此，我们需要通过下面的方法进行进一步的确定。</p><h4>2．万用表测试法</h4><p>使用数字万用表进行测试，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-5.png"><img alt="" title="图16-5" class="alignnone size-full wp-image-7696" img-src="2015080407425886023.png"></a></p><p><strong>（1）测试GND引脚</strong></p><p>将万用表调到电阻测量的最小档。这里最小为200欧姆，因此选择电阻200欧姆档位。然后，我们需要确定万用表的两只表笔应该放在哪些位置。通常金属屏蔽是一个方便测试的接地点，因此，将一只表笔放在金属屏蔽罩上，用另一只表笔分别接触10个引脚，测试金属屏蔽罩与串口的10个引脚，电阻为0的引脚即为GND引脚。 在WRT54G路由器的主板上有一块金属屏蔽外壳，将黑色探针（万用表的负极探针）置于其上，然后使用另一根探针分别接触10个需要测试的引脚，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-6.jpg"><img alt="" title="图16-6" class="alignnone size-full wp-image-7697" img-src="2015080407425992273.jpg"></a></p><p>测试10个引脚之后发现，只有9号和10号引脚的电阻非常接近0，万用表显示电阻为00.2欧姆，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-8.png"><img alt="" title="图16-8" class="alignnone size-full wp-image-7699" img-src="2015080407425939445.png"></a></p><p>在这里，万用表电阻不为0的原因是万用表自身的电阻就是40欧姆（00.2×200）。可以尝试将两只表笔短接来测试万用表自身的电阻，如下图所示。因此，这里测得WRT54G路由器主板串口的9号和10号引脚的电阻其实是0，也就是说，9号和10号引脚均为GND引脚。</p><p><a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-7.jpg"><img alt="" title="图16-7" class="alignnone size-full wp-image-7698" img-src="2015080407425939377.jpg"></a></p><p><strong>（2）测试VCC</strong></p><p>虽然VCC引脚对于我们使用路由器的串口是无关紧要的，但是确定VCC引脚可以排除它作为RXD引脚和TXD引脚的可能性，因此也是有必要的。在目测中，我们怀疑1号和2号引脚是VCC引脚，那么接下来我们就用万用表来验证这一猜测。 将万用表量程放在直流电压20伏特档位上，给路由器上电（将路由器电源接通），从路由器启动到系统完全启动这段时间内观察到电压值基本稳定在3.30伏特，因此，1号和2号引脚为VCC引脚的猜想得到了验证，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-9.jpg"><img alt="" title="图16-9" class="alignnone size-full wp-image-7700" img-src="2015080407425941468.jpg"></a></p><p><strong>（3）测试TXD引脚</strong></p><p>当串行端口处于激活状态并发送数据（否则无法测试出发送引脚）时，发送引脚是相当容易识别的。主板上的发送引脚被拉高到与VCC引脚相同的电压，通常是3.3伏特。在有数据发送时，电压将下降到0。当读取的是一个不断变化的直流电压时，数字万用表将显示最终的平均采样电压。因此，如果万用表显示引脚电压下降，表示该引脚有数据发送，由此可以判断该引脚是TXD引脚。 在路由器中，引导程序、内核、系统的所有启动信息都将被打印到串口，因此，我们测试TXD引脚的最佳时机就在系统启动阶段。我们在路由器系统启动期间监控3号、4号、5号和6号这4个引脚，应该能够很容易地识别哪些是发送引脚。 测试3号和4号引脚，发现其电压在一段时间内保持在3.30伏特，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-10.jpg"><img alt="" title="图16-10" class="alignnone size-full wp-image-7701" img-src="2015080407425933464.jpg"></a></p><p>过了一会儿，电压突然降到2.83伏特，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-11.jpg"><img alt="" title="图16-11" class="alignnone size-full wp-image-7702" img-src="2015080407430016413.jpg"></a></p><p>接着，电压便恢复到3.29伏特。 继续测试，发现5号和6号引脚的特征与TXD引脚的特征不符，因此判断3号和4号引脚为TXD引脚。 虽然这是识别发送引脚的一种有效方法，但值得注意的是，如果串行端口只发送少量数据，通过电压波动判断可能就不是那么准确了，这时我们需要使用示波器或逻辑分析仪捕获发送引脚的数据活动。</p><p><strong>（4）测试RXD引脚</strong></p><p>准确地识别接收引脚是最困难的，因为它没有十分有效的特征定义。通常我们通过测试找出TXD引脚，另一个引脚就是RXD引脚了。例如，在WRT54G路由器的主板上，5号和6号引脚就是RXD引脚。 经过上面的测试，我们基本上完成了对WRT54G路由器主板的引脚测试，2个串口（ttys0和ttys1）都已经找出来了。需要注意的是，并不是所有的路由器主板都有2个串口。 在WRT54G v2路由器的主板上有2个URAT接口，测试结果如表16-1所示。</p><p>表16-1</p><table><thead><tr><th>引脚</th><th>定义</th><th>引脚</th><th>定义</th></tr></thead><tbody><tr><td>1</td><td>VCC（3.3V） 2.0</td><td>6</td><td>RXD（ttyS0）</td></tr><tr><td>2</td><td>VCC（3.3V） 2.0</td><td>6</td><td>RXD（ttyS0）</td></tr><tr><td>3</td><td>TXD（ttyS1）</td><td>8</td><td>NC</td></tr><tr><td>4</td><td>TXD（ttyS0）</td><td>9</td><td>GND</td></tr><tr><td>5</td><td>RXD（ttyS1）</td><td>10</td><td>GND</td></tr></tbody></table><h3>16.2.2　连接串口</h3><p>在识别了串口的各个引脚之后，我们就可以通过一条USB转UART适配器的TTL-232R-3V3线连接进行连接了。将UART适配器的USB接口端插入计算机的USB接口，将UART适配器连接到路由器串行端口中，使用方式如下。</p><ul><li>将适配器的GND连接到串口的GND。</li><li>将适配器的RXD连接到串口的TXD。</li><li>将适配器的TXD连接到串口的RXD。</li></ul><p>接下来，我们开始进行硬件连接的准备工作。 首先，用排针或者将10个引脚的牛角座焊接到主板上，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-12.png"><img alt="" title="图16-12" class="alignnone size-full wp-image-7703" img-src="2015080407430024872.png"></a></p><p>然后，按照上面给出的方法使用条线连接UART适配器和串口（使用靠近主板边缘的ttyS0串行接口），如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-13.png"><img alt="" title="图16-13" class="alignnone size-full wp-image-7704" img-src="2015080407430013740.png"></a></p><p>连接好UART适配器和路由器串口以后，将UART适配器连接到计算机。由于本例是虚拟机环境，所以需要确认已经将TTL-232R-3V3适配器添加到虚拟机中，如下图所示。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-14.jpg"><img alt="" title="图16-14" class="alignnone size-full wp-image-7705" img-src="2015080407430072608.jpg"></a></p><p>硬件方面的操作到这里基本上已经完成了，接下来，我们需要检查串行端口的协议设置。串行端口有多种设置，但是在这里我们只需要完成波特率的设置即可。尝试错误是识别波特率最快和最简单的方法。因为串行端口通常用于显示调试信息（即它们发送ASCII数据），并且只有少数可能频率的波特率，所以我们可以循环逐一测试可能的波特率，直到输出可理解的数据（如ASCII码）时，就找到了当前串口的波特率。 在本书提供的下载链接中，baudrate.py有一个功能选项“-a”可以自动检测波特率，使用方法如下。</p><pre><code>    <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="46232b242322232206332433283233">[email&#160;protected]</a>:~/soft$ sudo python baudrate.py -a
+    Starting baudrate detection on /dev/ttyUSB0, turn on your serial device now.
+    Press Ctl+C to quit.
+    @@@@@Baudrate: 9600 @@@@@@@
+    ---snip---
+    @@@@@Baudrate: 115200 @@@@@@@
+    Detected baudrate: 115200
+    Save minicom configuration as:
+</code></pre><p>这里我们检测到WRT54G路由器主板的串口使用的波特率为115 200，但需要注意的是，在自动检测的过程中，要保证串口有数据输出，否则baudrate.py将无法准确检测波特率。</p><h3>16.2.3　在Linux下读取路由器串口数据</h3><p>在Linux环境下读取路由器串口数据有以下几种方法。</p><h4>1．通过miniterm.py连接路由器串口</h4><p>在知道路由器串口的波特率之后，我们可以直接运行本书下载链接中的miniterm.py。例如，知道波特率为115 200，运行如下命令。</p><pre><code>    <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4a2f27282f2e2e2f2e0a3f283f243e3f">[email&#160;protected]</a>:~/soft$ sudo miniterm.py /dev/ttyUSB0 115200
+    --- Miniterm on /dev/ttyUSB0: 115200,8,N,1 ---
+    --- Quit: Ctrl+]  |  Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H ---
+</code></pre><p>此时，miniterm.py处于等待状态。启动路由器（接通电源），可以看到在Ubuntu终端已经打印了启动信息，具体如下。</p><pre><code>    CFE version 1.0.37 for BCM947XX (32bit,SP,LE)
+    Build Date: Fri Feb 27 15:20:59 CST 2004 (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d1a3bebea591b9bebfbea3">[email&#160;protected]</a>)
+    Copyright (C) 2000,2001,2002,2003 Broadcom Corporation.
+    Initializing Arena.
+    Initializing Devices.
+    et0: Broadcom BCM47xx 10/100 Mbps Ethernet Controller 3.50.21.0
+    CPU type 0x29007: 200MHz
+    Total memory: 0x2000000 bytes (32MB)
+    Total memory used by CFE:  0x80334DC0 - 0x8043A310 (1070416)
+    Initialized Data:          0x80334DC0 - 0x80336F40 (8576)
+    BSS Area:                  0x80336F40 - 0x80338310 (5072)
+    Local Heap:                0x80338310 - 0x80438310 (1048576)
+    Stack Area:                0x80438310 - 0x8043A310 (8192)
+    Text (code) segment:       0x80300000 - 0x8030F220 (61984)
+    Boot area (physical):      0x0043B000 - 0x0047B000
+    ---snip---
+</code></pre><h4>2．路由器CFE命令模式</h4><p>在WRT54G路由器的启动阶段，按“Ctrl+C”组合键可以中止WRT54G路由器系统的启动过程，进入CFE命令行模式，示例如下。</p><pre><code>    CFE version 1.0.37 for BCM947XX (32bit,SP,LE)
+    Build Date: Fri Feb 27 15:20:59 CST 2004 (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f4869b9b80b49c9b9a9b86">[email&#160;protected]</a>)
+    Copyright (C) 2000,2001,2002,2003 Broadcom Corporation.
+    Initializing Arena.
+    Initializing Devices.
+    ---snip---
+    Boot version: v2.3
+    The boot is CFE
+    mac_init(): Find mac [00:0F:66:AE:B4:DC] in location 1
+    Nothing...
+    Device eth0:  hwaddr 00-0F-66-AE-B4-DC, ipaddr 192.168.1.1, mask 255.255.255.0
+            gateway not set, nameserver not set
+    Reading :: Failed.: Error
+    CFE&gt; 
+</code></pre><p>输入“help”可以查看当前支持的命令，具体如下。</p><pre><code>    CFE&gt; help
+    Available commands:
+    et                  Broadcom Ethernet utility.
+    nvram               NVRAM utility.
+    reboot              Reboot.
+    flash               Update a flash memory device
+    memtest             Test memory.
+    f                   Fill contents of memory.
+    e                   Modify contents of memory.
+    d                   Dump memory.
+    u                   Disassemble instructions.
+    autoboot            Automatic system bootstrap.
+    batch               Load a batch file into memory and execute it
+    go                  Verify and boot OS image.
+    boot                Load an executable file into memory and execute it
+    load                Load an executable file into memory without executing it
+    save                Save a region of memory to a remote file via TFTP
+    ping                Ping a remote IP host.
+    arp                 Display or modify the ARP Table
+    ifconfig            Configure the Ethernet interface
+    show devices        Display information about the installed devices.
+    unsetenv            Delete an environment variable.
+    printenv            Display the environment variables
+    setenv              Set an environment variable.
+    help                Obtain help for CFE commands
+    For more information about a command, enter 'help command-name'
+    *** command status = 0
+</code></pre><p>使用这些命令可以完成路由器CFE、FLASH、NVRAM的相关操作。这里我们以查看WRT54G路由器NVRAM配置信息中关于登录页面密码的内容为例，命令如下。</p><pre><code>    CFE&gt; nvram get http_passwd
+    admin
+    *** command status = 0
+</code></pre><p>从返回的结果可以知道，这台WRT54G路由器的Web管理功能的登录密码是“admin”。</p><h4>3．路由器Linux系统模式</h4><p>在WRT54G路由器的启动过程中，如果不使用“Ctrl+C”组合键，路由器就会正常启动，启动信息打印如下。</p><pre><code>    CFE version 1.0.37 for BCM947XX (32bit,SP,LE)
+    Build Date: Fri Feb 27 15:20:59 CST 2004 (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c7b5a8a8b387afa8a9a8b5">[email&#160;protected]</a>)
+    Copyright (C) 2000,2001,2002,2003 Broadcom Corporation.
+    Initializing Arena.
+    Initializing Devices.
+    ---snip---
+    gateway not set, nameserver not set
+    pppoe0 ifname=ppp0 ip=10.64.64.64 , netmask=255.255.255.255, gw=10.112.112.112
+    ----------------------------------------------------------------------------
+    No interface specified. Quitting...
+    Hit enter to continue...
+</code></pre><p>等待系统启动完成，提示按“Enter”键继续。按下“Enter”键，就可以进入Linux系统，提示如下。</p><pre><code>    BusyBox v0.60.0 (2005.07.12-09:08+0000) Built-in shell (msh)
+    Enter 'help' for a list of built-in commands.
+    #
+</code></pre><p>此时，我们就可以使用命令管理路由器了。例如，查看运行在路由器上的Web服务器的动态库链接地址，命令如下。</p><pre><code>    # ps |grep httpd
+       63 0         S    httpd
+      147 0         S    grep httpd
+    # cat /proc/63/maps|grep libc.so.0
+    2aac0000-2aac7000 r-xp 00000000 1f:02 1530       /lib/ld-uClibc.so.0
+    2ab06000-2ab07000 rw-p 00006000 1f:02 1530       /lib/ld-uClibc.so.0
+    2ad53000-2ad88000 r-xp 00000000 1f:02 1560       /lib/libc.so.0
+    2adc7000-2adc9000 rw-p 00034000 1f:02 1560       /lib/libc.so.0
+</code></pre><p>可以看到，libc.so.0的加载基址为0x2ad53000。</p><h3>16.2.4　在Windows下读取路由器串口数据</h3><p>在Windows环境下同样可以连接路由器的串行端口，接下来我们就来看看如何使用Putty连接路由器的串行端口。 连接好适配器与串口以后，首先通过Windows的设备管理器查找适配器端口COM3，然后配置Putty，设置“Connect type”为“Serial”，将“Serial line”修改为“COM3”，设置波特率为115 200。配置好以上基本信息以后，单击“Open”按钮进行连接，启动路由器，如下图所示。如果要进入CFE命令行模式，只要在启动过程中按“Ctrl+C”组合键即可。 <a href="http://drops.wooyun.org/wp-content/uploads/2015/08/图16-15.jpg"><img alt="" title="图16-15" class="alignnone size-full wp-image-7706" img-src="2015080407430122135.jpg"></a></p><p>通过路由器的串行端口可以获得启动信息。在CFE模式下可以利用CFE执行命令、操作NVRAM等。在对FLASH进行操作可以通过CFE更新固件。通过串行端口还可以获得Shell管理系统。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2624" rel="bookmark" id="re1">android测试环境搭建</a></li><li><a href="http://drops.wooyun.org/tips/5253" rel="bookmark" id="re2">劫持SSH会话注入端口转发</a></li><li><a href="http://drops.wooyun.org/tips/2179" rel="bookmark" id="re3">无线多操作系统启动之uInitrd阶段NFS挂载篇</a></li><li><a href="http://drops.wooyun.org/papers/4386" rel="bookmark" id="re4">One git command may cause you hacked(CVE-2014-9390)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CplusHua</span> <span class="reply-time">2015-08-13 10:04:08</span></div><p></p><p>楼主,感谢分享. 我也想分享一个方法,就是用逻辑分析仪,接上所有认为可能的线,然后开机.....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">redrain有节操</span> <span class="reply-time">2015-08-06 01:29:54</span></div><p></p><p>拿到书花了五分钟看完目录后，就开始寻求退款渠道</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sndav</span> <span class="reply-time">2015-08-06 00:01:38</span></div><p></p><p>这本书错别字满天飞</p><p></p></div></div></div></div></div></main>

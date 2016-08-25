@@ -1,0 +1,468 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">三个白帽挑战之二进制题《迷阵陷落》分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">netwind</a> <span class="bull">·</span> <time title="2016/05/12 10:28" ui-time="" datetime="2016/05/12 10:28" class="published ng-binding ng-isolate-scope">2016/05/12 10:28</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>三个白帽在线挑战平台，集WEB和二进制挑战于一身，以在线挑战的形式把网络安全相关领域白帽子的技术和智慧淋漓尽致地展现出来，为白帽子们搭建了一个非常完美、和谐的在线交流平台，使得白帽子之间可以融洽地施展绝技、交流创意和想法。一次一次的挑战让白帽子们大饱眼福、乐在其中，让大家脑洞大开，并且收获满满，同时回味无穷！</p><p>由于对windows平台下二进制有过研究，本着和大家交流学习的目的，在和三个白帽平台管理沟通后，为《条条大路通罗马系列》设计了一个二进制算法题目。本文将首先从破解者角度对这个二进制题进行分析，单纯以破解者身份来逆向分析算法，解密数据，从而最终获得flag。另外将从该题设计者角度进行分析，一步步描述每步算法相对应的数据如何加密、解密的，试图达到什么样的效果，试图在哪里困住破解者。</p><p><img alt="" img-src="9bddf287621c623fce2e6ec1bf56816ee3cdc616.jpg"></p><h1>0x01 正向破解加密算法</h1><hr><p>首先我们按照程序的流程，一步步分析算法、破解算法。</p><p>1、和第一次二进制题一样，首先通过字符串查找，找到字符串<code>where is flag?flag is in the beautifull spring!</code></p><p>2、双击字符串来到算法关键位置，相关汇编代码分析如下：</p><pre><code>004026E0  |.  57            push    edi                            ;  这里开始了一个非常初级的数独游戏
+004026E1  |.  8D4C24 10     lea     ecx, dword ptr [esp+10]
+004026E5  |.  897424 18     mov     dword ptr [esp+18], esi
+004026E9  |.  E8 68080000   call    &lt;jmp.&amp;MFC42.#CString::CString_&gt;
+004026EE  |.  33DB          xor     ebx, ebx
+004026F0  |.  68 60564000   push    00405660                       ;  where is flag?flag is in the beautifull spring!
+004026F5  |.  8D4C24 14     lea     ecx, dword ptr [esp+14]
+004026F9  |.  C78424 D00000&gt;mov     dword ptr [esp+D0], 1
+00402704  |.  895C24 18     mov     dword ptr [esp+18], ebx
+00402708  |.  E8 43080000   call    &lt;jmp.&amp;MFC42.#CString::operator&gt;
+0040270D  |.  8BAC24 D80000&gt;mov     ebp, dword ptr [esp+D8]
+00402714  |.  83C9 FF       or      ecx, FFFFFFFF
+00402717  |.  8BFD          mov     edi, ebp
+00402719  |.  33C0          xor     eax, eax
+0040271B  |.  F2:AE         repne   scas byte ptr es:[edi]
+0040271D  |.  F7D1          not     ecx
+0040271F  |.  49            dec     ecx
+00402720  |.  83E9 0C       sub     ecx, 0C
+00402723  |.  74 5A         je      short 0040277F
+00402725  |&gt;  BF 54564000   /mov     edi, 00405654                 ;  adf438ghi
+0040272A  |.  83C9 FF       |or      ecx, FFFFFFFF
+0040272D  |.  33C0          |xor     eax, eax
+0040272F  |.  33D2          |xor     edx, edx
+00402731  |.  F2:AE         |repne   scas byte ptr es:[edi]
+00402733  |.  F7D1          |not     ecx
+00402735  |.  49            |dec     ecx
+00402736  |.  74 23         |je      short 0040275B
+00402738  |.  8A1C2E        |mov     bl, byte ptr [esi+ebp]        ;  单个取输入的字符
+0040273B  |&gt;  3A9A 54564000 |/cmp     bl, byte ptr [edx+405654]    ;  判断取出来的字符是否在adf438ghi中
+00402741  |.  74 14         ||je      short 00402757               ;  如果是就跳出循环
+00402743  |.  BF 54564000   ||mov     edi, 00405654                ;  adf438ghi
+00402748  |.  83C9 FF       ||or      ecx, FFFFFFFF
+0040274B  |.  33C0          ||xor     eax, eax
+0040274D  |.  42            ||inc     edx
+0040274E  |.  F2:AE         ||repne   scas byte ptr es:[edi]
+00402750  |.  F7D1          ||not     ecx                          ;  取字符串adf438ghi的长度
+00402752  |.  49            ||dec     ecx
+00402753  |.  3BD1          ||cmp     edx, ecx
+00402755  |.^ 72 E4         |\jb      short 0040273B
+00402757  |&gt;  8B5C24 14     |mov     ebx, dword ptr [esp+14]
+0040275B  |&gt;  BF 54564000   |mov     edi, 00405654                 ;  adf438ghi
+00402760  |.  83C9 FF       |or      ecx, FFFFFFFF
+00402763  |.  33C0          |xor     eax, eax
+00402765  |.  F2:AE         |repne   scas byte ptr es:[edi]
+00402767  |.  F7D1          |not     ecx
+00402769  |.  49            |dec     ecx
+0040276A  |.  3BD1          |cmp     edx, ecx
+0040276C  |.  74 3F         |je      short 004027AD                ;  如果上面循环次数等于adf438ghi的长度说明判断失败，跳到结束
+0040276E  |.  8BFD          |mov     edi, ebp
+00402770  |.  83C9 FF       |or      ecx, FFFFFFFF
+00402773  |.  46            |inc     esi
+00402774  |.  F2:AE         |repne   scas byte ptr es:[edi]
+00402776  |.  F7D1          |not     ecx
+00402778  |.  83C1 F3       |add     ecx, -0D                      ;  这个是循环次数 取输入的字符串的长度减去13
+0040277B  |.  3BF1          |cmp     esi, ecx
+0040277D  |.^ 72 A6         \jb      short 00402725                ;  跳回去，循环判断下一个输入的字符
+0040277F  |&gt;  B9 14000000   mov     ecx, 14
+00402784  |.  BE 00564000   mov     esi, 00405600                  ;  g8azfzzd3f3zzzhazgzdzzzgzf4zzizz8fghzzfdgi3zz3gzfzzizdai3g8zzzzhfd4zzg8z84gzazd3z
+00402789  |.  8D7C24 70     lea     edi, dword ptr [esp+70]
+0040278D  |.  33D2          xor     edx, edx
+0040278F  |.  F3:A5         rep     movs dword ptr es:[edi], dword&gt;
+00402791  |.  A4            movs    byte ptr es:[edi], byte ptr [e&gt;
+00402792  |&gt;  33C0          xor     eax, eax
+00402794  |.  8D7414 70     lea     esi, dword ptr [esp+edx+70]
+00402798  |&gt;  8A0C06        mov     cl, byte ptr [esi+eax]
+0040279B  |.  8D3C02        lea     edi, dword ptr [edx+eax]
+0040279E  |.  80F9 7A       cmp     cl, 7A                         ;  循环判断405600地址的字符串的字符是否为z
+004027A1  |.  75 2A         jnz     short 004027CD
+004027A3  |.  8A0C2B        mov     cl, byte ptr [ebx+ebp]
+004027A6  |.  43            inc     ebx
+004027A7  |.  884C3C 1C     mov     byte ptr [esp+edi+1C], cl      ;  如果是z就把输入的字符依次替换掉z
+004027AB  |.  EB 24         jmp     short 004027D1
+004027AD  |&gt;  8BB424 D40000&gt;mov     esi, dword ptr [esp+D4]
+004027B4  |.  8D4424 10     lea     eax, dword ptr [esp+10]
+004027B8  |.  50            push    eax
+004027B9  |.  8BCE          mov     ecx, esi
+004027BB  |.  E8 EA070000   call    &lt;jmp.&amp;MFC42.#CString::CString_&gt;
+004027C0  |.  C74424 18 010&gt;mov     dword ptr [esp+18], 1
+004027C8  |.  E9 A4000000   jmp     00402871
+004027CD  |&gt;  884C3C 1C     mov     byte ptr [esp+edi+1C], cl
+004027D1  |&gt;  40            inc     eax
+004027D2  |.  83F8 09       cmp     eax, 9
+004027D5  |.^ 7C C1         jl      short 00402798                 ;  跳回去判断下一个字符
+004027D7  |.  83C2 09       add     edx, 9
+004027DA  |.  83FA 51       cmp     edx, 51                        ;  要分9组每组9次循环81次
+004027DD  |.^ 7C B3         jl      short 00402792                 ;  跳回去继续判断下一组
+004027DF  |.  C74424 14 000&gt;mov     dword ptr [esp+14], 0
+004027E7  |.  8D5C24 1C     lea     ebx, dword ptr [esp+1C]
+004027EB  |.  8D4C24 1C     lea     ecx, dword ptr [esp+1C]
+004027EF  |&gt;  33C0          /xor     eax, eax                      ;  这里有3层循环是用来检查数独结果是否正确
+004027F1  |.  8BEB          |mov     ebp, ebx
+004027F3  |&gt;  8A1401        |/mov     dl, byte ptr [ecx+eax]       ;  最里面一层的第一个循环以行为单位进行检查
+004027F6  |.  C60401 77     ||mov     byte ptr [ecx+eax], 77       ;  具体方法就是取出当前要检查的字符，替换为0x77即w
+004027FA  |.  33F6          ||xor     esi, esi
+004027FC  |&gt;  3A1431        ||/cmp     dl, byte ptr [ecx+esi]      ;  然后对该行所有的字符进行判断是否和取出的那个字符重复
+004027FF  |.  0F84 9A000000 |||je      0040289F                    ;  如果存在重复就跳没了
+00402805  |.  46            |||inc     esi
+00402806  |.  83FE 09       |||cmp     esi, 9
+00402809  |.^ 7C F1         ||\jl      short 004027FC
+0040280B  |.  881401        ||mov     byte ptr [ecx+eax], dl
+0040280E  |.  8A55 00       ||mov     dl, byte ptr [ebp]
+00402811  |.  C645 00 79    ||mov     byte ptr [ebp], 79           ;  这里以列为单位 取出当前字符替换为字符y，然后判断该列所有字符是否与取出的字符有重复
+00402815  |.  33F6          ||xor     esi, esi
+00402817  |.  8BFB          ||mov     edi, ebx
+00402819  |&gt;  3A17          ||/cmp     dl, byte ptr [edi]
+0040281B  |.  0F84 85000000 |||je      004028A6                    ;  如果存在 就跳没了
+00402821  |.  46            |||inc     esi
+00402822  |.  83C7 09       |||add     edi, 9
+00402825  |.  83FE 09       |||cmp     esi, 9
+00402828  |.^ 7C EF         ||\jl      short 00402819
+0040282A  |.  8855 00       ||mov     byte ptr [ebp], dl
+0040282D  |.  40            ||inc     eax
+0040282E  |.  83C5 09       ||add     ebp, 9
+00402831  |.  83F8 09       ||cmp     eax, 9
+00402834  |.^ 7C BD         |\jl      short 004027F3               ;  外边两层循环，行判断时分别控制行标和列标；列判断时分别控制列标和行标
+00402836  |.  8B4424 14     |mov     eax, dword ptr [esp+14]
+0040283A  |.  83C1 09       |add     ecx, 9
+0040283D  |.  40            |inc     eax
+0040283E  |.  43            |inc     ebx
+0040283F  |.  83F8 09       |cmp     eax, 9
+00402842  |.  894424 14     |mov     dword ptr [esp+14], eax
+00402846  |.^ 7C A7         \jl      short 004027EF
+00402848  |.  68 E0554000   push    004055E0                       ;  good !flag is waving to you!
+</code></pre><p>3、根据上面分析的结果，整理如下：</p><p>首先撇开后12个字符不管，判断前面的字符串（以s命名）中的字符是否都是字符串adf438ghi中的字符，内存地址405600处字符串（以f命名）为g8azfzzd3f3zzzhazgzdzzzgzf4zzizz8fghzzfdgi3zz3gzfzzizdai3g8zzzzhfd4zzg8z84gzazd3z，把s依次替换f中的z字符，替换后依次9个字符为一行检查是否有重复字符，同时9个字符为一列检查是否有重复字符。把f转为列表形式如下：</p><pre><code>g8azfzzd3
+f3zzzhazg
+zdzzzgzf4
+zzizz8fgh
+zzfdgi3zz
+3gzfzzizd
+ai3g8zzzz
+hfd4zzg8z
+84gzazd3z
+</code></pre><p>那么很明显这是一个9X9的数独算法，输入的字符就是数独算法的解。为了使数独更加直观，我们来用数字代替字母。把字符adf438ghi作以下对应：</p><pre><code>a d f 4 3 8 g h i
+1 2 3 4 5 6 7 8 9
+</code></pre><p>同时根据算法z其实就是数独算法里的空字符，这个时候列表变为：</p><p><img alt="" img-src="0a4f89d091f50390f7cba819ed812e1d31308035.jpg"></p><p>这是个很简单的难度系数为1的数独游戏，大家有兴趣可以手动完成这个数独游戏，数独游戏结果如下：</p><pre><code>761934825
+354628197
+928157634
+219546378
+483279516
+576381942
+195762483
+832495761
+647813259
+</code></pre><p>抽出我们填充的数字：9484629981562154481668142483951839，根据前面设定的对应关系，其对应的字符串为：i4h48diiha38da344ha88ha4d4hfi3ahfi。这里就得到了算法的第一部分的字符串。把断点设置在该算法函数尾部，单步走，等到该函数返回后我们就来到了下面的算法部分。</p><h1>0x02 逆向追踪算法</h1><hr><p>跟踪到后面我们发现其实第二部分是对我们输入的后12个字符进行解密运算，然后把运算结果作为key来加密第一部分得到的结果，那么我们需要根据解密流程，逆向加密KEY来获得正确的输入字符串。具体分析如下：</p><p>1、相关算法汇编代码分析如下：</p><pre><code>004029B6   .  8BF0          mov     esi, eax
+004029B8   .  8B06          mov     eax, dword ptr [esi]
+004029BA   .  894424 30     mov     dword ptr [esp+30], eax
+004029BE   .  8B4E 04       mov     ecx, dword ptr [esi+4]
+004029C1   .  894C24 34     mov     dword ptr [esp+34], ecx
+004029C5   .  8B56 14       mov     edx, dword ptr [esi+14]
+004029C8   .  8B0B          mov     ecx, dword ptr [ebx]
+004029CA   .  895424 24     mov     dword ptr [esp+24], edx
+004029CE   .  8B46 18       mov     eax, dword ptr [esi+18]
+004029D1   .  894424 28     mov     dword ptr [esp+28], eax
+004029D5   .  8B69 F8       mov     ebp, dword ptr [ecx-8]
+004029D8   .  83C5 DE       add     ebp, -22                          移动长度34
+004029DB   .  55            push    ebp                       ; /size
+004029DC   .  FF15 34424000 call    dword ptr [&lt;&amp;MSVCRT.mallo&gt;; \malloc
+004029E2   .  8BCD          mov     ecx, ebp
+004029E4   .  8BF8          mov     edi, eax
+004029E6   .  8BD1          mov     edx, ecx
+004029E8   .  33C0          xor     eax, eax
+004029EA   .  C1E9 02       shr     ecx, 2
+004029ED   .  897C24 1C     mov     dword ptr [esp+1C], edi
+004029F1   .  F3:AB         rep     stos dword ptr es:[edi]
+004029F3   .  8BCA          mov     ecx, edx
+004029F5   .  83E1 03       and     ecx, 3
+004029F8   .  F3:AA         rep     stos byte ptr es:[edi]
+004029FA   .  8B4C24 1C     mov     ecx, dword ptr [esp+1C]
+004029FE   .  8D46 22       lea     eax, dword ptr [esi+22]
+00402A01   .  8B56 22       mov     edx, dword ptr [esi+22]
+00402A04   .  8911          mov     dword ptr [ecx], edx
+00402A06   .  8B50 04       mov     edx, dword ptr [eax+4]
+00402A09   .  8951 04       mov     dword ptr [ecx+4], edx
+00402A0C   .  8B40 08       mov     eax, dword ptr [eax+8]
+00402A0F   .  8941 08       mov     dword ptr [ecx+8], eax
+00402A12   .  8BC5          mov     eax, ebp
+00402A14   .  99            cdq
+00402A15   .  83E2 03       and     edx, 3
+00402A18   .  03C2          add     eax, edx
+00402A1A   .  C1F8 02       sar     eax, 2
+00402A1D   .  8D4440 0A     lea     eax, dword ptr [eax+eax*2&gt;
+00402A21   .  50            push    eax                       ; /size
+00402A22   .  FF15 34424000 call    dword ptr [&lt;&amp;MSVCRT.mallo&gt;; \malloc
+00402A28   .  8B4C24 20     mov     ecx, dword ptr [esp+20]
+00402A2C   .  8BF8          mov     edi, eax
+00402A2E   .  57            push    edi
+00402A2F   .  55            push    ebp
+00402A30   .  51            push    ecx
+00402A31   .  E8 CAE5FFFF   call    00401000                  ;  从输入串第35个字符开始取剩下的字符串进行BASE64解密
+00402A36   .  C60438 00     mov     byte ptr [eax+edi], 0     ;  解密结果最后加上0结束符
+00402A3A   .  8D5424 38     lea     edx, dword ptr [esp+38]   ;  取输入串第21个开始的8个字符
+00402A3E   .  6A 01         push    1
+00402A40   .  8D4424 48     lea     eax, dword ptr [esp+48]   ;  取输入串前8个字符
+00402A44   .  52            push    edx
+00402A45   .  50            push    eax
+00402A46   .  57            push    edi
+00402A47   .  E8 94ECFFFF   call    004016E0                  ;  把上面取出的两组字符作为密钥进行3DES解密
+00402A4C   .  8A0E          mov     cl, byte ptr [esi]
+00402A4E   .  83C4 24       add     esp, 24
+00402A51   .  33C0          xor     eax, eax
+00402A53   .  84C9          test    cl, cl
+00402A55   .  74 49         je      short 00402AA0
+00402A57   &gt;  8B0B          mov     ecx, dword ptr [ebx]
+00402A59   .  8B49 F8       mov     ecx, dword ptr [ecx-8]
+00402A5C   .  83C1 F4       add     ecx, -0C                  ;  取输入字符串长度减去12
+00402A5F   .  3BC1          cmp     eax, ecx                  ;  大于这个长度就跳出循环
+00402A61   .  7D 3D         jge     short 00402AA0
+00402A63   .  8BD0          mov     edx, eax                  ;  下面实际上是除以8取余操作，3DES解密后数据长度为8，每8次加法后，又从第一个字节开始取加数
+00402A65   .  81E2 07000080 and     edx, 80000007
+00402A6B   .  79 05         jns     short 00402A72
+00402A6D   .  4A            dec     edx
+00402A6E   .  83CA F8       or      edx, FFFFFFF8
+00402A71   .  42            inc     edx
+00402A72   &gt;  8A0C3A        mov     cl, byte ptr [edx+edi]    ;  依次取上面3DES解密后字节，长度超过8时 从第一个开始取
+00402A75   .  8D2C3A        lea     ebp, dword ptr [edx+edi]
+00402A78   .  8A1430        mov     dl, byte ptr [eax+esi]    ;  取输入的字符
+00402A7B   .  02D1          add     dl, cl                    ;  两者相加
+00402A7D   .  8ACA          mov     cl, dl
+00402A7F   .  881430        mov     byte ptr [eax+esi], dl    ;  保存相加后的结果
+00402A82   .  80F9 3E       cmp     cl, 3E                    ;  这里依次判断相加后的结果是否是字符&gt; ? ;中的一个
+00402A85   .  74 0A         je      short 00402A91
+00402A87   .  80F9 3F       cmp     cl, 3F
+00402A8A   .  74 05         je      short 00402A91
+00402A8C   .  80F9 3B       cmp     cl, 3B
+00402A8F   .  75 06         jnz     short 00402A97
+00402A91   &gt;  024D 00       add     cl, byte ptr [ebp]        ;  如果是的话 就再加一次cl
+00402A94   .  880C30        mov     byte ptr [eax+esi], cl
+00402A97   &gt;  8A4C30 01     mov     cl, byte ptr [eax+esi+1]
+00402A9B   .  40            inc     eax
+00402A9C   .  84C9          test    cl, cl
+00402A9E   .^ 75 B7         jnz     short 00402A57            ;  跳回去依次对每个字符进行加法
+00402AA0   &gt;  68 A0554000   push    004055A0                  ;  \n\n
+00402AA5   .  8D4C24 14     lea     ecx, dword ptr [esp+14]
+00402AA9   .  C60430 00     mov     byte ptr [eax+esi], 0
+00402AAD   .  E8 E6040000   call    &lt;jmp.&amp;MFC42.#CString::ope&gt;
+00402AB2   .  BF F8564000   mov     edi, 004056F8             ;  k8kbdlnjje6fji856ldfdpf5f8kmocfihm
+00402AB7   &gt;  8A16          mov     dl, byte ptr [esi]
+00402AB9   .  8A0F          mov     cl, byte ptr [edi]
+00402ABB   .  8AC2          mov     al, dl
+00402ABD   .  3AD1          cmp     dl, cl
+00402ABF   .  75 1E         jnz     short 00402ADF
+00402AC1   .  84C0          test    al, al
+00402AC3   .  74 16         je      short 00402ADB
+00402AC5   .  8A4E 01       mov     cl, byte ptr [esi+1]
+00402AC8   .  8A57 01       mov     dl, byte ptr [edi+1]
+00402ACB   .  8AC1          mov     al, cl
+00402ACD   .  3ACA          cmp     cl, dl
+00402ACF   .  75 0E         jnz     short 00402ADF
+00402AD1   .  83C6 02       add     esi, 2
+00402AD4   .  83C7 02       add     edi, 2
+00402AD7   .  84C0          test    al, al
+00402AD9   .^ 75 DC         jnz     short 00402AB7            ;  判断上面加法运算后结果是否与k8kBDlnjje6Fji856ldFDpf5f8kmoCfihm相等
+00402ADB   &gt;  33C0          xor     eax, eax
+00402ADD   .  EB 05         jmp     short 00402AE4
+00402ADF   &gt;  1BC0          sbb     eax, eax
+00402AE1   .  83D8 FF       sbb     eax, -1
+00402AE4   &gt;  85C0          test    eax, eax
+00402AE6   .  0F85 E3000000 jnz     00402BCF                  ;  如果相等 就返回FLAG
+00402AEC   .  8B7424 1C     mov     esi, dword ptr [esp+1C]
+00402AF0   .  6A 01         push    1
+00402AF2   .  8BCE          mov     ecx, esi
+00402AF4   .  E8 ED040000   call    &lt;jmp.&amp;MFC42.#CWnd::Update&gt;
+00402AF9   .  68 E4564000   push    004056E4                  ;  the flag file is:
+</code></pre><p>2、上面的算法实际上就是先对后12个字符进行base64解密，再进行3DES解密，然后用解密结果加密数独运算得到的字符串，如果最终结果和k8kbdlnjje6fji856ldfdpf5f8kmocfihm相等，就成功了！，首先我们得熟悉一下base64解密算法的汇编代码，只有了解这个常见的算法，在跟踪调试的时候才能节约时间，快速出结果，否则就会身陷其中，不可自拔。</p><p>对于base64解密算法，部分c代码如下：</p><pre><code>#!c
+if( j == 4 )
+{
+  *outputBuffer++ = (b[0] &lt;&lt; 2) | (b[1] &gt;&gt; 4);
+  *outputBuffer++ = (b[1] &lt;&lt; 4) | (b[2] &gt;&gt; 2 );
+  *outputBuffer++ = (b[2] &lt;&lt; 6) | b[3];
+}
+else if( j == 3 )
+{  
+  *outputBuffer++ = (b[0] &lt;&lt; 2) | (b[1] &gt;&gt; 4);
+  *outputBuffer++ = (b[1] &lt;&lt; 4) | (b[2] &gt;&gt; 2 );
+  return (i &gt;&gt; 2) * 3 + 2;
+}
+else if( j == 2 )
+{  
+  *outputBuffer++ = (b[0] &lt;&lt; 2) | (b[1] &gt;&gt; 4);
+  return (i &gt;&gt; 2) * 3 + 1;
+}
+else
+{
+  return -2;   
+}      
+</code></pre><p>} // End for i }</p><p>我们在 函数401000里看到如下汇编代码<code>cmp edi,4 ;cmp edi,3;cmp edi,2</code>：</p><p><img alt="" img-src="fea170cbfb64bdfa2097db43f391e0456ebbf461.jpg"></p><p><img alt="" img-src="70d1bb7e56498b36a9694465811a5586e6efaee3.jpg"></p><p>这些特征代码和C代码<code>if( j == 4 ); j==3 ;j == 2</code>一致，基本可以大致判断为是BASE64解密代码。</p><p>3、函数4016e0进去后，同一个函数4011a0执行了3遍：</p><p><img alt="" img-src="645f6eb7577fc4663f24630316792a17cca21503.jpg"></p><p>再看4011a0函数有以下汇编代码：</p><p><img alt="" img-src="6387947eae6e61e6c2be95491a436c46082a00d3.jpg"></p><p>这里push操作的常数比较多分别为十进制的<code>64 8 56 48</code></p><p>我们再看看DES函数的C部分代码：</p><p><img alt="" img-src="b2f4863a5028989ef63c89139e9dc408c60a6089.jpg"></p><p>这个与汇编代码push 的几个常数一致，这时再看看3DES C代码：</p><pre><code>#!c
+void tri_des(BYTE *dat, BYTE *key1, BYTE *key2, BYTE mode)
+{
+    des(dat, key1, mode);
+    des(dat, key2, 1 - mode);
+    des(dat, key1, mode);
+}
+</code></pre><p>只是改变了传入参数，跟函数4016e0一致。因此在逆向调试的时候如果遇到比较大型的特别复杂的算法 首先就要去考虑是否为常见的比较著名的加密算法，然后查找记住这些算法的特征，然后快速判断，就不用再费力的分析这些算法了。</p><p>4、根据之前算法分析的结果把字符串i4h48diiha38da344ha88ha4d4hfi3ahfi八个一组轮流加KEY （8字节）得到k8kbdlnjje6fji856ldfdpf5f8kmocfihm，首先我们做减法运算反推出KEY，因为加法时遇到 > ? ；的结果时又继续加了一遍KEY 因此，做减法的时候首先进行一次减法运算得到key1，把得到的key1除以2 取整得到key2 ，这时重新进行加法计算来验证，如果加key2得到了> 或 ?或;那么KEY取key2，否则取key1，这样就得到了加法运算的key addKey="\x02\x04\x03\x07\x06\x08\x05\x01\x0"，当你反推加密结果不正确的时候就得考虑一下这个KEY是否有一个0结束符号了。这里要加一个0结束符。</p><p>5、根据汇编算法得到KEY后，我们首先对其进行3DES加密。从汇编算法里也分析到了加密密钥是从i4h48diiha38da344ha88ha4d4hfi3ahfi里取的两组8字节长度的字符串。因此密钥是已知的。</p><p>题目中对数据进行3DES解密算法如下：</p><p>00402A3E . 6A 01 push 1 00402A40 . 8D4424 48 lea eax, dword ptr [esp+48] ; 取输入串前8个字符 00402A44 . 52 push edx 00402A45 . 50 push eax 00402A46 . 57 push edi 00402A47 . E8 94ECFFFF call 004016E0 ; 把上面取出的两组字符作为密钥进行3DES解密 通过跟踪调试我们可以分析出：一共传入了4个参数 其中1代表解密，edx eax是密钥，这里可以保持不变，edi是要解密的数据，那么我们直接可以利用这个函数来对KEY进行加密。具体操作就是，首先选中push 1这一行，右键选择此处为新EIP，然后把push 1改为push 0来对数据加密，修改edi内存地址对应的数据为KEY，执行一遍这个函数就得到了KEY进行3DES加密后的结果，保存在EDI指向的内存里。把这个结果进行BASE64加密就得到了后12个字符Jji29cqJ+8kA，把它和之前数据运算的结果拼接起来i4h48diiha38da344ha88ha4d4hfi3ahfiJji29cqJ+8kA就得到了最终结果。</p><h1>0x03 程序算法设计分析</h1><hr><p>1、首先无意中看到一个数独游戏，难度系数只有1，于是乎就想根据这个设计一个算法。由于二进制题目才开始兴起，所以也不打算采用太复杂的算法，设计的时候适当的控制了一下难度。这个算法设计起来比较简单，首先自己完成了一遍这个数独游戏，然后用代码来检验数独结果，代码如下：。</p><pre><code>#!c
+CString CSgbmz1Dlg::check(char *in)
+{
+    CString result;
+//初始化数独矩阵
+    Char *key="adf438ghi",*init_table="g8azfzzd3f3zzzhazgzdzzzgzf4zzizz8fghzzfdgi3zz3gzfzzizdai3g8zzzzhfd4zzg8z84gzazd3z";
+    char table[9][9]={0};
+    char newtable[9][9];
+    int i=0,j=0,n=0;
+    result="where is flag?flag is in the beautifull spring!";
+//检查输入内容是否在规定范围 adf438ghi
+    for (i=0;i&lt;strlen(in)-12;i++)
+    {
+        for (j=0;j&lt;strlen(key);j++)
+        {
+            if (in[i]==key[j])
+            {
+                break;
+            }
+        }
+        if (j==strlen(key))  //根据循环次数判断，如果小于adf438ghi的长度 表示没在里面找到 就挂了
+        {
+            //  syslog-&gt;SetWindowText("where is flag?flag is in the beautifull spring!");
+            return result;
+        }
+    }
+    memcpy(table,init_table,81);
+//下面被注释起来了，这是制作生成数独初始矩阵和数独结果的过程
+    /*  {"761030025"}//g8azfzzd3=&gt;i4h  //首先初始化一个数字数独矩阵，再把它转化为字符对应的形式
+    ,{"350008107"}//f34
+    ,{"020007034"}
+    ,{"009006378"}
+    ,{"003279500"}
+    ,{"570300902"}
+    ,{"195760000"}
+    ,{"832400760"}
+    ,{"647010250"}
+    };
+    char *table1[9]={                //初始化一个数独结果矩阵，再把它转化为字符对应的形式
+    {"761934825"}//g8azfzzd3=&gt;i4h
+    ,{"354628197"}//f34
+    ,{"928157634"}
+    ,{"219546378"}
+    ,{"483279516"}
+    ,{"576381942"}
+    ,{"195762483"}
+    ,{"832495761"}
+    ,{"647813259"}
+    };
+    */
+    for(i=0;i&lt;9;i++)  //把输入的字符串填充到初始数独矩阵中
+        for(j=0;j&lt;9;j++)
+        {
+            if(table[i][j]=='z')newtable[i][j]=in[n++];
+            else newtable[i][j]=table[i][j];
+        }
+
+
+        for (i=0;i&lt;9;i++)
+            for (j=0;j&lt;9;j++)
+            {
+                char test=newtable[i][j];
+                newtable[i][j]='w';
+                for (n=0;n&lt;9;n++)  //进行行检查
+                {
+                    if (test==newtable[i][n])
+                    {
+                        //  syslog-&gt;SetWindowText("where is flag?flag is in the beautifull spring!");
+                        return result;
+                    }
+
+                }
+                newtable[i][j]=test;
+
+                test=newtable[j][i];
+                newtable[j][i]='y';
+                for (n=0;n&lt;9;n++)  ////进行列检查
+                {
+                    if (test==newtable[n][i]) 
+                    {
+                        //  syslog-&gt;SetWindowText("where is flag?flag is in the beautifull spring!");
+                        return result;
+                    }
+
+                }
+                newtable[j][i]=test;
+            }
+            result="good !flag is Waving to you!";
+            return result;
+}
+</code></pre><p>这个基本是算法的全部内容了，但是感觉实在是难度不大，又怕被秒杀，因此决定给这个题目再添点油，加点醋。于是就有了后面12个字符的算法。</p><p>2、后面12字符算法部分：</p><pre><code>#!c
+if(m_sf.IsEmpty())return;   
+
+    info=check(m_sf.GetBuffer(m_sf.GetLength())); //数独游戏
+
+    char *temp=m_sf.GetBuffer(m_sf.GetLength());
+    memcpy(g_key1,temp,8);  //取3DES密钥
+    memcpy(g_key2,temp+20,8);
+    int slen1,slen; 
+    TCHAR * tc;
+     //注释的这部分 是对加密KEY 进行加密 得到最终结果的过程
+    /*  tri_des(addKey,g_key1,g_key2,0);//3DES    0加密
+
+
+        int slen1,len=9;
+        int slen = (len / 3) * 4;
+        slen += 10;
+
+          tc = (TCHAR *)malloc(slen);
+          slen = BASE64_Encode((BYTE *)addKey, len, tc);
+          tc[slen]='\0';
+          //syslog-&gt;SetWindowText(tc);
+    */    
+    slen=m_sf.GetLength()-34;
+
+    char * addKey;
+    addKey= (char *)malloc(slen);
+
+    memset(addKey,0,slen);
+    memcpy(addKey,temp+34,(9/3)*4);
+
+    slen1 = (slen / 4) * 3;
+    slen1 += 10;
+    BYTE * ct;
+    ct = (BYTE *)malloc(slen1);
+    int deLen=BASE64_Decode(addKey, slen, ct); //对输入进行BASE64解密
+    ct[deLen]='\0';
+
+    tri_des(ct,g_key1,g_key2,1);//3DES  1  解密 
+    int i=0,j;
+    while(temp[i]&amp;&amp;i&lt;m_sf.GetLength()-12)  //加密数独运算的结果
+    {
+        temp[i]+=ct[i%8];
+        if (temp[i]=='&gt;'||temp[i]=='?'||temp[i]==';')temp[i]+=ct[i%8];
+        i++;
+    }
+    temp[i]='\0';
+    info+="\r\n";   
+
+    if (!strcmp(temp,"k8kBDlnjje6Fji856ldFDpf5f8kmoCfihm")) //比较是否相等
+    {
+        UpdateData(TRUE);
+        info+="the flag file is:";
+        info+=m_sf.GetBuffer(m_sf.GetLength());
+        info+=".php\r\n";
+        info+="trying to get the flag....\r\n";
+
+        httpdata.Replace("ip_addr",m_ip);
+        httpdata.Replace("main",m_sf.GetBuffer(m_sf.GetLength()));
+        CString rep=SentHttpData(httpdata);
+        if (rep.Find("miao",0)&gt;-1)
+        {
+            info+=rep;
+        }
+        else
+            info+="so sorry!no flag !";
+    }
+</code></pre><p>上面的算法其实就是一个加法运算，所以难度也不大。最主要的是如果没有能识别出3DES加密算法，那么就会被卡住，所以对算法特征的了解在破解过程中往往会有很大帮助，也许这里难住了一部分人。</p><p>3、最终结果如果和k8kBDlnjje6Fji856ldFDpf5f8kmoCfihm相等，这个时候就会以输入字符串作为文件名，以php为后缀 访问服务器里的这个文件，这时候会返回flag</p><p>文件里的PHP 代码为：</p><pre><code>#!php
+&lt;?php
+include 'config.php';
+$sql = "select flag from flag";
+$result = @mysql_query($sql);
+while($row = mysql_fetch_array($result))
+{
+    if($row['flag'])
+    {
+        echo $row['flag'];
+        break;
+    }
+    else
+    {
+        die('no!');
+    }
+}
+?&gt;
+</code></pre><h1>0x04 总结</h1><hr><p>本文对算法进行了破解分析以及设计分析。题目主要算法蕴含在一个数独游戏中。通过数独游戏的结果以及内存字符串反推得到一个加密KEY 通过把KEY进行3DES加密，再进行BASE64加密得到一个12字节长度的字符串，最后把数独结果和12字节长度字符串拼接起来得到了可以返回FLAG的文件，通过访问该文件最终获得FLAG。</p><p>本题难点在于是否能判断出来算法的表现是在做一个数独游戏，是否能根据汇编代码判断出题目中涉及的3DES算法和BASE64解密算法。感谢大家的参与，如果文章中有不正确或者表达不完整的地方，感谢批评指正！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">netwind</span> <span class="reply-time">2016-05-13 15:29:57</span></div><p></p><p>@偏執誑 http://c6eb0084942f92d8e.jie.sangebaimao.com 重新启动了 继续玩吧。以后报名三个白猫吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">netwind</span> <span class="reply-time">2016-05-13 15:26:56</span></div><p></p><p>@thevita 实际上进行3DES加密的时候是带0了的，所以必须带上0才能返回正确结果。解密代码里有两处 赋值0结束符操作 都是单独写出来了的 ct[deLen]=&#039;&#039;; temp[i]=&#039;&#039;; 以间接的提示 字符串结尾要加结束符0的习惯。可能有点坑，表示惭愧。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">netwind</span> <span class="reply-time">2016-05-13 15:20:17</span></div><p></p><p>@眼镜蛇 这是算法的一个漏洞吧，我也最后才发现。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">眼镜蛇</span> <span class="reply-time">2016-05-13 00:25:06</span></div><p></p><p>另外 k8kbdlnjje6fji856ldfdpf5f8kmocfihm 这个是由i4h48diiha38da344ha88ha4d4hfi3ahfi和8字符长度的KEY循环做加法得到的，那岂不是只要知道i4h48diiha38da344ha88ha4d4hfi3ahfi的前8位 就可以推出后面的了啊？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">眼镜蛇</span> <span class="reply-time">2016-05-13 00:18:39</span></div><p></p><p>@thevita 别纠结了，这里挖了个坑，下次再来，给你flag。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">偏執誑</span> <span class="reply-time">2016-05-12 23:40:32</span></div><p></p><p>露珠能不能把二进制文件上传一下呀.....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thevita</span> <span class="reply-time">2016-05-12 23:28:00</span></div><p></p><p>这样的话 i4h48diiha38da344ha88ha4d4hfi3ahfiJji29cqJ+8k 后面随便跟任何b64空间下的字符都能通过检测，可是未什么不给我flag</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thevita</span> <span class="reply-time">2016-05-12 16:39:03</span></div><p></p><p>i4h48diiha38da344ha88ha4d4hfi3ahfiJji29cqJ+8k=<br>我的天 ， 最后des的结果应该是8位的话 得到的应该是12位的base64 + 一个 ‘=‘<br>Jji29cqJ+8kA decode后是一个9byte 的数据，最后一个数据是\x00</p><p>好坑，，，，，，</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">PiaCa</span> <span class="reply-time">2016-05-12 11:15:01</span></div><p></p><p>666，以后三个白帽 writeup 可以来 drops 看了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fnut</span> <span class="reply-time">2016-05-12 10:35:33</span></div><p></p><p>学习了……</p><p></p></div></div></div></div></div></main>

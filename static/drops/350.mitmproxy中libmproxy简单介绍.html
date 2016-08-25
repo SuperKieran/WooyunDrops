@@ -1,0 +1,74 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">mitmproxy中libmproxy简单介绍</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">jaffer</a> <span class="bull">·</span> <time title="2014/09/24 17:42" ui-time="" datetime="2014/09/24 17:42" class="published ng-binding ng-isolate-scope">2014/09/24 17:42</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 简介</h2><hr><p>Mitmproxy是一个基于python的中间人代理的框架。做过渗透测试的肯定很熟悉工具burpsuite或Fiddler，这些工具能够拦截并修改http或https的数据包，对于分析数据包交互的应用来说是非常有用的。但是这些工具都是整套给我们做好了。比如如果想自己定制一套这样的工具，添加一些自己需要的功能的话，那么我想，mitmproxy将是一个比较好的选择，因为它提供了一个可供用户调用的库libmproxy（注意该库目前只支持linux系统）。</p><p>用过kali系统的，对于mitmproxy应该不会陌生，因为这个工具已经内嵌到了kali系统里面了。如果你是在普通的linux系统，那么就需要自己手动安装这个工具。</p><p>Mitmproxy项目主页：<a href="http://mitmproxy.org/">http://mitmproxy.org/</a>（需要翻墙）</p><p>Github：<a href="https://github.com/mitmproxy/mitmproxy">https://github.com/mitmproxy/mitmproxy</a></p><p>安装以及简单使用：<a href="http://sec.chinabyte.com/412/12771912.shtml">http://sec.chinabyte.com/412/12771912.shtml</a></p><h2>0x01 libmproxy介绍</h2><hr><p>一旦用户安装上了mitmproxy，那么，在python的dist-packages目录下就会有一个libmproxy的目录。点击进去，如下图所示。</p><p><img alt="2014090322432418732.jpg" img-src="4dfc07aad2e79c5226d81c25aa4a716e6491e64b.jpg"></p><p>有很多文件，里面最关键的一个文件就是flow.py。里面有从客户端请求的类Request，也有从服务器返回的可以操作的类Response。并且都实现了一些方法可以调用请求或回复的数据，包括请求url，header，body，content等。具体如下：</p><p>Request的一些方法：</p><pre><code>get_query():得到请求的url的参数，被存放成了字典。
+set_query(odict):设置请求的url参数，参数是字典。
+get_url():请求的url。
+set_url(url):设置url的域。
+get_cookies():得到请求的cookie。
+headers：请求的header的字典。
+content：请求的内容，如果请求时post，那么content就是指代post的参数。
+Response的一些方法如下：
+Headers：返回的header的字典。
+Code：返回数据包的状态，比如200,301之类的状态。
+Httpversion：http版本。
+</code></pre><p>有了上面这些简单的方法，只要我们会python，就可以写一些简单的程序，比如过滤一些数据，只是提取一些有特定格式的数据包等。</p><h2>0x02 一个简单的实例</h2><hr><p>下面就来写一个这样的程序：抓取含有password或passwd这样字段的数据包，将这个数据包打印出来。</p><p>那么分析一下，可能出现passwd或password的位置，第一，是url参数，这个我们可以通过get_url()这个方法获取，第二个就是content，如果请求数据报文是通过post提交，那么就需要在content里面找到。好了，分析好了，那么就剩下写代码了。Mitmproxy官网有一个小程序，我们可以借鉴，下面是一个借鉴mitmproxy官网的代码的简易的实现。</p><pre><code>#!python
+#!/usr/bin/env python
+#coding=utf-8
+"""
+author:jaffer
+time:2014-9-3 19:33
+"""
+from libmproxy import controller, proxy
+import os
+import pdb
+class StickyMaster(controller.Master):
+    def __init__(self, server):
+        controller.Master.__init__(self, server)
+    def run(self):
+        try:
+            return controller.Master.run(self)
+        except KeyboardInterrupt:
+            self.shutdown()
+
+    def findword(self,msg):
+        stringword1 = 'passwd'
+        stringword2 = 'password'
+        content = msg.content
+        querystring = msg.get_query()
+        #在url参数中查找
+        for eachp in querystring:
+            if eachp[1].find(stringword1) != -1 or eachp[1].find(stringword2) != -1:
+                return 1
+        #在content中寻找
+        if content.find(stringword1) != -1 or content.find(stringword2) != -1:
+            return 1
+        return 0
+
+    def handle_request(self, msg):
+        flag = self.findword(msg)
+        if flag == 1:
+            str = msg.get_query()
+            con = msg.content
+            url = msg.get_url()
+            m = msg.method
+            print 'method:' + m
+            print '\n'
+            print 'query:\n'
+            for eachp in str:
+                print eachp[0] + '=' + eachp[1]
+                print '\n'
+            print '\n'
+            print 'url:' + url
+            print '\n'
+            print 'content:' + con
+            print '------------------\n'
+        msg.reply()        
+
+    def handle_response(self, msg):
+        msg.reply()
+
+config = proxy.ProxyConfig(
+    cacert = os.path.expanduser("~/.mitmproxy/mitmproxy-ca.pem")
+)
+server = proxy.ProxyServer(config, 8000)
+m = StickyMaster(server)
+m.run()
+</code></pre><p>我使用手机端浏览器，登录人人网，使用上述代码截获数据包如图：</p><p><img alt="2014090322444687124.jpg" img-src="971334259e0e54707c76b60bdba1d7ab6652378d.jpg"></p><h2>0x04 后记</h2><hr><p>Mitmproxy提供的libmproxy很是强大方便，对于自己需要自己定制的程序代码有帮助，当然上面只是一个简单的实现，还有更多的功能需要更多的挖掘，libmproxy下面的那些内容可以继续学习。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2719" rel="bookmark" id="re1">从内存中窃取未加密的SSH-agent密钥</a></li><li><a href="http://drops.wooyun.org/tips/12673" rel="bookmark" id="re2">Elasticsearch集群的备份与恢复</a></li><li><a href="http://drops.wooyun.org/tips/14016" rel="bookmark" id="re3">是谁让你我如此近距离（论第三方微信营销平台的安全隐患）</a></li><li><a href="http://drops.wooyun.org/tips/3170" rel="bookmark" id="re4">ISG2014 Writeups</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mark0smith</span> <span class="reply-time">2016-05-24 17:25:59</span></div><p></p><p>这个库好像改名为mitmproxy了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">haha</span> <span class="reply-time">2016-05-18 17:35:42</span></div><p></p><p>@th000 这个支持windows么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">haha</span> <span class="reply-time">2016-05-18 17:35:13</span></div><p></p><p>@th000</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jaffer</span> <span class="reply-time">2015-07-03 14:40:00</span></div><p></p><p>@bey0nd https://github.com/mitmproxy/mitmproxy/issues/202<br>可能有帮助</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bey0nd</span> <span class="reply-time">2015-07-02 22:41:51</span></div><p></p><p>楼主请问这个是什么问题？</p><p>AttributeError: Request instance has no attribute &#039;reply&#039;</p><p>直接运行你的测试程序就是这样</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccSec</span> <span class="reply-time">2015-06-17 10:54:14</span></div><p></p><p>@ccSec 显示没有换行，切换到网页源代码模式即可看到正常的显示</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccSec</span> <span class="reply-time">2015-06-17 10:52:08</span></div><p></p><p>Windows下安装方法：<br>1.python-2.7.10.amd64.msi<br>2.VCForPython27.msi<br>3.Win64OpenSSL-1_0_2c.exe<br>4.建立BAT文件内容如下<br>@echo off<br>set PATH=C:\OpenSSL-Win64\include;%PATH%<br>set LIB=C:\OpenSSL-Win64\lib;C:\OpenSSL-Win64\lib\VC;C:\OpenSSL-Win64\lib\VC\static;%LIB%<br>set LIBPATH=C:\OpenSSL-Win64\lib;C:\OpenSSL-Win64\lib\VC;C:\OpenSSL-Win64\lib\VC\static;%LIBPATH%<br>set INCLUDE=C:\OpenSSL-Win64\include;%INCLUDE%<br>pip install cryptography<br>pip install mitmproxy<br>pause<br>运行后即可安装成功！<br>PS:运行环境Win7 x64，其他环境请自行修改测试。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">th000</span> <span class="reply-time">2015-06-11 15:18:47</span></div><p></p><p>注意该库目前只支持linux系统，错误。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.Anderson</span> <span class="reply-time">2015-05-30 11:08:53</span></div><p></p><p>非常好的介绍。感谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">老妖</span> <span class="reply-time">2014-10-13 16:47:20</span></div><p></p><p>有用，多谢楼主</p><p></p></div></div></div></div></div></main>

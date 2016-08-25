@@ -1,0 +1,212 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">uctf-杂项题目分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2014/10/28 15:04" ui-time="" datetime="2014/10/28 15:04" class="published ng-binding ng-isolate-scope">2014/10/28 15:04</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>BP 断点</h2><hr><blockquote><p>分数:100 描述: 提示 1：key 不是大家喜欢的波波老师！<br>提示 2：bmp+png<br>提示 3：CRC Link: <a href="http://pan.baidu.com/s/1o6x4FEE">http://pan.baidu.com/s/1o6x4FEE</a></p></blockquote><p>Bmp 只是诱饵，给大家看看波波老师。关键在于 png 图片，根据 png 格式图片，以及提示，很明显可以想到利用 crc 去爆破宽度和高度。可以用 c 或者 py，py 在这题爆破三个字节还是可以的，如果字节太多还是用 c 吧。 之所以名字叫做 BP 断点，是因为是 bmp+png 的图片。</p><p><strong>参考 c 代码：</strong></p><pre><code>#include "stdafx.h"
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+//crc32.h
+#ifndef _CRC32_H
+#define _CRC32_H
+UINT crc32( UCHAR *buf, int len);
+#endif
+static UINT CRC32[256];
+static char init = 0;
+//初始化表
+static void init_table()
+{
+int i,j;
+UINT crc;
+for(i = 0;i &lt; 256;i++)
+{
+crc = i;
+for(j = 0;j &lt; 8;j++)
+{
+if(crc &amp; 1) 
+{
+crc = (crc &gt;&gt; 1) ^ 0xEDB88320;
+}
+else
+{
+crc = crc &gt;&gt; 1;
+}
+}
+CRC32[i] = crc;
+}
+}
+//crc32实现函数
+UINT crc32( UCHAR *buf, int len)
+{
+UINT ret = 0xFFFFFFFF;
+int i;
+if( !init )
+{
+init_table();
+init = 1;
+}
+for(i = 0; i &lt; len;i++)
+{
+ret = CRC32[((ret &amp; 0xFF) ^ buf[i])] ^ (ret &gt;&gt; 8);
+}
+ret = ~ret;
+return ret;
+}
+int main()
+{
+char sss[17]="\x49\x48\x44\x52\x00\x00";
+int a1,a2,a3,a4,a5,a6,a7,a8;
+int _crc32 = 0;
+for (a3=0x00;a3&lt;=0xff;a3++)
+for (a4=0x00;a4&lt;=0xff;a4++)
+for (a7=0x00;a7&lt;=0xff;a7++)
+for (a8=0x00;a8&lt;=0xff;a8++)
+{ 
+sss[6]=(char)a3;
+sss[7]=(char)a4;
+sss[8]='\x00';
+sss[9]='\x00';
+sss[10]=(char)a7;
+sss[11]=(char)a8;
+sss[12]='\x08';sss[13]='\x06';sss[14]='\x00';sss[15]='\x00';sss[16]='\x00';
+sss[17]='\x00';
+_crc32 = crc32((UCHAR *)sss, 17);
+if(_crc32 == 0x80BF36CC)
+{
+printf("%s,%x,%x,%x,%x\n", sss,a3,a4,a7,a8);
+}
+}
+return 0;
+}
+</code></pre><p>最后结果：</p><p><img alt="enter image description here" img-src="b7d7de26ac46e05cfdc468687695d1b66e7d4e82.jpg"></p><p><strong>参考 python 代码：</strong></p><pre><code># -*- coding:utf-8 -*-import binascii
+#注意返回的是小写  形如："0x1c4d1d3cL",  并且为字符串。
+def CalcCrc32(str):
+return hex(binascii.crc32(str) &amp; 0xFFFFFFFF)
+if __name__=="__main__":
+str1 = '\x49\x48\x44\x52\x00\x00\x01'
+str2 = '\x00\x00'
+str3 = '\x08\x06\x00\x00\x00' 
+int1 = 0
+int2 = 0
+int3 = 0
+for int1 in range(0,256):
+for int2 in range(0, 256):
+for int3 in range(0, 256):
+m = str1   + chr(int1) + str2 + chr(int2) + chr(int3) + str3
+if (CalcCrc32(m) == "0x80bf36ccL"):
+print "Yeah, U Found it!"
+print hex(int1)
+print hex(int2)
+print hex(int3)
+exit()
+</code></pre><p>跑几分钟后，结果就出来了。</p><p><img alt="enter image description here" img-src="786046ce1b5ebc1b91b68d73897ab520adb84fce.jpg"></p><h2>听听音乐</h2><hr><p>先下载压缩包 http://pan.baidu.com/s/1bncmvuR 解压后发现两个文件<code>Music.exe</code>,<code>Readme.doc</code>. 要求利用 xp sp3 对目标程序进行溢出 既然是比赛，那么肯定就是要有溢出点的啦 直接打开 exe，听到了甩葱歌 于是不准备关掉他了， 新开一个例程，OD 载入</p><p><img alt="enter image description here" img-src="4ed88baa8517e521437e0f437ab438076c1bdc46.jpg"></p><p>发现是 VC6 链接的 于是就果断去找 main 函数了 不过 exe 程序居然自杀了，不能听甩葱歌，差评 果断定位到了 main</p><p><img alt="enter image description here" img-src="dd882ebd838586dbe7a98f7a55224f123d510eac.jpg"></p><p><img alt="enter image description here" img-src="0b26408c5f4f05701226d049d412a1ad412269d7.jpg"></p><p>写入内容为 exe 的启动参数 于是猜想启动参数这个地方应该就是所谓的溢出点 于是写了一个简单程序，界面如下</p><p><img alt="enter image description here" img-src="a2ecffd0e21b59a63b1a17aa6bbdb49276884086.jpg"></p><p>最后发现 273 程序就会崩溃 于是使用 273 创建进程 OD 附加并设置 F2 断点于 ReadFile 于多次返回后定位到</p><p><img alt="enter image description here" img-src="2604a08b44b3fadc5e55485bc9edd1fc10cba3da.jpg"></p><p>观察堆栈后发现 此时已覆盖[esp]一个字节 Ret 后肯定会跳转到内存中某一被修改的位置执行代码 于是构建 shellcode 内存收缩</p><pre><code>FF E4 (jmp esp)
+</code></pre><p>最终定位到 <code>0x77D29353</code>,打开 <code>010 editor</code>,构建 exp.</p><p><img alt="enter image description here" img-src="c742e28afc0759293296c6de91bd805e02891bf5.jpg"></p><p><img alt="enter image description here" img-src="24f0652a33377983eefb971e26f3fe35eb0eb0f9.jpg"></p><p><img alt="enter image description here" img-src="df09279868185ba73285cc98945ba2d31f2fe4a9.jpg"></p><p>接下来构造功能代码 之后我发现程序段里竟然有可耻的 call eax 找了个地址比较吉利的构造了下 用阿尔法转换了下 shellcode 最终 exp 如下</p><p><img alt="enter image description here" img-src="d07079ab09cee04429a3d3fe1a6fe03247ae62f7.jpg"></p><p><img alt="enter image description here" img-src="80f224d75fd5c122d14dd048e81c994962ffdcf0.jpg"></p><h2>最简单的加解密</h2><hr><blockquote><p>分数:300 描述: 提示 1：DES<br>提示 2：凯撒</p></blockquote><p>得到两串二进制后，转换为 16 进制分别为：</p><pre><code>0x4d3259784e7a49304f444a6f4e57746f4e44597a61575a6d4d3267785a6a5a6e5a6d59344d4763344f544d354f4441784f5774724e4449796144566d4f446730L
+0x5379636c30763372L
+</code></pre><p>转换为字符串分别为：</p><pre><code>M2YxNzI0ODJoNWtoNDYzaWZmM2gxZjZnZmY4MGc4OTM5ODAxOWtrNDIyaDVmODg0
+Sycl0v3r
+</code></pre><p>可以认为第一个字符串为 DES 的密文，第二个字符串为 DES 的密钥。解密发现不对。但是根 据大小写和数字可以猜测为 base64，解密后的字符串：</p><pre><code>3f172482h5kh463iff3h1f6gff80g89398019kk422h5f884
+</code></pre><p>再用 DES 的密钥解密，发现还是不对。根据提示“凯撒”去解码试试。</p><pre><code>http://crypo.in.ua/tools/eng_caesar.php
+</code></pre><p><img alt="enter image description here" img-src="2e02b6cebedcd72f5d763c91dfda8211f4372ae7.jpg"></p><p>解几次后发现 <code>3a172482c5fc463daa3c1a6baa80b89398019ff422c5a884</code> 这串是可以用DES 解密的。</p><p><img alt="enter image description here" img-src="cefb7e6b473b3b2265a1a765136789ee22908990.jpg"></p><h2>表白墙</h2><hr><p>在输出”tell me:”之后程序会读入用户输入，但这里使用了危险的 scanf(“%s”)而没有任何额外 的检查，直接输入超长字符串就可以造成 buffer overflow。</p><p><img alt="enter image description here" img-src="199ccb89795ae5f55f7f7bd6f2b0e7f06c8f5987.jpg"></p><p><img alt="enter image description here" img-src="0aa41c40a6ee378393b1e2fda47e5f5cf00b0627.jpg"></p><p><img alt="enter image description here" img-src="cc3453465a66d023dbc2797423f6cbc47c5621a6.jpg"></p><p>成功利用弹 MessageBox 的截图如下</p><p><img alt="enter image description here" img-src="7230d86b7c692bbe5853c6d93afbc6fe409e7a1f.jpg"></p><p>P.S：其实程序里还有一个格式化字符串漏洞，不过那个利用起来没这个方便，所以就直接 用这个了。</p><h2>找女朋友</h2><hr><p>加载到 od 中运行程序，程序发现了我们启动了 od，并打印出了 SOD 的驱动名</p><p><img alt="enter image description here" img-src="4451923e6a43e3847b3f3c8222a8ddac2b9c0e05.jpg"></p><p>程序 main 函数在<code>0x401000</code>处，在这里用了 <code>EnumDeviceDrivers</code> 和 <code>GetDeviceDriverFileNameA</code> 函数来枚举系统中已经加载的驱动，并判断 dbghelp.dll 路径与系统路径是否相同，如果不同 就认为系统中运行了 od 驱动对象的 DriverSection 保存了一个指向&#95;LDR&#95;DATA&#95;TABLE&#95;ENTRY 指针，这个结构中有着一 个所有驱动的链表，通过遍历这个链表就可以知道加载了哪些驱动，如果想要程序找不到一 个驱动，我们只需要从这个链表中把相应的驱动摘下来 以下是具体代码：</p><pre><code>#include &lt;ntddk.h&gt;
+#define INITCODE code_seg("INIT")
+#define PAGECODE code_seg("PAGE")
+#define PROCESS_ID_OFFSET 0x84
+#define IMAGE_NAME_OFFSET 0x174
+#define PROCESS_LINK_OFFSET 0x88
+#define PROCESS_EXITTIME    0x78
+typedef struct _SYSTEM_SERVICE_TABLE
+{
+PVOID    *ServiceTableBase;
+PULONG   *ServiceCounterTableBase;
+ULONG     NumberOfServices;
+ULONG     ParamTableBase;
+}SSDT,   *PSSDT;
+__declspec(dllimport) SSDT   KeServiceDescriptorTable;
+//_LDR_DATA_TABLE_ENTRY 声明
+typedef struct _LDR_DATA_TABLE_ENTRY
+{
+LIST_ENTRY InLoadOrderLinks;
+LIST_ENTRY InMemoryOrderLinks;
+LIST_ENTRY InInitializationOrderLinks;
+PVOID DllBase;
+PVOID EntryPoint;
+ULONG SizeOfImage;
+UNICODE_STRING FullDllName;
+UNICODE_STRING BaseDllName; 
+ULONG Flags;
+USHORT LoadCount;
+USHORT TlsIndex;
+union
+{
+LIST_ENTRY HashLinks;
+struct
+{
+PVOID SectionPointer;
+ULONG CheckSum;
+};
+};
+ULONG TimeDateStamp;
+}LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+/////////////////////////////////////////////////////////////
+void DriverUnload(IN PDRIVER_OBJECT pDriverObject);
+void ShowProcess();
+struct _LIST_ENTRY *tmp;
+/////////////////////////////////////////////////////////////
+#pragma INITCODE
+NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegisterPath) 
+{
+PLDR_DATA_TABLE_ENTRY pTableEntry = NULL;
+PLIST_ENTRY pCur = NULL, pHead = NULL;
+UNICODE_STRING str_Name;
+ULONG EProcess,FirstEProcess;
+LIST_ENTRY*  ActiveProcessLinks;
+ULONG pid,dwCount=0;
+PUCHAR pImage;
+//PPROCESS_INFO ProcessInfo={0};
+pDriverObject-&gt;DriverUnload = DriverUnload;
+RtlInitUnicodeString(&amp;str_Name, L"fengyue0.sys");
+//从驱动对象中的 DriverSection 获得_LDR_DATA_TABLE_ENTRY 指针
+pTableEntry = (PLDR_DATA_TABLE_ENTRY)pDriverObject-&gt;DriverSection;
+//使头指针和当前指针指向模块链表中的一个模块
+pCur = pHead = pTableEntry-&gt;InLoadOrderLinks.Blink;
+do 
+{
+//获得模块指针
+pTableEntry = (PLDR_DATA_TABLE_ENTRY)pCur;
+if (pTableEntry-&gt;BaseDllName.Buffer)
+{
+if (RtlCompareUnicodeString(&amp;str_Name, &amp;(pTableEntry-&gt;BaseDllName), FALSE) == 
+0)
+{
+//从链表中删除模块
+pTableEntry-&gt;InLoadOrderLinks.Blink-&gt;Flink  = 
+pTableEntry-&gt;InLoadOrderLinks.Flink;
+pTableEntry-&gt;InLoadOrderLinks.Flink-&gt;Blink  = 
+pTableEntry-&gt;InLoadOrderLinks.Blink;
+break;
+}
+}
+pCur = pCur-&gt;Flink;
+}while (pCur != pHead);
+/////////////////////////////////////////////////////////////
+//显示进程
+ShowProcess();
+return STATUS_SUCCESS;
+} 
+#pragma PAGECODE
+void DriverUnload(IN PDRIVER_OBJECT pDriverObject)
+{
+}
+void ShowProcess()
+{
+ULONG OriFunAddr;
+UNICODE_STRING str_FuncName;
+PULONG ssdt_base;
+RtlInitUnicodeString(&amp;str_FuncName,L"NtQuerySystemInformation");
+//获取 ssdt 基址
+ssdt_base = (PULONG) KeServiceDescriptorTable.ServiceTableBase;
+//获取 NtQuerySystemInformation 原地址
+OriFunAddr =(ULONG) MmGetSystemRoutineAddress(&amp;str_FuncName);
+//判断当前 ssdt 中地址是否被替换
+if (ssdt_base[0xAD] != OriFunAddr) 
+{
+DbgPrint("NtQuerySystemInformation has been hooked!fix it...");
+ssdt_base[0xAD] = OriFunAddr;
+DbgPrint("success!");
+}
+}
+</code></pre><p>题目中的第二个目标就是使 od 进程在 windows 自带的任务管理器中显示出来， fengyue0.sys 驱动会在 ssdt 中把 <code>NtQuerySystemInformation</code> 函数 hook 掉，所以，当 windows 的任务管理 器通过这个函数枚举进程的时候就会把 od 进程隐藏了</p><p><img alt="enter image description here" img-src="b7ec93ceac328905706a3d8d05eb8f77c76dd05b.jpg"></p><p>知道了隐藏的原理之后，我们的目标就转换为了，把 <code>NtQuerySystemInformation</code> 的 ssdt hook 给恢复了。 在 <code>KeServiceDescriptorTable</code> 中可以获得 ssdt 的基地址，再通过 <code>NtQuerySystemInformation</code> 在 ssdt 中的索引号就可以得到在 ssdt 中存放的它的地址，但是 ssdt 中的地址不一定是函数真 正的地址，有可能是被 hook 了的地址，所以可以再 MmGetSystemRoutineAddress 获得函数 真正的地址，然后与 ssdt 中的对比，如果相同则说明函数没有被 hook，反之函数被 hook， 我们的目的是恢复它的真正地址，现在既然已经有了真正的地址，就可以直接把 ssdt 中的 假地址给换掉，就恢复了 <code>NtQuerySystemInformation</code> 的 ssdt hook。具体代码在上述代码的 ShowProcess()函数中。</p><p>用 od 加 载 目 标 程 序 后 ， 把 我 们 的 驱 动 用 DriverMonitor 加 载 并 运</p><p><img alt="enter image description here" img-src="9a28c0bdcab344c2baf4d2608e3effd8e4f9e804.jpg"></p><p>之后在 od 中运行目标程序</p><p><img alt="enter image description here" img-src="2a3b0571115a5717126937d759b075b2c4a9196e.jpg"></p><p>程序显示没有发现 od，说明我们隐藏驱动成功了，再到 windows 任务管理器中查看一下， ollydbg.exe 进程也出现了</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3589" rel="bookmark" id="re1">教你解密Gh0st 1.0远控木马VIP版配置信息</a></li><li><a href="http://drops.wooyun.org/tips/7715" rel="bookmark" id="re2">学习/认识CPU的GDT</a></li><li><a href="http://drops.wooyun.org/tips/10002" rel="bookmark" id="re3">那些年做过的ctf之加密篇</a></li><li><a href="http://drops.wooyun.org/tips/1621" rel="bookmark" id="re4">堆溢出学习笔记</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一个狗</span> <span class="reply-time">2014-10-31 22:49:57</span></div><p></p><p>凭赛棍敏锐的嗅觉。＋1</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">AppLeU0</span> <span class="reply-time">2014-10-31 03:22:43</span></div><p></p><p>是cuit的校赛题目 三叶草小组的 每年5月的时候会有比赛 欢迎参加哇~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2014-10-30 09:51:52</span></div><p></p><p>凭赛棍敏锐的嗅觉。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2014-10-30 00:17:51</span></div><p></p><p>普及知识：https://ctftime.org/ctfs</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">叮咚叮咚</span> <span class="reply-time">2014-10-29 23:56:24</span></div><p></p><p>我就想问下楼主是从哪里得到这些ctf的。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2014-10-29 12:22:51</span></div><p></p><p>什么比赛啊？？？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-10-28 23:55:43</span></div><p></p><p>我就只做了web……最后差一道还是两道李小胖的题。</p><p></p></div></div></div></div></div></main>

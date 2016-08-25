@@ -1,0 +1,194 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">逆向基础 OS-specific (三)</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">左懒</a> <span class="bull">·</span> <time title="2015/08/16 18:06" ui-time="" datetime="2015/08/16 18:06" class="published ng-binding ng-isolate-scope">2015/08/16 18:06</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>66章 系统调用(syscall-s)</h1><hr><p>众所周知，所有运行的进程在操作系统里面分为两类：一类拥有访问全部硬件设备的权限（内核空间）而另一类无法直接访问硬件设备(用户空间)。</p><p>操作系统内核和驱动程序通常是属于第一类的。</p><p>而应用程序通常是属于第二类的。</p><p>举个例子，Linux kernel运行于内核空间，而Glibc运行于用户空间。</p><p>这种分离对与操作系统的安全性是至关重要的：它最重要的一点是，不给任何进程有破坏到其它进程甚至是系统内核的机会。另一方面，一个错误的驱动或系统内核错误都会造成系统崩溃或者蓝屏。</p><p>保护模式下的x86处理器允许使用4个保护等级（ring）。但Linux和Windows两个操作系统都只使用了两个：ring0（内核空间）和ring3（用户空间）。</p><p>系统调用（syscall-s）是两个运行空间的连接点。可以说，这是提供给应用程序主要的API。</p><p>在Windows NT，系统调用表存在于SSDT。</p><p>通过系统调用实现shellcode在计算机病毒作者之间非常流行。因为很难确定所需函数在系统库里面的地址，但系统调用很容易确定。然而，由于系统调用属于比较底层的API，所以需要编写更多的代码。最后值得一提的是，在不同的操作系统版本里面，系统调用号是有可能不同的。</p><h2>66.1 Linux</h2><hr><p>在Linux系统中，系统调用通常使用int 0x80中断进行调用。通过EAX寄存器传递调用号，再通过其它寄存器传递所需参数。</p><p>Listing 66.1: A simple example of the usage of two syscalls</p><pre><code>section .text
+global _start
+_start:
+    mov edx,len ; buf len
+    mov ecx,msg ; buf
+    mov ebx,1   ; file descriptor. stdout is 1
+    mov eax,4   ; syscall number. sys_write is 4
+    int 0x80
+    mov eax,1   ; syscall number. sys_exit is 4
+    int 0x80
+section .data
+msg db 'Hello, world!',0xa
+len equ $ - msg
+</code></pre><p>编译：</p><pre><code>nasm -f elf32 1.s
+ld 1.o
+</code></pre><p>Linux所有的系统调用在这里可以查看：<a href="http://go.yurichev.com/17319">http://go.yurichev.com/17319</a>。</p><p>在Linux中可以使用strace(71章)对系统调用进行跟踪或者拦截。</p><h2>66.2 Windows</h2><hr><p>Windows系统使用int 0x2e中断或x86下特有的指令SYSENTER调用用系统调用服务。</p><p>Windows所有的系统调用在这里可以查看：<a href="http://go.yurichev.com/17320">http://go.yurichev.com/17320</a>。</p><p>扩展阅读：<a href="http://go.yurichev.com/17321.">“Windows Syscall Shellcode” by Piotr Bania</a></p><h1>67章 Linux</h1><hr><h2>67.1 位置无关代码</h2><hr><p>在分析Linux共享库的时候(.so)的时候，可能会经常看到类似下面的代码：</p><p>Listing 67.1: libc-2.17.so x86</p><pre><code>.text:0012D5E3 __x86_get_pc_thunk_bx proc near ; CODE XREF: sub_17350+3
+.text:0012D5E3 ; sub_173CC+4 ...
+.text:0012D5E3     mov ebx, [esp+0]
+.text:0012D5E6     retn
+.text:0012D5E6 __x86_get_pc_thunk_bx endp
+...
+.text:000576C0 sub_576C0 proc near ; CODE XREF: tmpfile+73
+...
+.text:000576C0     push ebp
+.text:000576C1     mov ecx, large gs:0
+.text:000576C8     push edi
+.text:000576C9     push esi
+.text:000576CA     push ebx
+.text:000576CB     call __x86_get_pc_thunk_bx
+.text:000576D0     add ebx, 157930h
+.text:000576D6     sub esp, 9Ch
+...
+.text:000579F0     lea eax, (a__gen_tempname - 1AF000h)[ebx] ; "__gen_tempname"
+.text:000579F6     mov [esp+0ACh+var_A0], eax
+.text:000579FA     lea eax, (a__SysdepsPosix - 1AF000h)[ebx] ; "../sysdeps/posix/tempname.c"
+.text:00057A00     mov [esp+0ACh+var_A8], eax
+.text:00057A04     lea eax, (aInvalidKindIn_ - 1AF000h)[ebx] ; "! \"invalid KIND in __gen_tempname\""
+.text:00057A0A     mov [esp+0ACh+var_A4], 14Ah
+.text:00057A12     mov [esp+0ACh+var_AC], eax
+.text:00057A15     call __assert_fail
+</code></pre><p>在每个函数开始处，所有指向字符串的指针都需要通过EBX和一些常量值来修正地址。这就是所谓的PIC（位置无关代码），它的目的是让这段代码即使随机地放在内存中某个位置都能正确地执行。这也是为什么不能使用绝对地址的原因。</p><p>PIC（位置无关代码）对于早期的操作系统和现在那些没有虚拟内存支持的嵌入式系统来说至关重要（所有进程都放在同一个连续的内存块）。此外，它还用于*NIX系统的共享库。这样共享库只需要加载一次到内存之后就可以让所有需要的进程使用，而且这些进程可以把同一个共享库映射到各自不同的内存地址上。这也是为什么共享库不使用绝对地址也能够正常地工作。</p><p>让我们做一个简单的实验：</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+int global_variable=123;
+int f1(int var)
+{
+    int rt=global_variable+var;
+    printf ("returning %d\n", rt);
+    return rt;
+};
+</code></pre><p>用GCC 4.7.3编译它并用IDA查看.so文件的反汇编代码：</p><pre><code>#!bash
+gcc -fPIC -shared -O3 -o 1.so 1.c
+</code></pre><hr><pre><code>.text:00000440 public __x86_get_pc_thunk_bx
+.text:00000440 __x86_get_pc_thunk_bx proc near ; CODE XREF: _init_proc+4
+.text:00000440 ; deregister_tm_clones+4 ...
+.text:00000440     mov ebx, [esp+0]
+.text:00000443     retn
+.text:00000443 __x86_get_pc_thunk_bx endp
+.text:00000570 public f1
+.text:00000570 f1 proc near
+.text:00000570
+.text:00000570 var_1C = dword ptr -1Ch
+.text:00000570 var_18 = dword ptr -18h
+.text:00000570 var_14 = dword ptr -14h
+.text:00000570 var_8 = dword ptr -8
+.text:00000570 var_4 = dword ptr -4
+.text:00000570 arg_0 = dword ptr 4
+.text:00000570
+.text:00000570     sub esp, 1Ch
+.text:00000573     mov [esp+1Ch+var_8], ebx
+.text:00000577     call __x86_get_pc_thunk_bx
+.text:0000057C     add ebx, 1A84h
+.text:00000582     mov [esp+1Ch+var_4], esi
+.text:00000586     mov eax, ds:(global_variable_ptr - 2000h)[ebx]
+.text:0000058C     mov esi, [eax]
+.text:0000058E     lea eax, (aReturningD - 2000h)[ebx] ; "returning %d\n"
+.text:00000594     add esi, [esp+1Ch+arg_0]
+.text:00000598     mov [esp+1Ch+var_18], eax
+.text:0000059C     mov [esp+1Ch+var_1C], 1
+.text:000005A3     mov [esp+1Ch+var_14], esi
+.text:000005A7     call ___printf_chk
+.text:000005AC     mov eax, esi
+.text:000005AE     mov ebx, [esp+1Ch+var_8]
+.text:000005B2     mov esi, [esp+1Ch+var_4]
+.text:000005B6     add esp, 1Ch
+.text:000005B9     retn
+.text:000005B9 f1 endp
+</code></pre><p>如上所示：每个函数执行时都会矫正“returning %d\n”和global&#95;variable的地址。&#95;&#95;x86&#95;get&#95;pc&#95;thunk_bx()函数通过EBX返回一个指向自身的指针（返回的是0x57C）。这是一种获取程序计数器（EIP）的简单方法。0x1A84常量是这个函数开始处到（Global Offset Table Procedure Linkage Table(GOT PLT)）它们之间的距离差。IDA会把这些偏移处理成更容易理解后再显示出来，所以实际上的代码是：</p><pre><code>.text:00000577 call __x86_get_pc_thunk_bx
+.text:0000057C add ebx, 1A84h
+.text:00000582 mov [esp+1Ch+var_4], esi
+.text:00000586 mov eax, [ebx-0Ch]
+.text:0000058C mov esi, [eax]
+.text:0000058E lea eax, [ebx-1A30h]
+</code></pre><p>这里的EBX指向了GOT PLT section。当计算global_variable（存储在GOT）的地址时须减去0x0C偏移量。当计算"returning %d\n"字符串的地址时须减去0x1A30偏移量。</p><p>顺便说一下，AMD64的指令支持使用RIP用于相对寻址，这使得它可以产生出更简洁的PIC代码。</p><p>让我们用相同的GCC编译器编译相同的C代码，但使用x64平台。</p><p>IDA会简化了反汇编代码，造成我们无法看到使用RIP相对寻址的细节，所以我在这里使用了objdump来查看反汇编代码：</p><pre><code>0000000000000720 &lt;f1&gt;:
+720: 48 8b 05 b9 08 20 00    mov rax,QWORD PTR [rip+0x2008b9] # 200fe0 &lt;_DYNAMIC+0x1d0&gt;
+727: 53                      push rbx
+728: 89                      fb mov ebx,edi
+72a: 48 8d 35 20 00 00 00    lea rsi,[rip+0x20] #751 &lt;_fini+0x9&gt;
+731: bf 01 00 00 00          mov edi,0x1
+736: 03 18                   add ebx,DWORD PTR [rax]
+738: 31 c0                   xor eax,eax
+73a: 89 da                   mov edx,ebx
+73c: e8 df fe ff ff          call 620 &lt;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e9b6b6999b80879d8fb68a8182a999859d">[email&#160;protected]</a>&gt;
+741: 89 d8                   mov eax,ebx
+743: 5b                      pop rbx
+744: c3                      ret
+</code></pre><p>0x2008b9是0x720处指令地址到global_variable地址的差，0x20是0x72a处指令地址到"returning %d\n"字符串地址的差。</p><p>你可能会看到，频繁重新计算地址会导致执行效率变差（虽然在x64会更好）。所以如果你比较关心性能的话最好还是使用静态链接。</p><h3>67.1.1 Windows</h3><p>Windows的DLL并没有使用PIC机制。如果Windows加载器需加载DLL到另外一个基地址，它需要把DLL在内存中的“重定位段”（在固定的位置）里所有地址都调整为正确的。这意味着多个Windows进程不能在不同进程内存块的不同地址共享一份DLL，因为每个实例加载在内存后只固定在这些地址工作。</p><h2>67.2 LD_PRELOAD hack in Linux</h2><hr><p>Linux允许让我们自己的动态链接库加载在其它动态链接库之前，甚至是系统库（如 libc.so.6）。</p><p>反过来想，也就是允许我们用自己写的函数去“代替”系统库的函数。举个例子，我们可以很容易地拦截掉time()，read()，write()等等这些函数。</p><p>来瞧瞧我们是如何愚弄uptime这个程序的。我们知道，该程序显示计算机已经工作了多长时间。借助strace的帮助可以看到，该程序通过/proc/uptime文件获取到计算机的工作时长。</p><pre><code>#!c
+$ strace uptime
+...
+open("/proc/uptime", O_RDONLY) = 3
+lseek(3, 0, SEEK_SET) = 0
+read(3, "416166.86 414629.38\n", 2047) = 20
+...
+</code></pre><p>/proc/uptime并不是存放在磁盘的真实文件。而是由Linux Kernel产生的一个虚拟的文件。它有两个数值：</p><pre><code>#!bash
+$ cat /proc/uptime
+416690.91 415152.03
+</code></pre><p>我们可以用wikipedia来看一下它的含义：</p><pre><code>第一个数值是系统运行总时长，第二个数值是系统空闲的时间。都以秒为单位表示。
+</code></pre><p>我们来写一个含open()，read()，close()函数的动态链接库。</p><p>首先，我们的open()函数会比较一下文件名是不是我们所想要打开的，如果是，则将文件描述符记录下来。然后，read()函数会判断如果我们调用的是不是我们所保存的文件描述符，如果是则代替它输出，否则调用libc.so.6里面原来的函数。最后，close()函数会关闭我们所保存的文件描述符。</p><p>在这里我们借助了dlopen()和dlsym()函数来确定原先在libc.so.6的函数的地址，因为我们需要控制“真实”的函数。</p><p>题外话，如果我们的程序想劫持strcmp()函数来监控每个字符串的比较，则需要我们自己实现一个strcmp()函数而不能用原先的函数。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdarg.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdbool.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;dlfcn.h&gt;
+#include &lt;string.h&gt;
+
+void *libc_handle = NULL;
+int (*open_ptr)(const char *, int) = NULL;
+int (*close_ptr)(int) = NULL;
+ssize_t (*read_ptr)(int, void*, size_t) = NULL;
+bool inited = false;
+
+_Noreturn void die (const char * fmt, ...)
+{
+    va_list va;
+    va_start (va, fmt);
+    vprintf (fmt, va);
+    exit(0);
+};
+
+static void find_original_functions ()
+{
+    if (inited)
+        return;
+    libc_handle = dlopen ("libc.so.6", RTLD_LAZY);
+    if (libc_handle==NULL)
+        die ("can't open libc.so.6\n");
+    open_ptr = dlsym (libc_handle, "open");
+    if (open_ptr==NULL)
+        die ("can't find open()\n");
+    close_ptr = dlsym (libc_handle, "close");
+    if (close_ptr==NULL)
+        die ("can't find close()\n");
+    read_ptr = dlsym (libc_handle, "read");
+    if (read_ptr==NULL)
+        die ("can't find read()\n");
+    inited = true;
+}
+
+static int opened_fd=0;
+
+int open(const char *pathname, int flags)
+{
+    find_original_functions();
+    int fd=(*open_ptr)(pathname, flags);
+    if (strcmp(pathname, "/proc/uptime")==0)
+        opened_fd=fd; // that's our file! record its file descriptor
+    else
+        opened_fd=0;
+    return fd;
+};
+
+int close(int fd)
+{
+    find_original_functions();
+    if (fd==opened_fd)
+        opened_fd=0; // the file is not opened anymore
+    return (*close_ptr)(fd);
+};
+
+ssize_t read(int fd, void *buf, size_t count)
+{
+    find_original_functions();
+    if (opened_fd!=0 &amp;&amp; fd==opened_fd)
+    {
+        // that's our file!
+        return snprintf (buf, count, "%d %d", 0x7fffffff, 0x7fffffff)+1;
+    };
+    // not our file, go to real read() function
+    return (*read_ptr)(fd, buf, count);
+};
+</code></pre><p>把它编译成动态链接库：</p><pre><code>gcc -fpic -shared -Wall -o fool_uptime.so fool_uptime.c -ldl
+</code></pre><p>运行uptime，并让它在加载其它库之前加载我们的库：</p><pre><code>LD_PRELOAD=`pwd`/fool_uptime.so uptime
+</code></pre><p>可以看到：</p><pre><code>01:23:02 up 24855 days, 3:14, 3 users, load average: 0.00, 0.01, 0.05
+</code></pre><p>如果LD_PRELOAD环境变量一直指向我们的动态链接库文件名，其它程序在启动的时候也会加载我们的动态链接库。</p><p>更多的例子请看：</p><ul><li><a href="http://go.yurichev.com/17043">Verysimpleinterceptionofthestrcmp()(YongHuang)</a></li><li><a href="http://go.yurichev.com/17145">KevinPulo—FunwithLD_PRELOAD.Alotofexamplesandideas.</a></li><li><a href="http://go.yurichev.com/17146">File functions interception for compression/decompression files on fly (zlibc).</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7430" rel="bookmark" id="re1">逆向基础 OS-specific (二)</a></li><li><a href="http://drops.wooyun.org/binary/7428" rel="bookmark" id="re2">逆向基础 OS-specific (一)</a></li><li><a href="http://drops.wooyun.org/binary/7453" rel="bookmark" id="re3">逆向基础 OS-specific (四)</a></li><li><a href="http://drops.wooyun.org/tips/1963" rel="bookmark" id="re4">逆向基础（三）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

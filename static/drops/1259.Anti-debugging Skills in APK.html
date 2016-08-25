@@ -1,0 +1,256 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Anti-debugging Skills in APK</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">unLimit安全小组</a> <span class="bull">·</span> <time title="2016/06/20 14:38" ui-time="" datetime="2016/06/20 14:38" class="published ng-binding ng-isolate-scope">2016/06/20 14:38</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author：超六、曲和</strong></p><h1>0x00 时间相关反调试</h1><hr><p>通过计算某部分代码的执行时间差来判断是否被调试，在Linux内核下可以通过time、gettimeofday，或者直接通过sys call来获取当前时间。另外，还可以通过自定义SIGALRM信号来判断程序运行是否超时。</p><h1>0x01 检测关键文件</h1><hr><p><strong>（1）</strong>/proc/pid/status、/proc/pid/task/pid/status</p><p>在调试状态下，Linux内核会向某些文件写入一些进程状态的信息，比如向/proc/pid/status或/proc/pid/task/pid/status文件的TracerPid字段写入调试进程的pid，在该文件的statue字段中写入t（tracing stop）：</p><p><img alt="pic1" img-src="6c5586c0e44ba5f5758a53fd8f4bf745fc429dc7.jpg"></p><p><strong>（2）</strong>/proc/pid/stat、/proc/pid/task/pid/stat</p><p>调试状态下/proc/pid/stat、/proc/pid/task/pid/stat文件中第二个字段是t（T）：</p><p><img alt="pic2" img-src="e5a453cbd254b9ce01696eb944b0429454beacba.jpg"></p><p><strong>（3）</strong>/proc/pid/wchan、/proc/pid/task/pid/wchan</p><p>若进程被调试，也会往/proc/pid/wchan、/proc/pid/task/pid/wchan文件中写入ptrace_stop。</p><h1>0x02 检测端口号</h1><hr><p>使用IDA动态调试APK时，android_server默认监听23946端口，所以通过检测端口号可以起到一定的反调试作用。具体而言，可以通过检测/proc/net/tcp文件，或者直接system执行命令<code>netstat -apn</code>等。</p><h1>0x03 检测android_server、gdb、gdbserver</h1><hr><p>在对APK进行动态调试时，可能会打开android&#95;server、gdb、gdbserver等调试相关进程，一般情况下，这几个打开的进程名和文件名相同，所以可以通过运行状态下的进程名来检测这些调试相关进程。具体而言，可以通过打开/proc/pid/cmdline、/proc/pid/statue等文件来获取进程名。当然，这种检测方法非常容易绕过――直接修改android&#95;server、gdb、gdbserver的名字即可。</p><h1>0x04 signal</h1><hr><p>信号机制在apk调试攻防中有着非常重要的作用，大部分主流加固厂商都会通过信号机制来增加壳的强度。在反调试中最常见的要数SIGTRAP信号了，SIGTRAP原本是调试器设置断点时发出的信号，为了能更好的理解SIGTRAP信号反调试，先让我们看看一下调试器设置断点的原理：</p><p>和x86架构类似，arm架构下调试器设置断点先要完成两件事：</p><ol><li>保存目标地址上的数据</li><li>将目标地址上头几个字节替换成arm/thumb下的breakpoint指令</li></ol><p>Arm架构下各类指令集breakpoint机器码如下：</p><table><thead><tr><th>指令集</th><th>Breakpoint机器码（little endian）</th></tr></thead><tbody><tr><td>Arm</td><td>0x01, 0x00, 0x9f, 0xef</td></tr><tr><td>Thumb</td><td>0x01, 0xde</td></tr><tr><td>Thumb2</td><td>0xf0, 0xf7, 0x00, 0xa0</td></tr></tbody></table><p>调试器设置完断点之后程序继续运行，直至命中断点，触发breakpoint，这时程序向操作系统发送SIGTRAP信号。调试器收到SIGTRAP信号后，会继续完成以下几件事：</p><ol><li>在目标地址上用原来的指令替换之前的breakpoint指令</li><li>回退被跟踪进程的当前pc值</li></ol><p>当控制权回到原进程时，pc就恰好指向了断点所在位置，这就是调试器设置断点的基本原理。在知道上述原理之后，再让我们继续分析SIGTRAP反调试的细节，如果我们在程序中间插入一条breakpoint指令，而不做其他处理的话，操作系统会用原来的指令替换breakpoint指令，然而这个breakpoint是我们自定义插入的，该地址上并不存在原指令，所以操作系统就跳过这个步骤，进入下一步回退pc值，即breakpoint的前一条指令。这时就出现问题了，下一条指令还是breakpoint指令，这也就造成了无限循环。</p><p>为了能继续正常执行，就需要模拟调试器的操作――替换breakpoint指令，而完成这个步骤的最佳时机就是在自定义signal的handle中。Talk is cheap，show me the code，下面给出此原理的简单实例：</p><pre><code>#!cpp
+char dynamic_ccode[] = {0x1f,0xb4, //push {r0-r4}
+                        0x01,0xde, //breakpoint
+                        0x1f,0xbc, //pop {r0-r4}
+                        0xf7,0x46};//mov pc,lr
+
+char *g_addr = 0;
+
+void my_sigtrap(int sig){
+
+    char change_bkp[] = {0x00,0x46}; //mov r0,r0
+    memcpy(g_addr+2,change_bkp,2);
+    __clear_cache((void*)g_addr,(void*)(g_addr+8)); // need to clear cache
+    LOGI("chang bpk to nop\n");
+
+}
+
+void anti4(){//SIGTRAP
+
+    int ret,size;
+    char *addr,*tmpaddr;
+
+    signal(SIGTRAP,my_sigtrap);
+
+    addr = (char*)malloc(PAGESIZE*2);
+
+    memset(addr,0,PAGESIZE*2);
+    g_addr = (char *)(((int) addr + PAGESIZE-1) &amp; ~(PAGESIZE-1));
+
+    LOGI("addr: %p ,g_addr : %p\n",addr,g_addr);
+
+    ret = mprotect(g_addr,PAGESIZE,PROT_READ|PROT_WRITE|PROT_EXEC);
+    if(ret!=0)
+    {
+        LOGI("mprotect error\n");
+        return ;
+    }
+
+    size = 8;
+    memcpy(g_addr,dynamic_ccode,size);
+
+    __clear_cache((void*)g_addr,(void*)(g_addr+size)); // need to clear cache
+
+    __asm__("push {r0-r4,lr}\n\t"
+            "mov r0,pc\n\t"  //此时pc指向后两条指令
+            "add r0,r0,#4\n\t"//+4 是的lr 地址为 pop{r0-r5}
+            "mov lr,r0\n\t"
+            "mov pc,%0\n\t"
+            "pop {r0-r5}\n\t"
+            "mov lr,r5\n\t" //恢复lr
+    :
+    :"r"(g_addr)
+    :);
+
+    LOGI("hi, i'm here\n");
+    free(addr);
+
+}
+</code></pre><p>在代码中主动触发breakpoint指令，然后在自定义SIGTRAP handle中将breakpoint替换成nop指令，于是程序可以正常执行完毕。</p><p>其中可使用r&#95;debug-r&#95;brk来触发异常，其原理即是用到了linker中一些调试特性。Linker中有一个和调试相关的结构体r_debug，其定义如下：</p><pre><code>#!cpp
+struct r_debug {
+    int32_t r_version;
+    link_map_t* r_map;
+    void (*r_brk)(void);
+    int32_t r_state;
+    uintptr_t r_ldbase;
+};  
+</code></pre><p>r_debug是以静态变量的形式存在于linker中，其初始化代码如下：</p><pre><code>#!cpp
+static r_debug _r_debug = {1, NULL, &amp;rtld_db_dlactivity, RT_CONSISTENT, 0};
+</code></pre><p>在初始化时，r&#95;debug中的r&#95;brk函数指针被初始化成了rtld&#95;db&#95;dlactivity函数，该函数只是一个空的桩函数：</p><pre><code>#!cpp
+/*
+ * This function is an empty stub where GDB locates a breakpoint to get notified
+ * about linker activity.  It canʼt be inlined away, can't be hidden.
+ */
+extern "C" void __attribute__((noinline)) __attribute__((visibility("default"))) rtld_db_dlactivity() {
+}
+</code></pre><p>没调试下，该函数即为空函数，而在调试状态下会将该函数的内容改写为相应指令集的breakpoint指令。所以先注册自己的signal函数处理breakpoint异常（SIGTRAP），然后在运行时调用该函数，即可触发自定义SIGTRAP的接管函数。而动态调试时，SIGTRAP会先被调试器接收，这样不仅能迷惑调试器，还能在自定义接管函数中做一些tricky的事。</p><h1>0x05 检测软件断点</h1><hr><p>上一节说了使用SIGTRAP反调试的原理，由此可以衍生出另一种很常见的反调试方法――检测软件断点。软件断点通过改写目标地址的头几字节为breakpoint指令，只需要遍历so中可执行segment，查找是否出现breakpoint指令即可。实现大致如下：</p><pre><code>#!cpp
+unsigned long GetLibAddr() {
+    unsigned long ret = 0;
+    char name[] = "libanti_debug.so";
+    char buf[4096], *temp;
+    int pid;
+    FILE *fp;
+    pid = getpid();
+    sprintf(buf, "/proc/%d/maps", pid);
+    fp = fopen(buf, "r");
+    if (fp == NULL) {
+        puts("open failed");
+        goto _error;
+    }
+    while (fgets(buf, sizeof(buf), fp)) {
+        if (strstr(buf, name)) {
+            temp = strtok(buf, "-");
+            ret = strtoul(temp, NULL, 16);
+            break;
+        }
+    }
+    _error: fclose(fp);
+    return ret;
+}
+
+
+
+void anti5(){
+
+    Elf32_Ehdr *elfhdr;
+    Elf32_Phdr *pht;
+    unsigned int size, base, offset,phtable;
+    int n, i,j;
+    char *p;
+
+    //从maps中读取elf文件在内存中的起始地址
+    base = GetLibAddr();
+    if(base == 0){
+        LOGI("find base error\n");
+        return;
+    }
+
+    elfhdr = (Elf32_Ehdr *) base;
+
+    phtable = elfhdr-&gt;e_phoff + base;
+
+    for(i=0;i&lt;elfhdr-&gt;e_phnum;i++){
+
+        pht = (Elf32_Phdr*)(phtable+i*sizeof(Elf32_Phdr));
+
+        if(pht-&gt;p_flags&amp;1){
+            offset = pht-&gt;p_vaddr + base + sizeof(Elf32_Ehdr) + sizeof(Elf32_Phdr)*elfhdr-&gt;e_phnum;
+            LOGI("offset:%X ,len:%X",offset,pht-&gt;p_memsz);
+
+            p = (char*)offset;
+            size = pht-&gt;p_memsz;
+
+            for(j=0,n=0;j&lt;size;++j,++p){
+
+                if(*p == 0x10 &amp;&amp; *(p+1) == 0xde){
+                    n++;
+                    LOGI("### find thumb bpt %X \n",p);
+                }else if(*p == 0xf0 &amp;&amp; *(p+1) == 0xf7 &amp;&amp; *(p+2) == 0x00 &amp;&amp; *(p+3) == 0xa0){
+                    n++;
+                    LOGI("### find thumb2 bpt %X \n",p);
+                }else if(*p == 0x01 &amp;&amp; *(p+1) == 0x00 &amp;&amp; *(p+2) == 0x9f &amp;&amp; *(p+3) == 0xef){
+                    n++;
+                    LOGI("### find arm bpt %X \n",p);
+                }
+
+            }
+            LOGI("### find breakpoint num: %d\n",n);
+
+        }
+    }
+
+}
+</code></pre><p>大家在使用IDA调试的时候，也许会注意到IDA的代码窗口和hex view窗口在设置断点的时候，目标地址的内容并没有发生改变，其实这是IDA故意将其隐藏了，设置完断点之后直接用dd dump内存就能看见设置断点的地址头几字节发生了改变。</p><h1>0x06 进程间通信</h1><hr><p>大部分加固会新建进程或者新建线程，在这些新建的线程和进程中完成反调试操作，然而如果这些进程、线程相对独立的话，很容易通过挂起、杀死的方式直接使得反调试失效。为了保证反调试线程、进程的存活，就需要一种通信方式，定期确认反调试线程、进程依然存活，所以进程间通信是高级反调试不可或缺的方式。在Linux下有很多进程间通信的方式，比如管道、信号、共享内存、套接字（socket）等，下面提供一个通过管道将反调试进程和主进程联系起来的简单例子：</p><pre><code>#!cpp
+int pipefd[2];
+int childpid;
+
+void *anti3_thread(void *){
+
+    int statue=-1,alive=1,count=0;
+
+    close(pipefd[1]);
+
+    while(read(pipefd[0],&amp;statue,4)&gt;0)
+        break;
+    sleep(1);
+
+    //这里改为非阻塞
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK); //enable fd的O_NONBLOCK
+
+    LOGI("pip--&gt;read = %d", statue);
+
+    while(true) {
+
+        LOGI("pip--&gt; statue = %d", statue);
+        read(pipefd[0], &amp;statue, 4);
+        sleep(1);
+
+        LOGI("pip--&gt; statue2 = %d", statue);
+        if (statue != 0) {
+            kill(childpid,SIGKILL);
+            kill(getpid(), SIGKILL);
+            return NULL;
+        }
+        statue = -1;
+    }
+}
+
+void anti3(){
+    int pid,p;
+    FILE *fd;
+    char filename[MAX];
+    char line[MAX];
+
+    pid = getpid();
+    sprintf(filename,"/proc/%d/status",pid);// 读取proc/pid/status中的TracerPid
+    p = fork();
+    if(p==0) //child
+    {
+        close(pipefd[0]); //关闭子进程的读管道
+        int pt,alive=0;
+        pt = ptrace(PTRACE_TRACEME, 0, 0, 0); //子进程反调试
+        while(true)
+        {
+            fd = fopen(filename,"r");
+            while(fgets(line,MAX,fd))
+            {
+                if(strstr(line,"TracerPid") != NULL)
+                {
+                    int statue = atoi(&amp;line[10]);
+                    LOGI("########## tracer pid:%d", statue);
+                    write(pipefd[1],&amp;statue,4);//子进程向父进程写 statue值
+
+                    fclose(fd);
+
+                    if(statue != 0)
+                    {
+                        return ;
+                    }
+
+                    break;
+                }
+            }
+            sleep(1);
+
+        }
+    }else{
+        childpid = p;
+    }
+}
+pipe(pipefd);
+pthread_create(&amp;id_0,NULL,anti3_thread,(void*)NULL);
+anti3();
+</code></pre><p>传统检测TracerPid的方法是直接在子进程中循环检测，一旦发现则主动杀死进程。本实例将循环检测TracerPid和进程间通信结合，一旦反调试子进程被挂起或被杀死，父进程也会马上终止，原理大致如下图：</p><p><img alt="pic3" img-src="84a0ca4c55180ce5500ba454e29df49473889b99.jpg"></p><p>父进程的守护线程在从pipe中read到statue值之前，默认statue值为-1，收到子进程往pipe中写的statue值之后，重置statue值，如果未被调试，statue值为0，反之则为被调试状态。该做法的优势在于，一旦反调试进程被终止或被挂起，守护线程也能马上发现。</p><p>当然，如果通过hook或者修改kernel同样可以轻易的绕过这种反调试。这种做法只是为了演示而写的简单例子，真实的进程间通信反调试可以写的复杂的多，大家可以尽情发挥想象。</p><h1>0x07 dalvik 虚拟机内部相关字段</h1><hr><p>在dalvik虚拟机中自带了检测调试器的代码，其本质是检测DvmGlobals结构体中的相关字段：</p><pre><code>#!cpp
+struct DvmGlobals {
+    …
+    bool   debuggerConnected;    /* debugger or DDMS is connected */
+    bool   debuggerActive;        /* debugger is making requests */
+    …
+}
+</code></pre><p>检测调试器的函数：</p><pre><code>#!cpp
+/*
+ * static boolean isDebuggerConnected()
+ *
+ * Returns "true" if a debugger is attached.
+ */
+static void Dalvik_dalvik_system_VMDebug_isDebuggerConnected(const u4* args, JValue* pResult)
+{
+    UNUSED_PARAMETER(args);
+    RETURN_BOOLEAN(dvmDbgIsDebuggerConnected());
+}
+</code></pre><p>本质是检测该dalvik虚拟机中DvmGlobals结构体中的调试器状态字段：</p><pre><code>#!cpp
+bool dvmDbgIsDebuggerConnected()
+{
+    return gDvm.debuggerActive;
+}
+</code></pre><p>知道原理之后可以更进一步，不通过这些Dalvik虚拟机的自定义函数，而是直接获取这些字段值，这样可以更好的隐藏反调试信息。</p><h1>0x08 IDA arm、thumb指令识别缺陷</h1><hr><p>众所周知，IDA采用递归下降算法来反汇编指令，而该算法最大的缺点在于它无法处理间接代码路径，无法识别动态算出来的跳转。而arm架构下由于存在arm和thumb指令集，就涉及到指令集切换，IDA在某些情况下无法智能识别arm和thumb指令，比如下图所示代码：</p><p><img alt="pic4" img-src="a7335f47598ef06275550ed5e839fdf3f990c6c8.jpg"></p><p>bx r3指令会切换指令集，而参数r3是动态计算出来的，IDA无法失败r3的值，而默认将bx r3后面的指令当成跳转地址，将后面地址的指令识别成了arm指令，而实际上其仍为thumb指令。</p><p>在IDA动态调试时，仍然存在该问题，若在指令识别错误的地点写入断点，有可能使得调试器崩溃。</p><h1>0x09 Ptrace</h1><hr><p>Ptrace是gdb等调试器实现的核心，通过ptrace可以监控、控制被调试进程的状态、信号、执行等。而每个进程在同一时刻最多只能被一个调试进程ptrace，根据这个原理，可以主动ptrace自己的关键子进程，这样可以在一定程度上防止子进程被调试。</p><p>为了防止fork出来的反调试子进程被直接挂起或杀死，可以通过Ptrace的PTRACE&#95;PEEKTEXT、PTRACE&#95;PEEKDATA、PTRACE_POKETEXT等参数来完成父子进程之间的通信，比如子进程中使用的解密密钥先存于父进程空间，父进程往ptrace的子进程中写入密钥后，再解密出关键数据。</p><p>总之，通过ptrace增加父子进程之间的联系，是十分有效并且广泛存在于各类加固的反调试方法。</p><h1>0x0A Inotify 监控文件</h1><hr><p>在Linux下，inotify可以实现监控文件系统事件（打开、读写、删除等），加固方案可以通过inotify监控apk自身的某些文件，某些内存dump技术通过/proc/pid/maps、/proc/pid/mem来实现内存dump，所以监控对这些文件的读写也能起到一定的反调试效果。</p><h1>0x0B 总结</h1><hr><p>本文总结了主流加固厂商大部分反调试技巧，APK下的反调试技巧和win、linux下的大同小异，核心原理都是类似的。说到底，反调试只能尽可能的增加逆向难度，APK的安全防护绝不能仅仅依靠反调试，APK安全需要从整体架构上入手，在关键代码上加入强混淆，甚至通过vmp来增大关键代码的逆向难度。</p><h1>0x0C Reference</h1><hr><ul><li>/bionic/linker/linker.h</li><li>/bionic/linker/linker.cpp</li><li><a href="http://androidxref.com/4.4.4_r1/xref/bionic/linker/rt.cpp#33">http://androidxref.com/4.4.4_r1/xref/bionic/linker/rt.cpp#33</a></li><li><a href="http://androidxref.com/4.4.4_r1/xref/dalvik/vm/native/dalvik_system_VMDebug.cpp">http://androidxref.com/4.4.4&#95;r1/xref/dalvik/vm/native/dalvik&#95;system_VMDebug.cpp</a></li><li><a href="http://blog.jobbole.com/23632/">http://blog.jobbole.com/23632/</a></li><li><a href="http://www.spongeliu.com/165.html">http://www.spongeliu.com/165.html</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">超六</span> <span class="reply-time">2016-06-24 13:05:54</span></div><p></p><p>@soFree 可以直接通过svc直接调系统函数，或者看有没有动态解密出来的代码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">soFree</span> <span class="reply-time">2016-06-23 16:54:19</span></div><p></p><p>感谢楼主的分享，挺好的文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">soFree</span> <span class="reply-time">2016-06-23 16:53:51</span></div><p></p><p>@超六 我遇到一个apk的反调试，本进程被其父进程所跟踪，导致我ida不能附着或者附着后挂掉，但是反编译后没发现ptrace(PTRACE_DETACH,getpid)这个方法，请问下，除了ptrace还有什么方法可以实现 本进程被其父进程所跟踪</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">nevermoe</span> <span class="reply-time">2016-06-21 16:03:33</span></div><p></p><p>@超六 谢谢啦！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">超六</span> <span class="reply-time">2016-06-21 15:37:00</span></div><p></p><p>@nevermoe 用pwntool这类工具可以很方便的在机器码与汇编间转换</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">nevermoe</span> <span class="reply-time">2016-06-21 14:57:21</span></div><p></p><p>请问arm的op code和二进制码的转换关系是怎样的？官方的手册很复杂啊，如何从op code算出二进制码呀？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">proyx</span> <span class="reply-time">2016-06-21 08:10:56</span></div><p></p><p>我胡汉三又回来了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">virk</span> <span class="reply-time">2016-06-20 19:08:37</span></div><p></p><p>Fork很有用，除了自己改逻辑基本没法调试，虚拟机是可以探测虚拟机驱动io端口的，直接io虚拟机开启的特殊端口比如vmware，不存在访问异常就是在虚拟环境吓的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">曹叔叔</span> <span class="reply-time">2016-06-20 16:24:42</span></div><p></p><p>现在ARM层的反调试还是弱了一些</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2016-06-20 15:09:45</span></div><p></p><p>很详细的分享！</p><p></p></div></div></div></div></div></main>

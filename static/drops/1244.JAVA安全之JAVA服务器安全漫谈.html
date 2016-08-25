@@ -1,0 +1,610 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">JAVA安全之JAVA服务器安全漫谈</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">z_zz_zzz</a> <span class="bull">·</span> <time title="2016/06/08 10:50" ui-time="" datetime="2016/06/08 10:50" class="published ng-binding ng-isolate-scope">2016/06/08 10:50</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>本文主要针对JAVA服务器常见的危害较大的安全问题的成因与防护进行分析，主要为了交流和抛砖引玉。</p><h1>0x01 任意文件下载</h1><hr><h3>示例</h3><p>以下为任意文件下载漏洞的示例。</p><p>DownloadAction为用于下载文件的servlet。</p><pre><code>#!html
+&lt;servlet&gt;
+    &lt;description&gt;&lt;/description&gt;
+    &lt;display-name&gt;DownloadAction&lt;/display-name&gt;
+    &lt;servlet-name&gt;DownloadAction&lt;/servlet-name&gt;
+    &lt;servlet-class&gt;download.DownloadAction&lt;/servlet-class&gt;
+&lt;/servlet&gt;
+
+&lt;servlet-mapping&gt;
+    &lt;servlet-name&gt;DownloadAction&lt;/servlet-name&gt;
+    &lt;url-pattern&gt;/DownloadAction&lt;/url-pattern&gt;
+&lt;/servlet-mapping&gt;
+</code></pre><p>在对应的download.DownloadAction类中，将HTTP请求中的filename参数作为待下载的文件名，从web应用根目录的download目录读取文件内容并返回，代码如下。</p><pre><code>#!java
+protected void doGet(HttpServletRequest request,
+        HttpServletResponse response) throws ServletException, IOException {
+    String rootPath = this.getServletContext().getRealPath("/");
+
+    String filename = request.getParameter("filename");
+    if (filename == null)
+        filename = "";
+    filename = filename.trim();
+
+    InputStream inStream = null;
+
+    byte[] b = new byte[1024];
+    int len = 0;
+    try {
+        if (filename == null) {
+            return;
+        }
+        // 读到流中
+        // 本行代码未对文件名参数进行过滤，存在任意文件下载漏洞
+        inStream = new FileInputStream(rootPath + "/download/" + filename);
+        // 设置输出的格式
+        response.reset();
+        response.setContentType("application/x-msdownload");
+
+        response.addHeader("Content-Disposition", "attachment; filename=\""
+                + filename + "\"");
+        // 循环取出流中的数据
+        while ((len = inStream.read(b)) &gt; 0) {
+            response.getOutputStream().write(b, 0, len);
+        }
+        response.getOutputStream().close();
+        inStream.close();
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+</code></pre><p>使用DownloadAction下载web应用根目录中的“download/test.txt”文件如下图所示。</p><p><img alt="p1" img-src="5dd9430cf0dcb90d6f50d63bc47b4cf6f5a5126d.jpg"></p><p>由于在DownloadAction类中没有对filename参数值进行检查，因此产生了任意文件下载漏洞。</p><p>使用DownloadAction下载web应用根目录中的“WEB-INF/web.xml”文件如下图所示。</p><p><img alt="p2" img-src="e77a47242b4241465f6161652343e87336fcf4bf.jpg"></p><h3>原因分析</h3><p>从上述示例可以看出，在JAVA web程序的下载文件相关的代码中，若不对HTTP请求中的待下载文件名进行检查，则有可能产生任意文件下载漏洞。</p><p>java.io.File对象有两个方法可以用于获取文件对象的路径，getAbsolutePath与getCanonicalPath。</p><p>查看JDK 1.6 API中上述两个方法的说明。</p><p>getAbsolutePath</p><blockquote><p>返回此抽象路径名的绝对路径名字符串。</p><p>如果此抽象路径名已经是绝对路径名，则返回该路径名字符串，这与 getPath() 方法一样。如果此抽象路径名是空抽象路径名，则返回当前用户目录的路径名字符串，该目录由系统属性 user.dir 指定。否则，使用与系统有关的方式解析此路径名。在 UNIX 系统上，根据当前用户目录解析相对路径名，可使该路径名成为绝对路径名。在 Microsoft Windows 系统上，根据路径名指定的当前驱动器目录（如果有）解析相对路径名，可使该路径名成为绝对路径名；否则，可以根据当前用户目录解析它。</p></blockquote><p>getCanonicalPath</p><blockquote><p>返回此抽象路径名的规范路径名字符串。</p><p><strong>规范路径名是绝对路径名，并且是惟一的。规范路径名的准确定义与系统有关。如有必要，此方法首先将路径名转换为绝对路径名，这与调用 getAbsolutePath() 方法的效果一样，然后用与系统相关的方式将它映射到其惟一路径名。这通常涉及到从路径名中移除多余的名称（比如 "." 和 ".."）、解析符号连接（对于 UNIX 平台），以及将驱动器号转换为标准大小写形式（对于 Microsoft Windows 平台）。</strong></p><p>每个表示现存文件或目录的路径名都有一个惟一的规范形式。每个表示不存在文件或目录的路径名也有一个惟一的规范形式。不存在文件或目录路径名的规范形式可能不同于创建文件或目录之后同一路径名的规范形式。同样，现存文件或目录路径名的规范形式可能不同于删除文件或目录之后同一路径名的规范形式。</p></blockquote><p>使用以下代码在Windows环境测试上述两个方法。</p><pre><code>#!java
+public static void main(String[] args) {
+    getFilePath("C:/Windows/System32/calc.exe");
+    getFilePath("C:/Windows/System32/drivers/etc/../../notepad.exe");
+}
+
+private static void getFilePath(String filename) {
+    File f = new File(filename);
+
+    try {       
+        System.out.println("getAbsolutePath: " + filename + " " + f.getAbsolutePath());
+        System.out.println("getCanonicalPath: " + filename + " " + f.getCanonicalPath());
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+</code></pre><p>输出结果如下。</p><pre><code>#!bash
+getAbsolutePath: C:/Windows/System32/calc.exe C:\Windows\System32\calc.exe
+getCanonicalPath: C:/Windows/System32/calc.exe C:\Windows\System32\calc.exe
+getAbsolutePath: C:/Windows/System32/drivers/etc/../../notepad.exe C:\Windows\System32\drivers\etc\..\..\notepad.exe
+getCanonicalPath: **C:/Windows/System32/drivers/etc/../../notepad.exe C:\Windows\System32\notepad.exe**
+</code></pre><p>使用以下代码在Linux环境测试上述两个方法。</p><pre><code>#!java
+public static void main(String[] args) {
+    getFilePath("/etc/hosts");
+    getFilePath("/etc/rc.d/init.d/../../hosts");
+}
+
+private static void getFilePath(String filename) {
+    File f = new File(filename);
+
+    try {       
+        System.out.println("getAbsolutePath: " + filename + " " + f.getAbsolutePath());
+        System.out.println("getCanonicalPath: " + filename + " " + f.getCanonicalPath());
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+</code></pre><p>输出结果如下。</p><pre><code>#!bash
+getAbsolutePath: /etc/hosts /etc/hosts
+getCanonicalPath: /etc/hosts /etc/hosts
+getAbsolutePath: /etc/rc.d/init.d/../../hosts /etc/rc.d/init.d/../../hosts
+getCanonicalPath: **/etc/rc.d/init.d/../../hosts /etc/hosts**
+</code></pre><p>可以看出，当File对象的文件路径中包含特殊字符时，JAVA能够按照操作系统的规范对其进行相应的处理。在Windows与Linux环境中，..均代表上一级目录，因此使用..能够访问上一级目录，导致任意文件读取漏洞产生。</p><h3>防护方法</h3><p>可在处理下载的代码中对HTTP请求中的待下载文件参数进行过滤，防止出现..等特殊字符，但可能需要处理多种编码方式。</p><p><strong>也可在生成File对象后，使用getCanonicalPath获取当前文件的真实路径，判断文件是否在允许下载的目录中，若发现文件不在允许下载的目录中，则拒绝下载。</strong></p><h1>0x02 恶意文件上传</h1><hr><p>当攻击者利用恶意文件上传漏洞时，通常会向服务器上传jsp木马并访问，可以直接控制服务器。</p><h3>示例</h3><p>以下为恶意文件上传的示例。</p><p>upload目录中的upload.jsp为处理文件上传的jsp文件，内容如下。</p><pre><code>#!html
+&lt;form name="form1" action="&lt;%=request.getContextPath()%&gt;/strutsUploadFileAction_signle.action"
+    method="post" enctype="multipart/form-data"&gt;&lt;input type="file" name="file4upload"
+        size="30"&gt; &lt;br&gt; &lt;input type="submit"
+        value="submit_signle" name="submit"&gt;
+&lt;/form&gt;
+</code></pre><p>strutsUploadFileAction_signle为处理文件上传的struts的action，内容如下。</p><pre><code>#!html
+&lt;action name="strutsUploadFileAction_signle" method="upload_signle" class="strutsUploadFile"&gt;
+    &lt;result name="success"&gt;upload/success.jsp&lt;/result&gt;
+    &lt;result name="fail"&gt;upload/fail.jsp&lt;/result&gt;
+&lt;/action&gt;
+</code></pre><p>strutsUploadFile为处理文件上传的Spring的bean，内容如下。</p><pre><code>#!html
+&lt;bean id="strutsUploadFile" class="strutsTest.StrutsUploadFileAction"&gt;
+&lt;/bean&gt;
+</code></pre><p>strutsTest.StrutsUploadFileAction为处理文件上传的JAVA类，在其中会检查上传的文件名是否以“.jpg”结尾，代码如下。</p><pre><code>#!java
+// 注意，并不是指前端jsp上传过来的文件本身，而是文件上传过来存放在临时文件夹下面的文件
+private File file4upload;
+
+// 提交过来的file的名字
+private String file4uploadFileName;
+
+// 提交过来的file的MIME类型
+private String file4uploadContentType;
+
+public String upload_signle() throws Exception {
+
+    return uploadCommon(file4upload, file4uploadFileName);
+}
+
+private String uploadCommon(File file, String fileName) throws Exception {
+    boolean success = false;
+    try {
+        String newFileName = "";
+
+        String webPath = ServletActionContext.getServletContext()
+                .getRealPath("/");
+
+        String allowedType = ".jpg";
+        String fileName_new = fileName.toLowerCase();
+
+        // 本行代码有判断文件类型是否为".jpg"，但存在文件名截断问题
+        if(fileName_new.length() - fileName_new.lastIndexOf(allowedType) != allowedType.length()) {
+            file.delete();
+            ActionContext.getContext().put("reason", "file type is not: " + allowedType);
+            return "fail";
+        }
+
+        newFileName = webPath + "uploadDir/" + fileName;
+        File dest = new File(newFileName);
+        if (dest.exists())
+            dest.delete();
+        success = file.renameTo(dest);
+    } catch (Exception e) {
+        success = false;
+        e.printStackTrace();
+        throw e;
+    }
+
+    return success ? "success" : "fail";
+}
+</code></pre><p>打开upload.jsp，选择文件“a.jpg”进行上传。</p><p><img alt="p3" img-src="cdc999f5a0ce707931b095e5009dc4d363629fa9.jpg"></p><p>使用fiddler抓包并拦截，将filename参数修改为“a.jsp#.jpg”后的HTTP请求数据如下。</p><p><img alt="p4" img-src="0bbcca2234957f01487795f8bf750392bb281048.jpg"></p><p>使用十六进制形式查看HTTP请求数据如下。</p><p><img alt="p5" img-src="25272a8abafc1be232fe7b907ad7010307cf8ac8.jpg"></p><p>将#对应的字节修改为0x00并发送HTTP请求数据。</p><p><img alt="p6" img-src="95193ab7e5512612076a0a42265effca1d09f561.jpg"></p><p>完成文件上传后，查看保存上传文件的目录，可以看到文件上传成功，生成的文件为“a.jsp”。</p><p><img alt="p7" img-src="7040c2b10e740733627150ccaf7816d7b07fa1ba.jpg"></p><h3>原因分析</h3><p>从上述示例中可以看出，在上传文件时产生了文件名截断的问题。</p><p>使用以下代码测试JAVA写文件的文件名截断问题，使用0x00至0xff间的字符作为文件名生成文件。</p><pre><code>#!java
+public static void main(String[] args) {
+    String java_version = System.getProperty("java.version");
+
+    new File(java_version).mkdirs();    
+
+    String filename = "a.jsp#a.jpg";
+    for(int i=0; i&lt;=0xff; i++) {
+        String filename_replace = java_version + "/" + i + "-" + filename.replace('#', (char)i);
+        File f = new File(filename_replace);
+        try {
+            f.createNewFile();
+        } catch (Exception e) {
+            System.out.println("error: " + i);
+            e.printStackTrace();
+        }
+    }
+}   
+</code></pre><h3>Windows环境文件名截断问题测试</h3><p>在Windows 7，64位环境，使用JDK1.5执行上述代码生成文件的结果如下。</p><p><img alt="p8" img-src="2125d32e566481c9ba04e36fe3148400756f6493.jpg"></p><p>可以看到使用JDK1.5执行时，除0x00外，冒号“:”（ASCII码十进制为58）也会产生文件名截断问题。</p><p>JDK1.6与JDK1.5执行结果相同。</p><p><img alt="p9" img-src="f0d0d4915b608538803c5bb9e54b43e21c0950cf.jpg"></p><p>JDK1.7也与JDK1.5执行结果相同。</p><p><img alt="p10" img-src="8de48f5f67d7a05c5183e02f18a5342b47924398.jpg"></p><p>JDK1.8与JDK1.5执行结果不同，仅有冒号会产生文件名截断问题，0x00不会产生文件名截断问题，可能是JDK1.8已修复该问题。</p><p><img alt="p11" img-src="5ce2416f09343822831856fd241cca7276c9b3be.jpg"></p><p>使用Procmon查看上述过程中java.exe进程执行的写文件操作。</p><p>JDK1.5、1.6、1.7的监控结果相同，监控结果如下。</p><p>JDK1.5~1.7，当文件名中包含0x00时，java.exe在执行写文件操作时，会将0x00及之后的字符串丢弃，使用0x00之前的字符串作为文件名写文件。</p><p><img alt="p12" img-src="6bf3ce8ea281160963950db27a6dbf3e48cbdfcc.jpg"></p><p>JDK1.5~1.7，当文件名包含冒号时，java.exe在执行写文件操作时，不会将冒号及之后的字符串丢弃。</p><p><img alt="p13" img-src="baab5841a88684ede2d2ea042897224ce21ac8c2.jpg"></p><p>JDK1.8的监控结果如下。</p><p>JDK1.8，当文件名中包含0x00时，java.exe不会执行写文件的操作。</p><p><img alt="p14" img-src="81a389ca7f655ff35278a07e3b0be679809d4f04.jpg"></p><p>与JDK1.5~1.7一样，JDK1.8当文件名包含冒号时，java.exe在执行写文件操作时，不会将冒号及之后的字符串丢弃。截图略。</p><p>虽然java.exe在写文件时不会将冒号及之后的字符串丢弃，但在Windows环境下仍然出现了文件名截断的问题。</p><p>在Windows中执行“echo 1>abc:123”命令，可以看到生成的文件名为“abc”，冒号及之后的字符串被丢弃，造成了文件名截断。这是Windows特性导致的，与JAVA无关。</p><h3>Linux环境文件名截断问题测试</h3><p>在Linux RedHat 6.4环境，使用JDK1.6执行上述代码生成文件的结果如下。</p><p><img alt="p15" img-src="b2d06d88d919ca538b97bcb20a1a606e073a4967.jpg"></p><p>JDK1.6，文件名中包含0x00时同样出现了文件名截断问题（文件名中包含ASCII码为92的反斜杠“\”时，生成的文件会产生在子目录中，但不会导致文件类型的变化）。</p><p><strong>综上所述，JDK1.5-1.7存在0x00导致的文件名截断问题，与操作系统无关。冒号在Windows环境会导致文件名截断问题，与JAVA无关。</strong></p><p>使用File对象的getCanonicalPath方法获取JAVA在文件名中包含0x00至0xff的字符时，生成文件时的实际文件路径，代码如下。</p><pre><code>#!java
+public static void main(String[] args) {
+    String java_version = System.getProperty("java.version");
+
+    String filename = "a.jsp#a.jpg";
+    for(int i=0; i&lt;=0xff; i++) {
+        String filename_replace = java_version + "/" + i + "-" + filename.replace('#', (char)i);
+        File f = new File(filename_replace);
+        try {       
+            System.out.println("getCanonicalPath " + f.getCanonicalPath());
+        } catch (Exception e) {
+            System.out.println("error: " + i);
+            e.printStackTrace();
+        }
+    }
+}   
+</code></pre><h3>Windows环境执行getCanonicalPath方法的结果</h3><p>在Windows 7，64位环境，使用JDK1.5~1.7执行上述代码使用getCanonicalPath方法获取文件实际路径的结果相同，结果如下。</p><p>JDK1.5执行getCanonicalPath方法的结果。</p><p><img alt="p16" img-src="699b49395893047863a24ec851389333e7ab9fd4.jpg"></p><p>JDK1.6执行getCanonicalPath方法的结果。</p><p><img alt="p17" img-src="9ef2f950287b80286d7744daa4fe00cedbbfdf56.jpg"></p><p>JDK1.7执行getCanonicalPath方法的结果。</p><p><img alt="p18" img-src="0e6c95148894168ba0b643123c9db82d7e43052d.jpg"></p><p>可以看到JDK1.5~1.7使用getCanonicalPath方法获取文件实际路径时，当文件名中包含0x00时，获取到的文件实际路径中0x00及之后的字符串已被丢弃。</p><p>在Windows 7，64位环境，使用JDK1.8执行getCanonicalPath方法的结果如下。</p><p><img alt="p19" img-src="5fec52b9914bbe379cd0262a79f9ae3557439c05.jpg"></p><p>可以看到JDK1.8使用getCanonicalPath方法获取文件实际路径时，当文件名中包含0x00时，会出现java.io.IOException异常，异常信息为“Invalid file path”。</p><h3>Linux环境执行getCanonicalPath方法的结果</h3><p>在Linux RedHat 6.4环境，使用JDK1.6执行上述代码的结果与Windows环境相同，截图略。</p><h3>防护方法</h3><p>以下的防护方法可以根据实际需求进行组合，相互之间没有冲突。</p><h3>无效的防护方法</h3><p>使用String对象的endsWith方法无法判断出文件生成时的实际文件名，使用以下代码进行证明。</p><pre><code>#!java
+public static void main(String[] args) {
+    String java_version = System.getProperty("java.version");
+
+    String filename = "a.jsp#a.jpg";
+    for(int i=0; i&lt;=0xff; i++) {
+        String filename_replace = java_version + "/" + i + "-" + filename.replace('#', (char)i);
+        if(filename_replace.endsWith(".jpg")) {
+            System.out.println("yes: " + filename_replace);
+        }
+    }
+}   
+</code></pre><p>执行结果如下。</p><p><img alt="p20" img-src="49fec3eb840799278d31835dc3baad91e36805ee.jpg"></p><p>当文件名为“a.jsp[特定字符]a.jpg”形式时，无论[特定字符]是否为0x00，使用String对象的endsWith方法对文件名进行检测，均认为是以“.jpg”结尾。</p><h3>针对0x00进行检测</h3><p>当文件名中包含0x00时，使用String对象的indexOf(0)方法执行结果非-1，可以检测到0x00的存在。但需考虑不同编码情况下0x00的形式。</p><h3>检测实际的文件名</h3><p><strong>使用File对象的getCanonicalPath方法获取上传文件的实际文件名，若检测到文件名的后缀不是允许的类型（0x00截断，小于JDK1.8），或出现java.io.IOException异常（0x00截断，JDK1.8），或包含冒号（Windows环境中需处理），则说明需要拒绝本次文件上传。</strong></p><h3>修改保存上传文件的目录</h3><p>上述的防护思路是防止攻击者将jsp文件上传至服务器中，本防护思路是防止攻击者上传的jsp文件被编译为class文件。</p><p>当JAVA中间件收到访问web应用目录中的jsp文件请求时，会将对应的jsp文件编译为class文件并执行。若将保存上传文件的目录修改为非web应用目录，当JAVA中间件收到访问上传文件的请求时，即使被访问的文件为jsp文件，JAVA中间件也不会将jsp文件编译为成class文件并执行，可以防止攻击者利用上传jsp木马控制服务器。</p><p>将保存上传文件的目录修改为非web应用目录的操作很简单，将处理文件上传代码中保存文件的目录修改为非web应用目录即可。进行该修改后，还可以使用共享目录解决多实例应用上传文件的问题。</p><p>将保存上传文件的目录修改为非web应用目录后，会导致无法使用原有方式访问上传的文件（例如文件上传目录原本为web应用目录中的upload目录，可直接使用http://[IP]:[PORT]/xxx/upload/xxx进行访问。将upload目录移动到非web应用目录后，无法再使用原有URL访问上传的文件）。可通过以下两种方法解决。</p><p>使用Servlet/action/.do请求访问上传文件，可参考前文中的download.DownloadAction类。本方法的影响面较大，不推荐使用。</p><p>除上述方法外，还可使用filter拦截HTTP请求处理，当HTTP请求访问文件上传目录中的文件时，读取对应的文件内容并返回（例如原本上传目录为web应用目录中的upload目录，可直接使用http://[IP]:[PORT]/xxx/upload/xxx进行访问。将upload目录移动到非web应用目录后，对HTTP请求处理进行拦截，当请求以“/xxx/upload”开头时，从文件上传目录中读取对应的文件内容并返回）。本方法可使用原本的URL访问上传文件，影响面较小，推荐使用。示例代码如下。</p><p>在web.xml中使用filter拦截HTTP请求处理。</p><pre><code>#!html
+&lt;filter&gt;
+    &lt;filter-name&gt;testFilter&lt;/filter-name&gt;
+    &lt;filter-class&gt;test.TestFilter&lt;/filter-class&gt;
+&lt;/filter&gt;
+
+&lt;filter-mapping&gt;
+    &lt;filter-name&gt;testFilter&lt;/filter-name&gt;
+    &lt;url-pattern&gt;/*&lt;/url-pattern&gt;
+&lt;/filter-mapping&gt;
+</code></pre><p>对应的test.TestFilter类代码如下。</p><pre><code>#!java
+private static String IF_MODIFIED_SINCE = "If-Modified-Since";
+private static String LAST_MODIFIED = "Last-Modified";
+
+private static String startFlag = "/testDownload/upload/";
+private static String storePath = "C:/Users/Public";
+
+public void doFilter(ServletRequest request, ServletResponse response,
+        FilterChain chain) throws IOException, ServletException {
+    HttpServletRequest httpRequest = (HttpServletRequest) request;
+    // 获取浏览器访问的URL，形式如/test/upload/xxx.jpg
+    String requestUrl = httpRequest.getRequestURI();
+    System.out.println("requestUrl: " + requestUrl);
+
+    if (requestUrl != null) {
+        // 判断是否访问upload目录的文件，若是则从对应的存储目录读取并返回
+        if (requestUrl.startsWith(startFlag)) {
+            try {
+                returnFileContent(requestUrl, (HttpServletRequest) request,
+                        (HttpServletResponse) response);
+            } catch (Exception e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+            return;
+        }
+    }
+
+    chain.doFilter(request, response);
+    return;
+}
+
+// 当访问web应用特定目录下的文件时，重定向到实际存储这些文件的目录
+private void returnFileContent(String url, HttpServletRequest request,
+        HttpServletResponse response) throws Exception {
+    java.io.InputStream in = null;
+    java.io.OutputStream outStream = null;
+    try {
+        response.setHeader("Content-Type", "text/plain");// 若不返回text/plain类型，浏览器无法正常识别文件类型
+        String filePath = url.substring(startFlag.length() - 1);// 获取被访问的文件的URL
+        String filePath_decode = URLDecoder.decode(filePath, "UTF-8");// 经过url解码之后的文件URL
+
+        // 生成最终访问的文件路径
+        // StorePath形式如C:/xxx/xxx，filePath_decode开头有/
+        String targetfile = storePath + filePath_decode;
+        System.out.println("targetfile: " + targetfile);
+        File f = new File(targetfile);
+        if (!f.exists() || f.isDirectory()) {
+            System.out.println("文件不存在: " + targetfile);
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);// 返回错误信息，显示统一错误页面
+            return;
+        }
+        // 判断上送的HTTP头是否有If-Modified-Since字段
+        String modified = request.getHeader(IF_MODIFIED_SINCE);
+        //获取文件的修改时间
+        String modified_file = getFileModifiedTime(f);
+        if (modified != null) {
+            // 上送的HTTP头有If-Modified-Since字段，判断与对应文件的修改时间是否相同
+            if(modified.equals(modified_file)) {
+                //上送的文件时间与文件实际修改时间相同，不需返回文件内容
+                response.setStatus(HttpServletResponse.SC_NOT_MODIFIED);//返回304状态
+                outStream = response.getOutputStream();
+                outStream.close();
+                outStream.flush();
+                outStream = null;
+                return;
+            }
+        }
+        // 文件无缓存，或文件有修改，需要在返回的HTTP头中添加文件修改时间
+        response.setHeader(LAST_MODIFIED, modified_file);
+
+        // 读取文件内容
+        in = new FileInputStream(f);
+        outStream = response.getOutputStream();
+        byte[] buf = new byte[1024];
+        int bytes = 0;
+        while ((bytes = in.read(buf)) != -1)
+            outStream.write(buf, 0, bytes);
+        in.close();
+        outStream.close();
+        outStream.flush();
+        outStream = null;
+    } catch (Throwable ex) {
+        ex.printStackTrace();
+    } finally {
+        if (in != null) {
+            in.close();
+            in = null;
+        }
+        if (outStream != null) {
+            outStream.close();
+            outStream = null;
+        }
+    }
+}
+
+// 获取指定文件的修改时间
+private String getFileModifiedTime(File file) {
+    SimpleDateFormat sdf = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
+    sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
+    return sdf.format(file.lastModified());
+}
+</code></pre><p>上述示例代码中，保存上传文件的目录为“C:/Users/Public”，当HTTP请求以“/testDownload/upload/”开头时，说明需要访问上传文件。</p><p>上述修改方法接管了JAVA中间件对原本上传目录的静态资源的访问请求，导致浏览器的缓存机制不可用。为了保证浏览器的缓存机制可用，上述代码中进行了专门处理。当HTTP请求头中不包含“If-Modified-Since”参数时，或“If-Modified-Since”对应的文件修改时间小于实际文件修改时间时，将文件的内容返回给浏览器，并在返回的HTTP头中加入“Last-Modified”参数返回文件修改时间，使浏览器对该文件进行缓存。当HTTP请求头的“If-Modified-Since”对应的文件修改时间等于实际文件修改时间时，不返回文件内容，将返回的HTTP码设为304，告知浏览器访问的文件无修改，可使用缓存。</p><p>以下为上述代码的测试结果。</p><p>web应用的目录中无upload目录。</p><p><img alt="p21" img-src="d1ae9a191880ce0df260136f20bfff6ba95ed052.jpg"></p><p>文件上传目录“C:/Users/Public”中有以下文件。</p><p><img alt="p22" img-src="e0bca2d2f649f7383298ad058ebfded158d6008b.jpg"></p><p>访问文本文件正常。</p><p><img alt="p23" img-src="bd3f048c0a84bcf5183964897731016bde83efb5.jpg"></p><p>访问图片正常。</p><p><img alt="p24" img-src="a20e98e438cd08f83e61a44822b69c4d4fd63937.jpg"></p><p>访问音频文件正常。</p><p><img alt="p25" img-src="0c90a613b3732f31932e006c768c123ed49c8e2e.jpg"></p><p>访问jsp文件只返回文件本身的内容，不会被编译成class文件并执行。</p><p><img alt="p26" img-src="a030c83dcc1fad41a826b2d50969effd6c30de4f.jpg"></p><p>使用fiddler查看访问记录，浏览器缓存机制正常。</p><p><img alt="p27" img-src="86504ba23f61df079413e5fb08ee8ecf3ac438fb.jpg"></p><h3>修改web应用目录权限</h3><p>将文件上传目录移出web应用目录后，JAVA中间件在运行过程中，web应用目录及其中的文件一般不会被修改。可在JAVA中间件启动后，将web应用目录设为JAVA中间件不可写；当需要进行版本更新或维护时，停止JAVA中间件后，将web应用目录设为JAVA中间件可写。通过上述限制，可严格地防止web应用目录被上传jsp木马等恶意文件。</p><p>可将JAVA中间件使用a用户启动，将web应用的目录对应用户设为b用户，JAVA中间件启动后，将web应用的目录设为a用户只读。需要进行版本更新或维护时，停止JAVA中间件后，将web应用的目录设为a用户可读写。对于某些JAVA中间件在运行过程中可能需要进行写操作的文件或目录，可单独设置权限。可将对web应用的权限修改操作在JAVA中间件启停脚本中调用，减少操作复杂度。</p><p>Windows的权限设置较复杂且速度较慢，使用上述的防护方法时会比较麻烦。</p><h1>0x03 SQL注入</h1><hr><h3>PreparedStatement与Statement</h3><p>众所周知，在JAVA中使用PreparedStatement替代Statement可以防止SQL注入。</p><p>在oracle数据库中进行以下测试。</p><p>首先创建测试用的数据库表并插入数据。</p><pre><code>#!sql
+create table test_user
+(
+username varchar2(100),
+pwd varchar2(100)
+);
+
+Insert into TEST_USER
+   (USERNAME, PWD)
+ Values
+   ('aaa', 'bbb');
+COMMIT;
+</code></pre><p>使用以下JAVA代码进行测试。</p><pre><code>#!java
+private Connection conn = null;
+
+public dbtest2(String url, String username, String password)
+        throws ClassNotFoundException, SQLException {
+    try {
+        Class.forName("oracle.jdbc.driver.OracleDriver");
+        conn = DriverManager.getConnection(url, username, password);
+    } catch (Exception e) {
+        // TODO: handle exception
+        e.printStackTrace();
+    }
+}
+
+public void closeDb() throws SQLException {
+    conn.close();
+}
+
+public void executeStatement(String username, String pwd)
+        throws SQLException {
+    String sql = "SELECT * FROM TEST_USER where username='" + username
+            + "' and pwd='" + pwd + "'";
+    System.out.println("executeStatement-sql: " + sql);
+    java.sql.Statement stmt = conn.createStatement();
+    ResultSet rs = stmt.executeQuery(sql);
+    showResultSet(rs);
+    stmt.close();
+}
+
+public void executePreparedStatement(String username, String pwd)
+        throws SQLException {
+    java.sql.PreparedStatement stmt = conn
+            .prepareStatement("SELECT * FROM TEST_USER where username=? and pwd=?");
+    stmt.setString(1, username);
+    stmt.setString(2, pwd);
+    ResultSet rs = stmt.executeQuery();
+    showResultSet(rs);
+    stmt.close();
+}
+
+public void showResultSet(ResultSet rs) throws SQLException {
+    ResultSetMetaData meta = rs.getMetaData();
+    StringBuffer sb = new StringBuffer();
+    int colCount = meta.getColumnCount();
+    for (int i = 1; i &lt;= colCount; i++) {
+        sb.append(meta.getColumnName(i)).append("[")
+                .append(meta.getColumnTypeName(i)).append("]").append("\t");
+    }
+    while (rs.next()) {
+        sb.append("\r\n");
+
+        for (int i = 1; i &lt;= colCount; i++) {
+            sb.append(rs.getString(i)).append("\t");
+        }
+    }
+    // 关闭ResultSet
+    rs.close();
+
+    System.out.println(sb.toString());
+}
+
+public static void main(String[] args) throws SQLException {
+    try {
+        dbtest2 db = new dbtest2(
+                "jdbc:oracle:thin:@192.xxx.xxx.xxx:1521:xxx",
+                "xxx", "xxx");
+
+        db.executeStatement("aaa", "bbb");
+        db.executeStatement("aaa", "' or '2'='2");
+
+        db.executePreparedStatement("aaa", "bbb");
+        db.executePreparedStatement("aaa", "' or '2'='2");
+
+        db.closeDb();
+    } catch (ClassNotFoundException e) {
+        // TODO Auto-generated catch block
+        e.printStackTrace();
+    }
+}
+</code></pre><p>执行结果如下。</p><pre><code>#!bash
+1 db.executeStatement("aaa", "bbb");对应的结果  
+executeStatement-sql: SELECT * FROM TEST_USER where username='aaa' and pwd='bbb'
+
+USERNAME[VARCHAR2]  PWD[VARCHAR2]  
+aaa bbb 
+
+2 db.executeStatement("aaa", "' or '2'='2");对应的结果  
+executeStatement-sql: SELECT * FROM TEST_USER where username='aaa' and pwd='' or '2'='2'
+
+USERNAME[VARCHAR2]  PWD[VARCHAR2]  
+aaa bbb 
+
+3 db.executePreparedStatement("aaa", "bbb");对应的结果  
+USERNAME[VARCHAR2]  PWD[VARCHAR2]  
+aaa bbb 
+
+4 db.executePreparedStatement("aaa", "' or '2'='2");对应的结果  
+USERNAME[VARCHAR2]  PWD[VARCHAR2]  
+</code></pre><p>可以看到使用Statement时，将查询参数设为“username='aaa' and pwd='bbb'”使用正常的查询条件能查询到对应的数据。将查询参数设为“username='aaa' and pwd='' or '2'='2'”能够利用SQL注入查询到对应的数据。</p><p>使用PreparedStatement时，使用正常的查询条件同样能查询到对应的数据，使用能使Statement产生SQL注入的查询条件无法再查询到数据。</p><p>使用Wireshark对刚才的数据库操作抓包并查看网络数据。</p><p>查找select语句对应的数据包如下。</p><p><img alt="p28" img-src="22cb8e4885ec79b60b950cbd0210a703e4bfabe0.jpg"></p><p>db.executeStatement("aaa", "bbb");对应的数据包如下，可以看到查询语句未使用oracle绑定变量方式，使用正常查询条件查询到了数据。</p><p><img alt="p29" img-src="33208164f8071f2e067f95c035beb76fa8aeeef4.jpg"></p><p>db.executeStatement("aaa", "' or '2'='2");对应的数据包如下，可以看到查询语句未使用oracle绑定变量方式，利用SQL注入查询到了数据。</p><p><img alt="p30" img-src="bbafb681426b3ba83c33d0102c419fe14a2ce1fc.jpg"></p><p>db.executePreparedStatement("aaa", "bbb");对应的数据包如下，可以看到查询语句使用了oracle绑定变量方式，使用正常查询条件查询到了数据。</p><p><img alt="p31" img-src="e69711e519a0154a4e0e884cebc927089a3cd9fe.jpg"></p><p>db.executePreparedStatement("aaa", "' or '2'='2");对应的数据包如下，可以看到查询语句使用了oracle绑定变量方式，SQL注入未生效，无法查询到对应数据。</p><p><img alt="p32" img-src="81a55352fb94e80bd5d9bc752598f1d1e642b09c.jpg"></p><p>在JAVA中使用PreparedStatement访问oracle数据库时，除了能防止SQL注入外，还能使oracle服务器降低硬解析率，降低系统开销，减少内存碎片，提高执行效率。</p><p>刚才执行的sql语句在oracle的v$sql视图中产生的数据如下。</p><p><img alt="p33" img-src="73f0b2985b952ccc4f208ea95c6ad2bf6805837e.jpg"></p><h3>ibatis</h3><p>当使用ibatis作为持久化框架时，也需要考虑SQL注入的问题。使用ibatis产生SQL注入主要是由于使用不规范。</p><h3><code>$</code>与<code>#</code></h3><p>在ibatis中使用#时，与使用PreparedStatement的效果相同，不会产生SQL注入；在ibatis中使用$时，与使用Statement的效果相同，会产生SQL注入。</p><p>继续使用刚才的数据库表TEST_USER进行测试，再插入一条数据如下。</p><pre><code>#!sql
+Insert into TEST_USER
+   (USERNAME, PWD)
+ Values
+   ('123', '456');
+COMMIT;
+</code></pre><p>将log4j中的数据库相关日志级别设为DEBUG。</p><pre><code>#!sql
+log4j.logger.com.ibatis=DEBUG
+log4j.logger.com.ibatis.common.jdbc.SimpleDataSource=DEBUG
+log4j.logger.com.ibatis.common.jdbc.ScriptRunner=DEBUG
+log4j.logger.com.ibatis.sqlmap.engine.impl.SqlMapClientDelegate=DEBUG
+log4j.logger.java.sql.Connection=DEBUG
+log4j.logger.java.sql.Statement=DEBUG
+log4j.logger.java.sql.PreparedStatement=DEBUG
+log4j.logger.java.sql.ResultSet=DEBUG
+</code></pre><p>首先使用#与$测试执行判断条件为“=”的sql语句时的情况。</p><p>在ibatis对应的xml文件中配置了语句test&#95;right与test&#95;wrong如下。</p><pre><code>#!html
+&lt;select id="test_right" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username = #username#
+&lt;/select&gt;
+
+&lt;select id="test_wrong" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username = '$username$'
+&lt;/select&gt;
+</code></pre><p>在JAVA代码中执行上述语句如下。</p><pre><code>#!java
+HashMap hs = new HashMap();
+
+hs.put("username", "' or '1'='1");
+
+List&lt;Object&gt; list1 = queryListSql("test_right",hs);
+logger.info("test-list1: " + list1);
+
+List&lt;Object&gt; list2 = queryListSql("test_wrong",hs);
+logger.info("test-list2: " + list2);
+</code></pre><p>log4j中执行test_right语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username = ?  
+[DEBUG] Executing Statement:    select * from test_user where username = ?    
+[DEBUG] Parameters: [' or '1'='1]  
+[DEBUG] Types: [java language=".lang.String"][/java]  
+[DEBUG] ResultSet  
+[INFO ] test-list1: []  
+</code></pre><p>log4j中执行test_wrong语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username = '' or '1'='1'  
+[DEBUG] Executing Statement:    select * from test_user where username = '' or '1'='1'  
+[DEBUG] Parameters: []  
+[DEBUG] Types: []  
+[DEBUG] ResultSet  
+[DEBUG] Header: [USERNAME, PWD]  
+[DEBUG] Result: [aaa, bbb]  
+[DEBUG] Result: [123, 456]  
+[INFO ] test-list2: [{PWD=bbb, USERNAME=aaa}, {PWD=456, USERNAME=123}]  
+</code></pre><p>可以看到使用#可以防止SQL注入，使用$会产生SQL注入。</p><p>执行test_right语句时产生的数据包如下。</p><p><img alt="p34" img-src="b76d504c0c1834fd84a07bf7dcd5a19b8192db09.jpg"></p><p>执行test_wrong语句时产生的数据包如下。</p><p><img alt="p35" img-src="ca70c271b46a98e049b1075cc3d998a717a304ca.jpg"></p><h3>like</h3><p>在使用ibatis执行判断条件为“like”的操作时，较容易误用$导致产生SQL注入问题。</p><p><strong>当需要使用like时，应用使用“xxx like '%' || #xxx# || '%'”，而不应使用“xxx like '%$xxx$%'”（以oracle数据库为例）。</strong></p><p>使用以下代码进行验证测试。</p><p>在ibatis对应的xml文件中配置了语句test&#95;like&#95;right与test&#95;like&#95;wrong如下。</p><pre><code>#!html
+&lt;select id="test_like_right" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username like '%' || #username# || '%'
+&lt;/select&gt;
+
+&lt;select id="test_like_wrong" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username like '$username$'
+&lt;/select&gt;
+</code></pre><p>在JAVA代码中执行上述语句如下。</p><pre><code>#!java
+HashMap hs = new HashMap();
+
+hs.put("username", "' or '1'='1");
+
+List&lt;Object&gt; list3 = queryListSql("test_like_right",hs);
+logger.info("test-list3: " + list3);
+
+List&lt;Object&gt; list4 = queryListSql("test_like_wrong",hs);
+logger.info("test-list4: " + list4);
+</code></pre><p>log4j中执行test&#95;like&#95;right语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username like '%' || ? || '%'  
+[DEBUG] Executing Statement:    select * from test_user where username like '%' || ? || '%'  
+[DEBUG] Parameters: [' or '1'='1]  
+[DEBUG] Types: [java language=".lang.String"][/java]  
+[DEBUG] ResultSet  
+[INFO ] test-list3: []  
+</code></pre><p>log4j中执行test&#95;like&#95;wrong语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username like '' or '1'='1'   
+[DEBUG] Executing Statement:    select * from test_user where username like '' or '1'='1'  
+[DEBUG] Parameters: []  
+[DEBUG] Types: []  
+[DEBUG] ResultSet  
+[DEBUG] Header: [USERNAME, PWD]  
+[DEBUG] Result: [aaa, bbb]  
+[DEBUG] Result: [123, 456]  
+[INFO ] [{PWD=bbb, USERNAME=aaa}, {PWD=456, USERNAME=123}]  
+</code></pre><p>执行语句时test&#95;like&#95;right产生的数据包如下。</p><p><img alt="p36" img-src="5b46065dfd3f39f3e42800238eb13760615081db.jpg"></p><p>执行语句时test&#95;like&#95;wrong产生的数据包如下。</p><p><img alt="p37" img-src="91ac2f7b55f0435ad2d77f575ad3287cbee6c317.jpg"></p><h3>in</h3><p>在使用ibatis处理判断条件为“in”的操作时，同样容易误用$导致SQL注入问题。</p><p>当需要使用in时，可使用以下方法。</p><p>java代码。</p><pre><code>#!java
+String[] xxx_list = new String[] {"xx1","xx2"};
+HashMap hs = new HashMap();
+hs.put("xxx", xxx_list);
+//hs为sql语句查询参数
+</code></pre><p>xml中的语句配置。</p><pre><code>#!html
+&lt;select id="" resultClass="java.util.HashMap"
+parameterClass="java.util.HashMap"&gt;
+    ...
+    &lt;dynamic prepend=" and "&gt;
+        &lt;isNotEmpty prepend=" and  " property="xxx"&gt;
+            (xxx in
+                &lt;iterate open="(" close=")" conjunction="," property="xxx"&gt;#xxx[]#&lt;/iterate&gt;
+            )
+        &lt;/isNotEmpty&gt;
+    &lt;/dynamic&gt;
+    ...
+&lt;/select&gt;
+</code></pre><p><strong>当需要使用in时，不应使用“in ('$xxx$')”。</strong></p><p>在ibatis对应的xml文件中配置了语句test&#95;in&#95;right与test&#95;in&#95;wrong如下。</p><pre><code>#!html
+&lt;select id="test_in_right" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username in
+    &lt;iterate open="(" close=")" conjunction="," property="username"&gt;#username[]#&lt;/iterate&gt;
+&lt;/select&gt;
+
+&lt;select id="test_in_wrong" resultClass="java.util.HashMap"
+    parameterClass="java.util.HashMap"&gt;
+    select * from test_user where username in ('$username$')
+&lt;/select&gt;
+</code></pre><p>在JAVA代码中执行上述语句如下。</p><pre><code>#!java
+String[] username_list = new String[] {"') or ('1'='1"};
+hs.put("username", username_list);
+
+List&lt;Object&gt; list5 = queryListSql("test_in_right",hs);
+logger.info("test-list5: " + list5);
+
+HashMap hs = new HashMap();
+
+hs.put("username", "') or ('1'='1");
+
+List&lt;Object&gt; list6 = queryListSql("test_in_wrong",hs);
+logger.info("test-list6: " + list6);
+</code></pre><p>log4j中执行test&#95;in&#95;right语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username in   (?)  
+[DEBUG] Executing Statement:    select * from test_user where username in   (?)  
+[DEBUG] Parameters: [') or ('1'='1]  
+[DEBUG] Types: [java language=".lang.String"][/java]  
+[DEBUG] ResultSet  
+[INFO ] test-list5: []  
+</code></pre><p>log4j中执行test&#95;in&#95;wrong语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username in ('') or ('1'='1')  
+[DEBUG] Executing Statement:    select * from test_user where username in ('') or ('1'='1')  
+[DEBUG] Parameters: []  
+[DEBUG] Types: []  
+[DEBUG] ResultSet  
+[DEBUG] Header: [USERNAME, PWD]  
+[DEBUG] Result: [aaa, bbb]  
+[DEBUG] Result: [123, 456]  
+[INFO ] test-list6: [{PWD=bbb, USERNAME=aaa}, {PWD=456, USERNAME=123}]  
+</code></pre><p>执行test&#95;in&#95;right语句时产生的数据包如下。</p><p><img alt="p38" img-src="e9dcb9b2da24aee3b2bddd2dd82de7ae6970bd85.jpg"></p><p>执行test&#95;in&#95;wrong语句时产生的数据包如下。</p><p><img alt="p39" img-src="e398072259f61784d956a5ac03851f62ea8c35ef.jpg"></p><p>在ibatis中在执行包含like或in的语句时，使用#也是能正常查询到数据的。</p><p>在JAVA代码中使用正确的查询条件执行test&#95;like&#95;right与test&#95;in&#95;right语句如下。</p><pre><code>#!java
+HashMap hs = new HashMap();
+
+hs.put("username", "aaa");
+
+List&lt;Object&gt; list7 = queryListSql("test_like_right",hs);
+logger.info("test-list7: " + list7);
+
+String[] username_list2 = new String[] {"aaa","123"};
+hs.put("username", username_list2);
+
+List&lt;Object&gt; list8 = queryListSql("test_in_right",hs);
+logger.info("test-list8: " + list8);
+</code></pre><p>log4j中使用正确的查询条件执行test&#95;like&#95;right语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username like '%' || ? || '%'  
+[DEBUG] Executing Statement:    select * from test_user where username like '%' || ? || '%'  
+[DEBUG] Parameters: [aaa]  
+[DEBUG] Types: [java language=".lang.String"][/java]  
+[DEBUG] ResultSet  
+[DEBUG] Header: [USERNAME, PWD]  
+[DEBUG] Result: [aaa, bbb]  
+[INFO ] test-list7: [{PWD=bbb, USERNAME=aaa}]  
+</code></pre><p>log4j中使用正确的查询条件执行test&#95;in&#95;right语句时的相关日志如下。</p><pre><code>#!bash
+[DEBUG] Preparing Statement:    select * from test_user where username in   (?,?)  
+[DEBUG] Executing Statement:    select * from test_user where username in   (?,?)  
+[DEBUG] Parameters: [aaa, 123]  
+[DEBUG] Types: [java 1="java.lang.String" language=".lang.String,"][/java]  
+[DEBUG] ResultSet  
+[DEBUG] Header: [USERNAME, PWD]  
+[DEBUG] Result: [aaa, bbb]  
+[DEBUG] Result: [123, 456]  
+[INFO ] test-list8: [{PWD=bbb, USERNAME=aaa}, {PWD=456, USERNAME=123}]  
+</code></pre><p>使用正确的查询条件执行test&#95;like&#95;right语句时产生的数据包如下。</p><p><img alt="p40" img-src="1e372163cd092d8c7f1037c36dc50aa5078b1dcd.jpg"></p><p>使用正确的查询条件执行test&#95;in&#95;right语句时产生的数据包如下。</p><p><img alt="p41" img-src="8e16e6c3753b8fb468c57594311aa0cb9e0ce425.jpg"></p><p>上述全部语句执行时在oracle的v$sql视图中产生的数据如下。</p><p><img alt="p42" img-src="955e332d7f12c514fc4ff2c145833b10ebaed2e7.jpg"></p><h1>0x04 其他问题</h1><hr><h3>错误页</h3><p>在web.xml中定义error-page，防止当出现错误时暴露服务器信息。</p><p>示例如下。</p><pre><code>#!html
+&lt;error-page&gt;
+    &lt;error-code&gt;404&lt;/error-code&gt;
+    &lt;location&gt;xxx.jsp&lt;/location&gt;
+&lt;/error-page&gt;
+
+&lt;error-page&gt;
+    &lt;error-code&gt;500&lt;/error-code&gt;
+    &lt;location&gt;xxx.jsp&lt;/location&gt;
+&lt;/error-page&gt;
+</code></pre><h3>仅允许已登录用户的访问</h3><p>当用户访问jsp或Servlet/action/.do时，需要判断当前用户是否已登录且具有相应权限，防止出现越权使用。</p><h1>0x05 后记</h1><hr><p>以上为本人的一点总结，难免存在错误之处，大牛请轻喷。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Kevinsss</span> <span class="reply-time">2016-06-12 17:24:52</span></div><p></p><p>@z_zz_zzz 你这00截断是指创建、写入文件时，平台的特性不允许你这样的文件名，所以忽略了后面的。<br>而你上传来的时候，文件名还是原来的，只需要在后台程序中，判断扩展名之类的是否合法，然后主流的做法是，用时间戳+随机数代替文件名，然后写入文件的时候，把扩展名加上。这样00截断也是没用的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">4lnt</span> <span class="reply-time">2016-06-12 17:16:29</span></div><p></p><p>我测试了jdk1.7.0_79，虽然有文件截断，但是也不能写入，应该修复了吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0c0c0f</span> <span class="reply-time">2016-06-08 20:59:04</span></div><p></p><p>@z_zz_zzz 学习，这个地方不好控制啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2016-06-08 19:08:47</span></div><p></p><p>好文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z_zz_zzz</span> <span class="reply-time">2016-06-08 18:03:41</span></div><p></p><p>@xpriver 是指利用方式还是危害呢，有没有新姿势可以分享的^_^</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z_zz_zzz</span> <span class="reply-time">2016-06-08 17:56:52</span></div><p></p><p>@Kevinsss 重命名文件名的时候如果文件名里带了0x00，重命名不一定能去掉的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z_zz_zzz</span> <span class="reply-time">2016-06-08 17:55:26</span></div><p></p><p>@nextdoor 应该会有一些开发人员不清楚使用ibatis时$和#的区别，不知道$会造成sql注入，特别是用like和in时很可能误用$</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z_zz_zzz</span> <span class="reply-time">2016-06-08 17:50:25</span></div><p></p><p>@0c0c0f<br>测试代码：<br>String path=&quot;C:/a/b/c.jsp#d.jpg&quot;;<br>path = path.replace(&#039;#&#039;,(char)0);<br>String[] fparts = path.split(&quot;[\\/\\\\]&quot;);<br>String filename = fparts[fparts.length - 1];<br>System.out.println(filename);<br>if(filename.indexOf((char)0) != -1) {<br>System.out.println(&quot;filename.indexOf((char)0) != -1&quot;);<br>}<br>if(filename.endsWith(&quot;.jpg&quot;)) {<br>System.out.println(&quot;filename.endsWith(\&quot;.jpg\&quot;)&quot;);<br>}<br>输出结果：<br>c.jsp d.jpg<br>filename.indexOf((char)0) != -1<br>filename.endsWith(&quot;.jpg&quot;)<br>直接拿这个文件名写文件，应该还是会被截断的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">nextdoor</span> <span class="reply-time">2016-06-08 17:33:45</span></div><p></p><p>其实关于#和$的不同就是#进行的是预编译，而$的是本质进行的是语句拼接，在java中，只要是拼接的sql语句，都有可能存在问题。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0c0c0f</span> <span class="reply-time">2016-06-08 16:11:43</span></div><p></p><p>owasp的上传<br>if (!item.isFormField() &amp;&amp; item.getName() != null &amp;&amp; !(item.getName().equals(&quot;&quot;)))<br>{<br>String[] fparts = item.getName().split(&quot;[\\/\\\\]&quot;);<br>String filename = fparts[fparts.length - 1];<br>是先把文件名取出来，再做后缀的合法性校验，这时就不能截断了吧。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cf_hb</span> <span class="reply-time">2016-06-08 15:22:22</span></div><p></p><p>赞，有收获！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Kevinsss</span> <span class="reply-time">2016-06-08 15:14:30</span></div><p></p><p>那个上传文件的，判断扩展名等信息合法之后，直接重命名文件不就可以了么，不用那么复杂把</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2016-06-08 15:08:10</span></div><p></p><p>干货，多谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xpriver</span> <span class="weibo"></span> <span class="reply-time">2016-06-08 14:29:57</span></div><p></p><p>SQL注入远不止上面的恐怖</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Her0in</span> <span class="reply-time">2016-06-08 14:13:28</span></div><p></p><p>给个赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大哥呢</span> <span class="reply-time">2016-06-08 13:14:24</span></div><p></p><p>hehe</p><p></p></div></div></div></div></div></main>

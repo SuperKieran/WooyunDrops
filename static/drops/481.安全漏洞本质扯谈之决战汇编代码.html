@@ -1,0 +1,443 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">安全漏洞本质扯谈之决战汇编代码</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">alert7</a> <span class="bull">·</span> <time title="2015/02/28 18:42" ui-time="" datetime="2015/02/28 18:42" class="published ng-binding ng-isolate-scope">2015/02/28 18:42</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>当前比较流行也比较有效率的挖掘的漏洞的方法是Fuzzing，当然这也需要花点时间去写Fuzzing程序。然而不是每个东西都有必要去写Fuzzing程序,也不是每个东西都可以去Fuzzing的，所以也还是要继续修炼我们的二进制安全流派内功—“肉眼挖洞神功”。</p><p>安全漏洞在源代码层面和汇编代码层面会有不同的表现，想要进阶升级的话，必须清晰的了解每种安全漏洞类型在源代码层面和汇编代码层面都是张什么样的。有些安全漏洞在源代码层面容易发现它，有些安全漏洞则在汇编代码层面比较容易发现它。不管是源代码层面还是汇编代码层面，普通人看代码的时候即使看到有安全漏洞的那些代码的时候，往往是“只见代码，不见漏洞”。修炼“肉眼挖洞神功”的目标是看到那些疑似有问题的代码时候能够警觉，能够识别，并快速判定是否可形成安全漏洞。</p><p>早些时候给我们翰海源的小伙伴们讲过《深入安全漏洞-Root Cause of Vulnerabilities》和《决战汇编代码》，希望小伙伴们能够掌握安全漏洞的本质原因以及练就“肉眼挖洞神功”。今天把里面的部分例子跟大伙一起分享下。</p><h1>0x01 源代码层面</h1><hr><h2>1. Link Attack</h2><hr><p>*unix 下的 link attack,有意识到吗？</p><pre><code>#!c
+if(access("file",W_OK)!=0){
+    exit(1);
+}
+fd = open("file",O_WRONLY);
+
+write(fd,buffer,sizeof(buffer));
+</code></pre><h2>2. Integer Overflow Example in OpenSSH 3.1</h2><hr><p>发生在真实的 openssh 3.1 ，有漏洞吗？</p><pre><code>#!c
+u_int nresp;
+...
+nresp = packet_get_int();
+if(nresp){
+    response = xmalloc(nresp * sizeof(char*));
+    for(i=0; i&lt;nresp; i++)
+        response[i] = packet_get_string(NULL);
+}
+packet_check_eom();
+</code></pre><h2>3. Signed Integer Vulnerability Example</h2><hr><p>注意整形符号，能被绕过吗？</p><pre><code>#!c
+int read_user_data(int sockfd) 
+{
+   int length, sockfd, n;
+   char buffer[1024];
+
+   length = get_user_length(sockfd);
+
+   if(length &gt; 1024){
+       error("illegal input, not enough room in buffer\n"); 
+       return 1;
+   }
+
+   if(read(sockfd, buffer, length) &lt; 0){ error("read: %m");
+       return 1;
+   }
+
+   return 0; 
+}
+</code></pre><h2>4. Truncation Vulnerability Example in NFS</h2><hr><p>整形截断问题？</p><pre><code>#!c
+void assume_privs(unsigned short uid) {
+   seteuid(uid);
+   setuid(uid);
+}
+
+int become_user(int uid) 
+{
+   if (uid == 0)
+       die("root isnt allowed");
+   assume_privs(uid); 
+}
+</code></pre><h2>5. 苹果SSL/TLS 重大安全漏洞的细节</h2><hr><p>(CVE-2014-1266)多个goto fail造成重大安全隐患。</p><pre><code>#!c
+static OSStatus
+SSLVerifySignedServerKeyExchange(SSLContext *ctx, bool isRsa, SSLBuffer signedParams,
+                                 uint8_t *signature, UInt16 signatureLen)
+{
+    ...
+
+    if ((err = ReadyHash(&amp;SSLHashSHA1, &amp;hashCtx)) != 0)
+        goto fail;
+    if ((err = SSLHashSHA1.update(&amp;hashCtx, &amp;clientRandom)) != 0)
+        goto fail;
+    if ((err = SSLHashSHA1.update(&amp;hashCtx, &amp;serverRandom)) != 0)
+        goto fail;
+    if ((err = SSLHashSHA1.update(&amp;hashCtx, &amp;signedParams)) != 0)
+        goto fail;
+        goto fail;  &lt;---- *** DANGER ***
+    if ((err = SSLHashSHA1.final(&amp;hashCtx, &amp;hashOut)) != 0)
+        goto fail;
+
+        err = sslRawVerify(ctx,
+                       ctx-&gt;peerPubKey,
+                       dataToSign,                              /* plaintext */
+                       dataToSignLen,                   /* plaintext length */
+                       signature,
+                       signatureLen);
+    ...
+fail:
+    SSLFreeBuffer(&amp;signedHashes);
+    SSLFreeBuffer(&amp;hashCtx);
+    return err;
+
+}
+</code></pre><h2>6. MS-RPC DCOM Buffer Overflow (冲击波)</h2><hr><p>冲击波蠕虫只因为一个缓冲区溢出。</p><pre><code>#!c
+HRESULT GetMachineName (WCHAR * pwszPath) {
+     The WCHAR wszMachineName [N + 1]); 
+     ...
+     LPWSTR pwszServerName = wszMachineName;
+     while (* pwszPath! = L '\\')
+         * PwszServerName + + = * pwszPath + +;   
+     ...
+ }
+</code></pre><h2>7. 有漏洞吗？</h2><hr><pre><code>#!c
+unsigned short read_length(int sockfd) 
+{
+    unsigned short len;
+
+    if(full_read(sockfd, (void *)&amp;len, 2) != 2)
+        die("could not read length!\n");
+    return ntohs(len);
+}
+
+int read_packet(int sockfd) 
+{
+   struct header hdr;
+   short length;
+   char *buffer;
+
+   length = read_length(sockfd);
+
+   if(length &gt; 1024){
+       error("read_packet: length too large: %d\n", length); 
+       return 1;
+   }
+
+   buffer = (char *)malloc(length+1);
+
+   if((n = read(sockfd, buffer, length) &lt; 0){
+       error("read: %m");
+       free(buffer);
+       return 1;
+   }
+   buffer[n] = '\0';
+   return 0; 
+}
+</code></pre><h2>8. 有漏洞吗？</h2><hr><p>提示: 5rOo5oSPc216ZW9m</p><pre><code>#!c
+char *read_username(int sockfd) 
+{
+    char *buffer, *style, userstring[1024]; 
+    int i;
+
+    buffer = (char *)malloc(1024);
+
+    if(!buffer){
+        error("buffer allocation failed: %m"); 
+        return NULL;
+    }
+
+    if(read(sockfd, userstring, sizeof(userstring)-1) &lt;= 0){ 
+       free(buffer);
+       error("read failure: %m");
+       return NULL;
+    }
+
+    userstring[sizeof(userstring)-1] = '\0';
+
+    style = strchr(userstring, ':'); 
+    if(style)
+       *style++ = '\0';
+
+    sprintf(buffer, "username=%.32s", userstring);
+
+    if(style)
+        snprintf(buffer, sizeof(buffer)-strlen(buffer)-1,
+                 ", style=%s\n", style);
+    return buffer;
+}
+</code></pre><h2>9. 有漏洞吗？</h2><hr><p>提示：</p><p><img alt="enter image description here" img-src="d52c8991d7c6b99dce8e9c91886f7d7f20fee3f1.jpg"></p><pre><code>#!c
+/* special thing for ldap.
+* The parts are separated by question marks. 
+* From RFC 2255:
+* ldapurl = scheme "://" [hostport] ["/"
+*           [dn ["?" [attributes] ["?" [scope] 
+*           ["?" [filter] ["?" extensions]]]]]]
+*/
+
+if (!strncasecmp(uri, "ldap", 4)) 
+{
+    ￼char *token[5];
+    int c = 0;
+
+    token[0] = cp = ap_pstrdup(p, cp); 
+    while (*cp &amp;&amp; c &lt; 5) {
+        if (*cp == '?') {
+            token[++c] = cp + 1;
+            *cp = '\0';
+        }
+        ++cp; 
+    }
+</code></pre><h2>10. 有漏洞吗？(Antisniff v1.1 Vulnerability)</h2><hr><p>tips</p><pre><code>#!c
+char *indx;
+int count;
+char nameStr[MAX_LEN]; //256
+...
+memset(nameStr, '\0', sizeof(nameStr));
+...
+indx = (char *)(pkt + rr_offset); 
+count = (char)*indx;
+
+while (count){
+    if (strlen(nameStr) + count &lt; ( MAX_LEN - 1) ){
+       (char *)indx++;
+       strncat(nameStr, (char *)indx, count); 
+       indx += count;
+       count = (char)*indx;
+       strncat(nameStr, ".",
+               sizeof(nameStr) strlen(nameStr));
+    } else {
+       fprintf(stderr, "Alert! Someone is attempting "
+                       "to send LONG DNS packets\n");
+       count = 0; }
+}
+nameStr[strlen(nameStr)-1] = '\0';
+</code></pre><h2>11. 还有漏洞吗？(Antisniff v1.1.1 Vulnerability)</h2><hr><pre><code>#!c
+char *indx;
+int count;
+char nameStr[MAX_LEN]; //256
+...
+memset(nameStr, '\0', sizeof(nameStr));
+...
+indx = (char *)(pkt + rr_offset); 
+count = (char)*indx;
+
+while (count){
+/* typecast the strlen so we aren't dependent on 
+  the call to be properly setting to unsigned. */
+
+  if ((unsigned int)strlen(nameStr) + 
+    (unsigned int)count &lt; ( MAX_LEN - 1) ){
+    (char *)indx++;
+    strncat(nameStr, (char *)indx, count); 
+    indx += count;
+    count = (char)*indx;
+    strncat(nameStr, ".",
+            sizeof(nameStr) strlen(nameStr)); 
+  } else {
+    fprintf(stderr, "Alert! Someone is attempting " 
+                    "to send LONG DNS packets\n");
+    count = 0; 
+  }
+}
+nameStr[strlen(nameStr)-1] = '\0';
+</code></pre><h2>12. 还有漏洞吗？(Antisniff v1.1.2 Vulnerability)</h2><hr><pre><code>#!c
+unsigned char *indx;
+unsigned int count;
+unsigned char nameStr[MAX_LEN]; //256
+...
+memset(nameStr, '\0', sizeof(nameStr));
+...
+indx = (char *)(pkt + rr_offset); 
+count = (char)*indx;
+
+while (count){
+    if (strlen(nameStr) + count &lt; ( MAX_LEN - 1) ){ 
+       indx++;
+       strncat(nameStr, indx, count);
+       indx += count;
+       count = *indx;
+       strncat(nameStr, ".",
+               sizeof(nameStr) strlen(nameStr));
+     } else {
+       fprintf(stderr, "Alert! Someone is attempting "
+                       "to send LONG DNS packets\n");
+       count = 0; 
+     }
+}
+nameStr[strlen(nameStr)-1] = '\0';
+</code></pre><h1>0x02 汇编代码层面</h1><hr><p>接下要在汇编代码堆里磨练下,下面的汇编代码有安全问题吗？都是些什么问题？</p><h2>1. Safe or vulnerability?</h2><hr><pre><code>#!bash
+text:0040106B sub_40106B      proc near               ; CODE XREF: _main+58p
+.text:0040106B
+.text:0040106B var_10004       = byte ptr -10004h
+.text:0040106B var_4           = dword ptr -4
+.text:0040106B arg_0           = word ptr  8
+.text:0040106B
+.text:0040106B                 push    ebp
+.text:0040106C                 mov     ebp, esp
+.text:0040106E                 mov     eax, 10004h
+.text:00401073                 call    __alloca_probe
+.text:00401078                 mov     eax, dword_404020
+.text:0040107D                 xor     eax, ebp
+.text:0040107F                 mov     [ebp+var_4], eax
+.text:00401082                 movsx   eax, [ebp+arg_0]
+.text:00401086                 movsx   eax, [ebp+eax+var_10004]
+.text:0040108E                 push    eax
+.text:0040108F                 push    offset Format   ; "t %x"
+.text:00401094                 call    ds:printf
+.text:0040109A                 pop     ecx
+.text:0040109B                 pop     ecx
+.text:0040109C                 mov     ecx, [ebp+var_4]
+.text:0040109F                 xor     ecx, ebp
+.text:004010A1                 xor     eax, eax
+.text:004010A3                 call    sub_401BD2
+.text:004010A8                 leave
+</code></pre><h2>2. Safe or vulnerability?</h2><hr><pre><code>#!bash
+text:004010AA sub_4010AA      proc near               ; CODE XREF: _main+60p
+.text:004010AA
+.text:004010AA var_190         = dword ptr -190h
+.text:004010AA arg_0           = dword ptr  8
+.text:004010AA
+.text:004010AA                 push    ebp
+.text:004010AB                 mov     ebp, esp
+.text:004010AD                 mov     eax, [ebp+arg_0]
+.text:004010B0                 sub     esp, 190h
+.text:004010B6                 cmp     eax, 64h
+.text:004010B9                 jle     short loc_4010BE
+.text:004010BB                 push    64h
+.text:004010BD                 pop     eax
+.text:004010BE
+.text:004010BE loc_4010BE:                             ; CODE XREF: sub_4010AA+Fj
+.text:004010BE                 push    [ebp+eax*4+var_190]
+.text:004010C5                 push    offset Format   ; "t %x"
+.text:004010CA                 call    ds:printf
+.text:004010D0                 pop     ecx
+</code></pre><h2>3. Safe or vulnerability?</h2><hr><pre><code>#!bash
+.text:00401000 sub_401000      proc near               ; CODE XREF: _main+48p
+.text:00401000
+.text:00401000 var_190         = dword ptr -190h
+.text:00401000 arg_0           = dword ptr  8
+.text:00401000
+.text:00401000                 push    ebp
+.text:00401001                 mov     ebp, esp
+.text:00401003                 mov     eax, [ebp+arg_0]
+.text:00401006                 sub     esp, 190h
+.text:0040100C                 cmp     eax, 64h
+.text:0040100F                 jbe     short loc_401014
+.text:00401011                 push    64h
+.text:00401013                 pop     eax
+.text:00401014
+.text:00401014 loc_401014:                             ; CODE XREF: sub_401000+Fj
+.text:00401014                 push    [ebp+eax*4+var_190]
+.text:0040101B                 push    offset Format   ; "t %x"
+.text:00401020                 call    ds:printf
+.text:00401026                 pop     ecx
+.text:00401027                 pop     ecx
+</code></pre><h2>4. Safe or vulnerability?</h2><hr><pre><code>#!bash
+.text:004010D6 sub_4010D6      proc near               ; CODE XREF: _main+68p
+.text:004010D6
+.text:004010D6 arg_0           = dword ptr  4
+.text:004010D6
+.text:004010D6                 push    esi
+.text:004010D7                 push    64h             ; Size
+.text:004010D9                 call    ds:malloc
+.text:004010DF                 mov     esi, eax
+.text:004010E1                 mov     eax, [esp+8+arg_0]
+.text:004010E5                 cmp     eax, 64h
+.text:004010E8                 pop     ecx
+.text:004010E9                 jle     short loc_4010EE
+.text:004010EB                 push    64h
+.text:004010ED                 pop     eax
+.text:004010EE
+.text:004010EE loc_4010EE:                             ; CODE XREF: sub_4010D6+13j
+.text:004010EE                 movsx   eax, byte ptr [eax+esi]
+.text:004010F2                 push    eax
+.text:004010F3                 push    offset Format   ; "t %x"
+.text:004010F8                 call    ds:printf
+.text:004010FE                 push    esi             ; Memory
+.text:004010FF                 call    ds:free
+</code></pre><h2>5. Safe or vulnerability?</h2><hr><pre><code>#!bash
+. text:0040110C sub_40110C      proc near               ; CODE XREF: _main+70p
+.text:0040110C
+.text:0040110C var_19A0        = byte ptr -19A0h
+.text:0040110C var_4           = dword ptr -4
+.text:0040110C arg_0           = word ptr  8
+.text:0040110C
+.text:0040110C                 push    ebp
+.text:0040110D                 mov     ebp, esp
+.text:0040110F                 mov     eax, 19A0h
+.text:00401114                 call    __alloca_probe
+.text:00401119                 mov     eax, dword_404020
+.text:0040111E                 xor     eax, ebp
+.text:00401120                 mov     [ebp+var_4], eax
+.text:00401123                 movsx   eax, [ebp+arg_0]
+.text:00401127                 movsx   eax, [ebp+eax+var_19A0]
+.text:0040112F                 push    eax
+.text:00401130                 push    offset Format   ; "t %x"
+.text:00401135                 call    ds:printf
+.text:0040113B                 pop     ecx
+.text:0040113C                 pop     ecx
+.text:0040113D                 mov     ecx, [ebp+var_4]
+.text:00401140                 xor     ecx, ebp
+</code></pre><h2>6. Safe or vulnerability?</h2><hr><pre><code>#!bash
+.text:0040102C sub_40102C      proc near               ; CODE XREF: _main+50p
+.text:0040102C
+.text:0040102C var_10004       = byte ptr -10004h
+.text:0040102C var_4           = dword ptr -4
+.text:0040102C arg_0           = word ptr  8
+.text:0040102C
+.text:0040102C                 push    ebp
+.text:0040102D                 mov     ebp, esp
+.text:0040102F                 mov     eax, 10004h
+.text:00401034                 call    __alloca_probe
+.text:00401039                 mov     eax, dword_404020
+.text:0040103E                 xor     eax, ebp
+.text:00401040                 mov     [ebp+var_4], eax
+.text:00401043                 movzx   eax, [ebp+arg_0]
+.text:00401047                 movsx   eax, [ebp+eax+var_10004]
+.text:0040104F                 push    eax
+.text:00401050                 push    offset Format   ; "t %x"
+.text:00401055                 call    ds:printf
+.text:0040105B                 pop     ecx
+</code></pre><h2>7. Safe or vulnerability?</h2><hr><pre><code>#!bash
+. .text:0040118A ; int __cdecl sub_40118A(LPCSTR lpMultiByteStr)
+.text:0040118A sub_40118A      proc near               ; CODE XREF: _main+91p
+.text:0040118A
+.text:0040118A WideCharStr     = word ptr -44h
+.text:0040118A var_4           = dword ptr -4
+.text:0040118A lpMultiByteStr  = dword ptr  8
+.text:0040118A
+.text:0040118A                 push    ebp
+.text:0040118B                 mov     ebp, esp
+.text:0040118D                 sub     esp, 44h
+.text:00401190                 mov     eax, dword_404020
+.text:00401195                 xor     eax, ebp
+.text:00401197                 mov     [ebp+var_4], eax
+.text:0040119A                 mov     ecx, [ebp+lpMultiByteStr]
+.text:0040119D                 mov     eax, ecx
+.text:0040119F                 push    esi
+.text:004011A0                 lea     esi, [eax+1]
+.text:004011A3
+.text:004011A3 loc_4011A3:                             ; CODE XREF: sub_40118A+1Ej
+.text:004011A3                 mov     dl, [eax]
+.text:004011A5                 inc     eax
+.text:004011A6                 test    dl, dl
+.text:004011A8                 jnz     short loc_4011A3
+.text:004011AA                 push    40h             ; cchWideChar
+.text:004011AC                 lea     edx, [ebp+WideCharStr]
+.text:004011AF                 push    edx             ; lpWideCharStr
+.text:004011B0                 sub     eax, esi
+.text:004011B2                 push    eax             ; cbMultiByte
+.text:004011B3                 push    ecx             ; lpMultiByteStr
+.text:004011B4                 push    0               ; dwFlags
+.text:004011B6                 push    0               ; CodePage
+.text:004011B8                 call    ds:MultiByteToWideChar
+</code></pre><h2>8. Safe or vulnerability?</h2><hr><pre><code>#!bash
+text:00401738 Size            = dword ptr  4
+.text:00401738 Src             = dword ptr  8
+.text:00401738
+.text:00401738                 push    esi
+.text:00401739                 push    edi
+.text:0040173A                 mov     edi, [esp+8+Size]
+.text:0040173E                 lea     eax, [edi+1]
+.text:00401741                 push    eax             ; Size
+.text:00401742                 call    ds:__imp__malloc
+.text:00401748                 mov     esi, eax
+.text:0040174A                 test    esi, esi
+.text:0040174C                 pop     ecx
+.text:0040174D                 jz      short loc_401774
+.text:0040174F                 push    edi             ; Size
+.text:00401750                 push    [esp+0Ch+Src]   ; Src
+.text:00401754                 push    esi             ; Dst
+.text:00401755                 call    _memcpy
+.text:0040175A                 push    esi
+.text:0040175B                 push    offset aS       ; "%s\n"
+.text:00401760                 mov     byte ptr [esi+edi], 0
+.text:00401764                 call    ds:__imp__printf
+</code></pre><h1>0x04 最后</h1><hr><p>汇编代码层面的例子需要想想它们的源代码都是怎么写的才能编译出来这些有安全漏洞的代码。做到源代码层面和汇编代码层面通吃。更要做到从宏观上了解程序世界功能和规则，从微观上了解其实现细节。</p><p>上面的例子都不到一百行的汇编代码，都找出问题了吗？决战汇编代码就是需要我们在真实程序世界的上千万行汇编代码中找出那些隐藏的安全漏洞，这个难度会高很多。其中有对抗有编程者的防御措施，需要思考如何打败它，是和程序世界的缔造者们的一次跨时间和空间无声的较量。</p><p>以上这些其实是一个引子，需要小伙伴继续深入研究推演和锻炼。推荐学习Mark Down &amp; JohnMcDonald两位大牛的书《The Art of Software Security Assessment-- Identifying andavoiding software vulnerabilities》（某些例子来自该书），希望对小伙伴们有所帮助。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7452" rel="bookmark" id="re1">逆向基础 OS-specific (三)</a></li><li><a href="http://drops.wooyun.org/tips/1963" rel="bookmark" id="re2">逆向基础（三）</a></li><li><a href="http://drops.wooyun.org/tips/2282" rel="bookmark" id="re3">逆向基础（七）</a></li><li><a href="http://drops.wooyun.org/tips/2812" rel="bookmark" id="re4">逆向基础（十一）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">h0FF</span> <span class="reply-time">2015-03-03 18:16:56</span></div><p></p><p>虽然看不明白，但是感觉很厉害的样子</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-03-03 11:18:54</span></div><p></p><p>虽然看不明白，但是感觉很厉害的样子</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-03-01 02:23:45</span></div><p></p><p>求详解。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2015-02-28 19:20:41</span></div><p></p><p>虽然看不明白，但是感觉很厉害的样子</p><p></p></div></div></div></div></div></main>

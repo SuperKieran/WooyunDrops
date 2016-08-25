@@ -1,0 +1,91 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">fuzzing XSS filter</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">isno</a> <span class="bull">·</span> <time title="2014/01/24 12:41" ui-time="" datetime="2014/01/24 12:41" class="published ng-binding ng-isolate-scope">2014/01/24 12:41</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>题记：这是09年自己写的总结文章，之后多年也不搞这个了，技术显然是过时了，但我觉得思路还是有用的，算抛砖引玉吧，各位见笑</p><h2>0x00 前言</h2><hr><p>这是一篇学习总结，首先对几位未曾谋面也不知道名字的老师表示感谢，通过对你们大作的学习，使我逐渐入门开始跨入XSSer的行列，虽然我现在的水平和大师们比起来还差得太远，脚本方面的基础也不不行，但我会继续努力学习。</p><h2>0x01 概述</h2><hr><p>曾经有一度，在N年前，我对网络安全对抗的总结就是“过滤与反过滤”，虽然现在看起来这种理解太狭隘了，不过在很大程度上过滤和突破过滤确实是很重要的手段。安全的目的就是过滤掉有害信息，保存安全的信息，而黑客的目的就是突破过滤把有害信息传递过去。无论是SQL注入、XSS、溢出等等，最最核心的东西就是突破过滤。本文主要讲针对存储型XSS过滤器的fuzz。</p><h2>0x02 XSS filter：安全域边界</h2><hr><p>随着XSS攻击越来越流行，对XSS的过滤也越来越成熟，尤其是存储型XSS，由于攻击更加灵活多变，应用更加广泛，所以过滤手段也更复杂，从最早的黑名单字符串过滤，发展到现在基于语法分析的黑白名单相结合的过滤器，对攻击的难度要求也越来越高。</p><p>由于对反射型XSS的过滤相对简单，所以本文只讨论存储型XSS过滤。现在的存储型XSS过滤大多是基于HTML语法进行过滤，为什么不用简单的字符串过滤呢？这是因为HTML支持的编码方式非常多，而且要区分哪些是HTML语言哪些是文本内容也很麻烦。例如：</p><pre><code>#!html
+&lt;div style=width:expression(alert(0))&gt;&lt;/div&gt;
+</code></pre><p>是要过滤的，而</p><pre><code>#!html
+&lt;div&gt;style=width:expression(alert(0))&lt;/div&gt;
+</code></pre><p>是正常的内容，所以必须进行HTML语法分析。</p><p>filter另一个要考虑的问题是用户体验，一些很严格的过滤器虽然相对安全，但是对正常内容的改变太大，页面都变样了，正常用户使用起来感觉不太好。其实大多数XSS filter的漏洞并不是不能发现XSS，而是发现以后不能完全清除，在某些方面看来也是为了考虑正常用户的使用感受。</p><p>基于HTML语法分析的filter会把输入内容划分成很多不同的安全域，例如HTML标签之外的内容不过滤，是最低安全级别，在HTML之内也要划分，样式表是容易出问题的地方，要重点扫描，甚至考虑用白名单，即使在样式表内部也要划分不同的区域使用不同的扫描级别。因为不同的安全域有不同的检测方法，所以容易出问题的地方就两个安全域之间的边界，一旦边界搞错了就有可能突破过滤。</p><h2>0x03 fuzzer的设计：突破边界</h2><hr><p>当一些普通的尝试无法成功突破filter，就要考虑用fuzzer。首先要设计测试模型，这也是最核心的问题。我经常想为什么fuzzing能够成功呢，一定是filter存在某些隐藏比较深的漏洞，例如前面谈过的安全域边界，所以我们设计fuzzing模型就重点对这些地方进行测试，举个例子说明一下安全域边界的问题：</p><pre><code>#!html
+&lt;div style="width:expression(alert(9));"&gt;
+</code></pre><p>其中：</p><pre><code>expression(alert(9))
+</code></pre><p>是重点扫描区域也就是最高安全级别区域，对这个区域应该过滤<code>/* */</code>和<code>expression</code>等，filter怎么确定这个区域呢？首先在div标签内找到style属性，在=后面找到""之间的内容，根据:来划分样式名称和内容，以;分隔几个样式。那么在这里<code>=":;</code>这些都是关键字。如果XSSer提交以下内容：</p><pre><code>#!html
+&lt;div style="width:expre/*"*/ssion(alert(9));"&gt;
+</code></pre><p>最高安全区域还应该是</p><pre><code>expre/*"*/ssion(alert(9))
+</code></pre><p>但是如果filter在划分区域的时候首先根据第一个封闭的双引号对来划分，那么就会针对下面的内容做过滤：</p><pre><code>width:expre/*
+</code></pre><p>这样显然是不正确的，因为/* */中的内容是注释，是要丢弃的内容，如果先根据第一个双引号就确定了区域边界的话，那么在绿色区域也是过滤不到expression的，就会导致过滤被绕过。所以在这里正确的确定边界的方法是找到最后一个双引号来进行封闭，如果没找到的话还要自动添加，否则又会造成高级别安全区域的扩大，扩大了并非会更安全，安全区域的扩大会引起后面的边界混乱，同样会造成漏洞。当然了，这个情况只是我想象出来的用来举例的，实际情况不太可能这么简单，这里要说明的只是区域边界对于XSS fuzzing的重要性。</p><p>因此我们设计fuzzer的时候就要在一个模版的有可能导致边界混乱的地方添入一些元素组合来作为testcase，所以第一要考虑的是确定模版，例如我们可以把</p><pre><code>#!html
+&lt;div style="width:expre/*位置*/ssion(alert(9));"&gt;
+</code></pre><p>作为模版，元素填充在/**/之间。这样就有了一个简单的fuzz模型。</p><p>当然了这并不是一个好的模版，因为不够复杂，filter一般都会考虑到了。</p><p>那么在前边加点东西：</p><pre><code>#!html
+&lt;div id="位置" style="width:expre/*位置*/ssion(alert(9));"&gt;
+</code></pre><p>这样有两处地方填充元素，稍微复杂了一点，比第一个模版好点。我的想法是，越复杂的模版和越多的填充位置、填充元素，才越有可能跑出漏洞。但实际应用中因为我们是黑盒测试，所以还要考虑其他一些问题，例如效率、可识别性等等，这个后边再说。</p><p>有了模版，用什么样的元素进行填充，就是我们要考虑的第二个重要问题。首先边界元素肯定是要的，例如上边的例子里面的边界元素</p><pre><code>=":;
+</code></pre><p>能想到的还有</p><pre><code>空格、&lt;、&gt;、&lt;/div&gt;
+</code></pre><p>等，有时候虽然看起来不可能确定错边界，但实际上filter的行为往往出人意料，这也正是fuzzing存在的意义。</p><p>除了边界元素之外还有一种要考虑的是filter过滤的元素，例如filter过滤expression，我们就把expression也当做随机填充的元素，还有/<em>和</em>/、onXXX()等，当filter删除或改变这些内容后就有可能会导致边界的改变。</p><p>另一个元素是不可视的特殊字符，例如<code>\t、\r、\n、\0</code>等等，半个UNICODE字符等。还有被filter反向解码的字符串，例如<code>&amp;#XX、%XX、\XX</code>等。</p><p>最后要考虑的确定模版和元素的情况是浏览器的undocument行为，例如</p><pre><code>#!html
+&lt;&lt;div/style="width:expression(alert(9))"&gt;
+</code></pre><p>会被IE正常解析。这里有两个&lt;，而且div后面用/分隔而不是空格，某些filter可能考虑不到这样的行为，因为这样写不符合HTML语法规范。类似这样的浏览器的奇怪解析方式还有很多，去年分析过YAHOO Mail跨站的DX都会对CSS里面的不正常的url()记忆犹新吧，我挺佩服发现这种方式的那位老师的，这个的问题看起来似乎并不是仅仅是filter的问题，连IE对边界的划分都是存在问题的，当然这种问题单单对IE来说只是个小BUG而不能算漏洞，但是结合了YAHOO的filter之后却导致了XSS。</p><h2>0x04 实践练习：本地fuzzing的例子</h2><hr><p>在实际进行远程黑盒fuzzing之前我们先来构造一个本地fuzzing的例子来练习一下，看看模版的构造和元素的选择能否达到预想的效果。</p><p>我选择了<a href="http://www.bioinformatics.org/phplabware/internal_utilities/htmLawed/index.php">htmLawed</a>作为fuzzing对象，这是一个php写的开源的HTML过滤器，有兴趣的话可以先到<a href="http://www.bioinformatics.org/phplabware/internal_utilities/htmLawed/htmLawedTest.php">http://www.bioinformatics.org/phplabware/internal_utilities/htmLawed/htmLawedTest.php</a>这个网站，先手工测试一下看看能不能手工绕过它对CSS的过滤，也许大牛是可以手工XSS的，反正我试了一会没有成功，没办法，智商就只有这么多。这里我说的是上面那种例子里的样式表XSS，你可别直接输入一个<code>&lt;script&gt;</code>人家是不过滤的，因为这个filter还要加参数。</p><p>我下载了htmLawed之后，在本地做了一个测试程序：</p><pre><code>#!php
+&lt;?php
+include './htmLawed.php';
+$m1=array("'","\""," ","");
+$m2=array("","","\"","'","&lt;","","","","","","","","");
+$mag=array("'","\""," ","&lt;/div&gt;","/*","*/","\\","\\\"","\\\'",";",":","&lt;","&gt;","=","&lt;div","\r\n","","&amp;#","/","*","expression(","w:expression(alert(9));","style=w:expression(alert(9));","");
+for($i=0;$i&lt;10000;$i++)
+{
+$fname = "tc\\hush".$i.".html";
+$fp = fopen($fname, "a");
+$mtotran = "";
+for($j=0;$j&lt;1000;$j++)
+{
+shuffle($mag);
+shuffle($m1);
+shuffle($m2);
+$mstr=$m2[0];
+$mstr.="&lt;div id=";
+$mstr.=$m1[0];
+$mstr.=$mag[0];
+$mstr.=$mag[1];
+shuffle($mag);
+$mstr.=$mag[0];
+$mstr.=$m1[0];
+$mstr.=" style=";
+shuffle($m1);
+$mstr.=$m1[0];
+$mstr.="w:exp/*";
+shuffle($mag);
+$mstr.=$mag[0];
+$mstr.=$mag[1];
+$mstr.="*/ression(alert(9));";
+shuffle($mag);
+$mstr.=$mag[0];
+$mstr.=$mag[1];
+$mstr.=$m1[0];
+$mstr.="&gt;".$j."&lt;/div&gt;\r\n";
+fwrite($fp, $mstr);
+$mtotran.=$mstr;
+}
+fclose($fp);
+$outcont = htmLawed($mtotran);
+// print $outcont."\r\n";
+$fp1 = fopen("C:\\Inetpub\\wwwroot\\out\\hush".$i.".html", "a");
+fwrite($fp1, "&lt;HTML&gt;\r\n&lt;HEAD&gt;\r\n&lt;TITLE&gt;".$i."&lt;/TITLE&gt;\r\n&lt;meta http-equiv=\"refresh\" content=\"1;url=hush".($i+1).".html\"&gt;\r\n&lt;/HEAD&gt;\r\n&lt;BODY&gt;\r\n");
+fwrite($fp1, $outcont);
+fwrite($fp1, "&lt;/BODY&gt;\r\n&lt;/HTML&gt;");
+fclose($fp1);
+print $i."\r\n";
+// break;
+}
+?&gt;
+</code></pre><p>各位见笑了，我没写过php，现学了一下攒出个程序很烂，仅仅是实现我的思路而已，没有考虑效率啊稳定之类的。程序功能很简单，按照前面提到的简单模版随机填充进一些元素，生成testcase，然后用htmLawed进行过滤之后生成结果文件，放在WEB服务器上让他自动运行，看能否弹出alert。前面说过了这个模版不怎么好，太简单，所以我多生成了一点，总共下来是一千万个用例，结果访问第一个文件就弹出了alert对话框0_0。可见htmLawed也不是一个久经考验的filter。</p><p>我看了一下通过的用例，发现其实很多方法可以绕过htmLawed的过滤，这里举一个简单的例子：</p><pre><code>#!html
+&lt;div id= \""&amp;#  style="w:exp/*\\'&lt;div*/ression(alert(9));'="&gt;722&lt;/div&gt;
+&lt;div id="\"&gt;/" style="w:exp/*&amp;#*/ression(alert(9));&amp;#&lt;/div&gt;"&gt;723&lt;/div&gt;
+</code></pre><p>这两条一起传给filter之后，过滤结果为：</p><pre><code>#!html
+div style="w:exp  '&lt;div*/ression(alert(8));'="&gt;722&lt;/div&gt;
+&lt;div&gt;/" style="w:exp/*&amp;#*/ression(alert(9));&amp;#&lt;/div&gt;"&gt;723
+</code></pre><p>就会弹出alert了，证明已经绕过了过滤。经过分析发现，主要原因在于对&lt;div标签的过滤有问题，当同时存在两个&lt;div的时候，会保留第二个舍弃第一个，这样导致了原有的安全域边界改变了。再结合第二条div中的双引号封闭前面的内容，所以本来第二条的style应该是标签之外的内容的低安全级别域，没有过滤/**/和expression，和前面结合之后就进入了高安全级别域的范围里面，导致了XSS。是不是看得有点头晕？这就证明了fuzzing能够做到人脑所做不到的事情（我这里说的是普通人脑，大牛们的脑子除外）。</p><h2>0x05 实战：远程fuzzing</h2><hr><p>刚才看到本地fuzzing的例子其实也是黑盒测试而不是白盒测试，因为我们是不考虑filter源代码的，也不是直接用程序加载filter来跑，我们关系的只是过滤结果。以前看过一篇老外写XSS fuzzing的文章，说破解一个远程filter系统，先在本地模拟该filter的行为，然后直接在程序里边跑，根据跑出的结果去远程验证，在根据远程的结果修正本地模拟filter，不断这样修正，直到最后完全在本地实现远程filter的所有特性。最后直接在程序里面fuzzing本地filter。这种方法听起来是很不错的，因为在程序内部进行fuzzing效率是非常高的，每秒钟可以测几万次甚至几十万次，如果远程fuzzing的话有时候一分钟都测不完一次，就算一次发过去几百个testcase，算上生成用例时间，发送接收时间，验证结果时间，总共平均下来也是非常耗费时间的。但是，实际做起来就会知道本地模拟远程filter的方法更多的是纸上谈兵，因为仅仅根据输入输出结果是模拟不了fliter程序的全部特性的，也会漏掉绝大多数的漏洞。</p><p>所以要想真正跑出漏洞还是得靠远程fuzzing，那么就需要考虑测试效率的问题了，一个fuzzer的好坏我觉得有两个要素：首先是测试模型的设计，再一个就是fuzzer本身的效率。就算用很烂的测试用例，如果fuzzer效率足够高的话，还是有可能跑出漏洞的。</p><p>如何提高测试效率呢？这是我一直在思考的问题。比如我们fuzzing的对象是一个WEB邮件系统，那么fuzzer的基本设计应该是这样设计：根据模版生成testcase->发送testcase->验证结果。那么提高效率也要从这三个方面入手。</p><p>首先是生成testcase的模块，我一般式根据随机数来选择元素填充到模版，随机数的生成就是一个很关键的要素，我们需要的尽量均匀的随机数，这样就会减少重复数据，能够在一定程度上提高测试效率。用C语言来生成均匀分布的随机数是很困难的事情，生成的随机数总是不断重复，又要判断很浪费时间，最后还是用python感觉好多了，可以用string.join和random.sample生成出随机字符串组合。</p><p>其实生成testcase的效率还要依赖于发送效率，因为即使每秒生成一万个用例，但每分钟只能发10个，那么生成再多也是浪费。所以更重要的是发送效率，这里我也没想到什么好办法，只能是采取组合发送的策略，就像前面fuzzing htmLawed一样，把1000乃至更多用例组合起来，这样做的好处不仅仅是提高效率，而且因为组合之后提高的混乱程度所以往往能产生意想不到的过滤结果。组合发送的方式是考虑效率优先的，但有时候我们也需要一条一条发送，这是为了能够精确查看每次的过滤情况，看看用例在filter处理的过程中会产生怎么样的变化，因为filter每一次的替换或者删除都有可能导致安全边界的改变。</p><p>前边两个模块的效率都是次要的，呵呵，最最主要的其实是验证结果的效率，这个往往要根据目标的情况来决定最佳的验证办法。可以手工去验证，人工打开浏览器去点击接收到得内容，但是效率极低，对于几万几十万的测试用例来说显然是不适合的。也可以通过程序自动化验证，常用的方式一般有两种：一种是通过程序模拟浏览器从WEB应用接收结果，然后判断是否存在特征字符串，来验证是否成功。另一种是借助浏览器打开输出页面来验证，程序只控制IE依次访问发送用例，可以用模拟鼠标键盘的方式。前一种方法的好处是效率高，但是容易误报漏报，像前面fuzzing出的htmLawed漏洞一样，非常不容易通过程序来判断。后一种方法虽然效率很低，但是100%不会漏报。所以我一般多采取第二种方法。其实还有第三种方法，就是前两种方法的组合，先写程序从WEB获取内容，然后在本地生成可以自动依次打开的html文件，然后用IE打开。这样当然是比较完美的情况，但是设计编写程序也是很麻烦的，对于一般的目标不太值当费这个劲，对于某些目标嘛，呵呵，还是值得弄一套程序出来的。这里还有个基本要求就是能够找到过滤之后字符串所对应的原始输入，只要考虑到了实现起来也不难。</p><p>说了半天还没有举例子呢，这个因为某些原因，我就不写实际远程fuzzing的代码和过程了，聪明的读者可以自己去试一下，我对国内外一些常用的WEB邮箱进行了测试，成功fuzzing出XSS漏洞的邮箱有：</p><p>国外：</p><pre><code>@y*.com
+@h*.com
+@aol.com
+@hanmail.com
+@fastmail.fm
+@hushmail.com
+@epochtimes.com
+</code></pre><p>国内：</p><pre><code>@1*.com
+@si*.com
+@so*.com
+@t*.com
+@21*.com
+@q*.com
+</code></pre><p>（别当真，都是过去时了）</p><p>其实国内的大多数不是fuzzing出来的，而是手工测试出来的，因为国内邮箱的filter还比较初级，过滤得很不完善，一些最简单的小技巧就能骗过filter了。当然后来用fuzzer测试的时候又发现了更多漏洞。</p><h2>0x06 思考：如何做出完善的filter</h2><hr><p>如果一篇文章只写攻击不写防范是会被同行鄙视，尤其到了我这把年纪的人。那么通过fuzzing测试对于改进filter能够有什么帮助呢？如果每个公司对自己的产品做足够的fuzzing测试，而不是又黑客来测试的话，我想会大大的改进产品安全性。更何况公司自己掌握着源代码，可以把fuzzing测试的效率提高几个数量级。很多公司我想也是有这方面测试的。但是为什么还是会有漏洞呢？大概是因为很多公司的开发测试人员不是搞安全出身的，至少是不精通安全，从另一个角度来说某些网络公司对其产品安全的重视程度是不够的。还有一方面是利益驱动的问题，微软自己测不出来的漏洞黑帽子也都能挖出来，这就不用我细说了。</p><p>那么到底应该怎样设计filter才能尽量减少漏洞呢？谈谈我自己一点看法大家讨论。首先一点要明确安全边界，并尽量使用白名单方式进行过滤，这个很多filter都做到了。其次在边界明确的基础上要明确对于违规数据的处理办法，最最安全的办法是一旦发现违规数据，整条数据包丢弃，当然在实际应用中是不能这样做的，因为会大大影响应用的用户体验。那么就要针对违规数据的安全域进行处理，前面已经说过了，无论删除还是替换，都存在一定风险，可能会对其他的安全域边界造成改变。这就要求必须有重审机制，对于违规处理过的数据还必须再次判断每个安全域边界，不断循环直到没有发现任何违规数据，这样做有可能会导致另一个风险是DoS攻击，就看如何取舍了。</p><p>不过只要是人写的程序就会有疏忽的地方，就有可能出漏洞，所以要两方面相结合，第一，开发filter的时候明确安全规范，不要做想当然的事情，对于已经发现的漏洞修补之后要看看是否符合原来的安全要求，因为很多时候因为补老漏洞又产生了新漏洞。第二，要做尽量全面的黑盒测试，前提是必须有懂安全的人介入测试部门。做到这两点仍然不能百分之百避免漏洞的产生，所以还要有漏洞发现机制，靠用户报告只是一方面，另一方面还必须有自动化的漏洞监测机制，这种事情说起来容易做起来难，所以就不多说了。</p><p>参考资料：</p><p>不知名大牛的yahoo XSS样本 Blackbox Reversing of XSS Filters（Alexander Sotirov） WEB应用安全设计思想（axis）</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/web/11539" rel="bookmark" id="re1">XSS Attacks - Exploiting XSS Filter</a></li><li><a href="http://drops.wooyun.org/tips/1955" rel="bookmark" id="re2">XSS Filter Evasion Cheat Sheet 中文版</a></li><li><a href="http://drops.wooyun.org/tips/159" rel="bookmark" id="re3">Bypass IE XSS Filter</a></li><li><a href="http://drops.wooyun.org/tips/150" rel="bookmark" id="re4">Browser Security-css、javascript</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-01-16 11:32:28</span></div><p></p><p>前辈在南宁嘛？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YwiSax</span> <span class="reply-time">2014-02-23 14:20:20</span></div><p></p><p>大赞的文章阿</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-02-07 21:36:21</span></div><p></p><p>赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fakehac</span> <span class="reply-time">2014-02-04 09:28:32</span></div><p></p><p>isno大牛通吃主机渗透，web渗透啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mr.Anderson</span> <span class="reply-time">2014-01-24 14:03:05</span></div><p></p><p>过滤 转义 黑名单 白名单。<br>头大</p><p></p></div></div></div></div></div></main>

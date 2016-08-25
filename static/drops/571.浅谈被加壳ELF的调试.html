@@ -1,0 +1,363 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">浅谈被加壳ELF的调试</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          腾讯电脑管家</a>
+        <span class="bull">·</span>
+        <time title="2015/05/20 16:33" ui-time="" datetime="2015/05/20 16:33" class="published ng-binding ng-isolate-scope">2015/05/20 16:33</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 ELF格式简介：</h1>
+
+<hr>
+
+<p>注：本文只讨论如何调试被加壳的ELF文件，包括调试中的技巧运用及调试过程中可能遇到的问题的解决方法，不包含如何还原加固的DEX</p>
+
+<p>本文将以某加壳程序和某加固为目标</p>
+
+<p>ELF全称：Executable and Linkable Format，是Linux下的一种可执行文件格式。 此种文件格式和WINDOWS一样，常见分为两种类型：</p>
+
+<ol>
+<li><p>可执行文件(Executable File)，对应PE子类型：EXE</p></li>
+<li><p>共享目标文件(Shared Object File)，后缀名：.so，对应PE子类型：DLL</p></li>
+</ol>
+
+<!--more-->
+
+<h1>0x01 ELF文件加载大概流程：</h1>
+
+<hr>
+
+<ol>
+<li>通过Section Header或者Program Header加载需要的镜像数据 和WINDOWS PE加载机制不同，ELF有些文件数据是不会加载到内存镜像中</li>
+<li>加载SO NEED LIB和SYM 类似PE的Import_table</li>
+<li>执行重定位(如果有) 类似PE的Reloc_table</li>
+<li><p>执行INIT_ARRAY段或者INIT段（如果有，数组中的地址不等于0xffffffff，0表示结束）</p>
+
+<p>类似PE的TLS，已知的被加壳的ELF，壳代码都出现在这两个段里 PE中的TLS也常常出现在壳中，例如Vmprotect, Execryptor等</p></li>
+<li><p>执行入口点代码（如果有）</p></li>
+</ol>
+
+<p>所有的上述加载流程代码全部包含在linker.so里，可参看安卓源码或逆向linker.so</p>
+
+<h1>0x03 ARM CPU简介： 1.指令集简介：</h1>
+
+<hr>
+
+<p>ARMCPU采用RISC（精简指令集）架构（X86是CISC，复杂指令集），指令等长，相对CISC架构更加省电，执行效率更高</p>
+
+<p><strong><em>2. ARM指令集三种类型：</em></strong></p>
+
+<p>ARM(4字节等长)，THUMB(2字节等长)，THUMB2(4字节等长)。这三种指令集可以在同一执行程序中切换，切换原则为：</p>
+
+<p>ARM <-->THUMB，THUMB<-->ARM（PC的最高位确定指令集类型：1为THUMB；0为ARM）</--></--></p>
+
+<p>THUMB<-->THUMB2（由27-31位决定）</--></p>
+
+<p>thumb2其实就是thumb的扩展，其目的是为了一条4字节指令完成多条2字节指令</p>
+
+<p>&#42;<strong>|3.寄存器: &#42;</strong>|</p>
+
+<p>通用寄存器：r0-r15</p>
+
+<p>特殊寄存器：r13 = SP（栈地址）, r14 = LR（函数返回地址）, r15 = PC（当前指令流地址）</p>
+
+<p>还包括CPSR，APSR，浮点等寄存器，具体可参照ARM指令集手册</p>
+
+<h1>0x04 加壳SO的调试</h1>
+
+<hr>
+
+<p><strong><em>1.ELF代码执行顺序</em></strong></p>
+
+<p>上面介绍了，加壳的SO的壳代码都在INIT_ARRAY段和INIT段</p>
+
+<p>那我们先看下一个被加壳以后的SO，在linux下面用readelf -a命令查看ELF信息</p>
+
+<p><img alt="enter image description here" img-src="ca3f5bcff32e75df9896f4b158e063e31c83ff63.jpg"></p>
+
+<p><img alt="enter image description here" img-src="5485ba63dfb9d49e8cf7cf7e3d3d448c2f1b2189.jpg"></p>
+
+<p>在ELF-HEADER里我们看到有Entry，地址为0x22a8</p>
+
+<p>在动态段里看到了INIT_ARRAY数组，数组地址为0x21000，大小是12 BYTES</p>
+
+<p>用IDA看看数组的内容</p>
+
+<p><img alt="enter image description here" img-src="e96aad9a8a0303ffb29f2c9b691417a2959f5aca.jpg"></p>
+
+<p>上面说了，-1为无效，0代表结束，那INIT有效地址仅是0x2418这个地址</p>
+
+<p>也就是说，这个SO加载起来以后，会先从0x2418这个地址开始执行，执行完成后再去执行Entry</p>
+
+<p>我们再来看下某加固的ELF信息</p>
+
+<p><img alt="enter image description here" img-src="93ee883c923ca46d7e507bf46bbb1df8e69ac589.jpg"></p>
+
+<p><img alt="enter image description here" img-src="6828f09c788451d73f169ff3a97e73700fe1d71a.jpg"></p>
+
+<p>在ELF-HEADER里我们看到有Entry，地址为0x3860</p>
+
+<p><img alt="enter image description here" img-src="b80f017bb017d9877bd19bf86c4d32def25f3d44.jpg"></p>
+
+<p>DA打开某加固的文件时，会提示错误，不能打开，后面在Anti Anti Debugger中会讲到为什么</p>
+
+<p>在动态段里看到了INIT_ARRAY数组，数组地址为0x28CA4，大小是8 BYTES</p>
+
+<p>我们还看到了INIT段，地址是0x11401</p>
+
+<p>我们在这里，总结下执行的顺序：</p>
+
+<p>根据linker的代码，当INIT段和INIT&#95;ARRAY段都存在的情况下，先运行INIT段，再运行INIT&#95;ARRAY段，否则单独运行对应指向的函数，最后执行ENTRY</p>
+
+<p><img alt="enter image description here" img-src="45ce196fdd531c2834e46ac7ad2e2687d9a51137.jpg"></p>
+
+<p><strong><em>2. 自己准备SO_LOADER</em></strong></p>
+
+<p>调试SO和PE&#95;DLL其实道理是一样的，都需要一个宿主进程，这里要写一个SO&#95;LOADER，参看代码如下，可通过NDK编译。（代码是王晨同学早期提供的）</p>
+
+<p><img alt="enter image description here" img-src="b8a78914befc33c0c1d229d2866ebab5b1661d98.jpg"></p>
+
+<p><strong><em>3.环境准备：</em></strong></p>
+
+<p>我这里选用IDA6.6做为调试器。</p>
+
+<p>第一步：拷贝调试器到安卓手机上</p>
+
+<p><img alt="enter image description here" img-src="7581a9ab333c0fe82e657c50e03a600af331ff70.jpg"></p>
+
+<p>命令：adb push android_server /data/local/tmp/and</p>
+
+<p>这里为什么把android_server 改名成and呢~~~，其实就是为了避免被检测出调试器，后面我在Anti Anti Debugger中会详细说一下关于这部分的内容</p>
+
+<p>第二步：启动调试器</p>
+
+<p>adb shell回车，进入/data/local/tmp/目录，启动调试器，启动后画面</p>
+
+<p><img alt="enter image description here" img-src="d0ed77a8e36eaf00f4e3a5e383363e78eb927c65.jpg"></p>
+
+<p>第三步：重定向调试端口</p>
+
+<p>adb forward tcp:23946 tcp:23946</p>
+
+<p>至此手机端设置完毕，下面来看看IDA里如何设置</p>
+
+<p>IDA加载我们自己写的so_loader，在854C处，按F2下断点</p>
+
+<p><img alt="enter image description here" img-src="74cb9e324c2b0876d8e8e600a52608fe5255f12f.jpg"></p>
+
+<p>选择菜单栏里面的Debuger-Select Debugger，选择Remote Arm linux/Andoid debugger</p>
+
+<p><img alt="enter image description here" img-src="e927eb275a82ee4961dcff65a64fa6d596942beb.jpg"></p>
+
+<p>点击OK，然后F9运行</p>
+
+<p><img alt="enter image description here" img-src="4be128fa707af8a42b89ed06ce6152d0b03ad46b.jpg"></p>
+
+<p>在配置里面，Hostname里面填入127.0.0.1，点击OK</p>
+
+<p>如果你的手机里面没有这个文件，会提示你COPY，点击确定即可，如果有这个文件，会出现下面的选择，一般选择USE FOUND就可以了，如果你要调试的程序有修改，选择COPY NEW覆盖一个新的进去</p>
+
+<p><img alt="enter image description here" img-src="dd06936440c17b444bc3a8edeaef5ec97e6883f5.jpg"></p>
+
+<p>然后一路OK，就出现调试状态了~~，当前PC就是刚才我们F2设置的断点</p>
+
+<p><img alt="enter image description here" img-src="4ab0c975e4bda9035f3788ee529fc14514c8ecc8.jpg"></p>
+
+<p><strong><em>4.如何断住SO的INIT_ARRAY段和INIT段</em></strong></p>
+
+<p>上面说了，SO的加载在linker.so里完成，我们要做的，就是把断点设置在linker.so里面</p>
+
+<p>先找代码，IDA打开linker.so，在string窗口里找</p>
+
+<p>call&#95;constructors&#95;recursive,双击并查看引用</p>
+
+<p><img alt="enter image description here" img-src="4b8d3db54e811b2e1d0630c0a6b0e23baf8c51aa.jpg"></p>
+
+<p><img alt="enter image description here" img-src="5e57f68ffaaa5a0d46219a5519d50ab5f1729922.jpg"></p>
+
+<p>双击第二个引用处，然后往上找blx r3(init段的调用)，b.w xxxxxxxx(init_array段的调用)</p>
+
+<p><img alt="enter image description here" img-src="12bd32128900e16592ad1d3b0067c87a3d7001b1.jpg"></p>
+
+<p><img alt="enter image description here" img-src="df9eebc29cbdb6dd7555756261a7905b0ec6c6ac.jpg"></p>
+
+<p>好了，现在我们找到了地址0x54d0, 0x3af0这两个地方，回到刚才调试的IDA里面，</p>
+
+<p>选择菜单栏debugger-Debugger windows-module list打开进程模块列表</p>
+
+<p><img alt="enter image description here" img-src="1f04b16d71040094e4fb88fa23e420bbbfabf7f5.jpg"></p>
+
+<p>linker.so的base是40002000,分别对应的两个地址就是</p>
+
+<pre><code>0x40002000+0x54d0 = 0x400074d0
+0x40002000+0x3af0 = 0x40005af0
+</code></pre>
+
+<p>我们在IDA View-PC窗口GO 过去</p>
+
+<p><img alt="enter image description here" img-src="d5f707bb4ebbba603c4932b68554aa3f03f2b57c.jpg"></p>
+
+<p>在0x74d0处，按C键，变成代码.奇怪，为什么没有反应！！而且在最下面的output window有如下提示</p>
+
+<p><img alt="enter image description here" img-src="8f711a488bc8ef4a8dd1854b879e3b2ba6db7548.jpg"></p>
+
+<p>这里就是我说的很重要的问题了，上面我提到了，被调试的程序可以在3种指令集之间切换，这时的IDA并不知道当前要变成代码的地址是ARM还是THUMB，这时我们需要对照静态的来看，或者你对指令集绝对的熟悉，看到BYTE CODE就知道是哪种指令集</p>
+
+<p><img alt="enter image description here" img-src="0033f4d8730dc18cd891c9621512b524a659206a.jpg"></p>
+
+<p>静态中，显然IDA给的是2字节指令，那必然是THUMB，我们需要把当前地址改成THUMB</p>
+
+<p>方法：按键盘的ALT+G，呼唤出窗口</p>
+
+<p><img alt="enter image description here" img-src="66adbe7d422563766d84ec639be5644ff17b3875.jpg"></p>
+
+<p>T,DS不用管，我们只需要把VALUE改成1就是THUMB指令集了，变成1点击OK以后</p>
+
+<p>在原来的地址上出现了CODE16，这时我们再去C一次</p>
+
+<p><img alt="enter image description here" img-src="043b5624844d19df109929158775d84eced21643.jpg"></p>
+
+<p>C完以后，就出现代码了！！！ARM和THUMB就是这么切换的，切记，切记</p>
+
+<p><img alt="enter image description here" img-src="04861a34d59eb7497e885154ba3c29220d927c2c.jpg"></p>
+
+<p>再看另外一个地址,0x400a5af0,按照同样的方法再来一次</p>
+
+<p><img alt="enter image description here" img-src="1cb051e6956d5eb65a120176a400df689067400d.jpg"></p>
+
+<p>问题又来了，奇怪了，为什么下面不是指令？！这个是IDA的BUG，6.6版本对THUMB2指令在调试状态的解析就是有问题。。。。，不过没关系，我们往下看</p>
+
+<p><img alt="enter image description here" img-src="acacb939881a91a000f63f4f8da5dd7bbaea86a4.jpg"></p>
+
+<p>这段代码才是最重要的，执行每一个init&#95;array中地址的函数，就在blx r2这句。 至此，如何断住INIT段和INIT&#95;ARRAY段，就讲完了，剩下的大家就自己调试吧</p>
+
+<h1>0x05 Anti Anti Debugger</h1>
+
+<hr>
+
+<p><strong><em>1.Anti IDA</em></strong></p>
+
+<p>其实这种问题，是IDA解析ELF和linker解析ELF不一致造成的，IDA更加严格</p>
+
+<p>用ida打开某加固的so,提示</p>
+
+<p><img alt="enter image description here" img-src="7f568f27cae248d4ac0dee6a4dcdd3bf8b183a80.jpg"></p>
+
+<p>这个提示就是说，有个数据描述是无效的，我们来看看，是哪个。</p>
+
+<p>SHT说的就是Section Table，来看看ELF头部数据如下</p>
+
+<p><img alt="enter image description here" img-src="b5998d513a2482e7fafb2451b92762f7611a0d6b.jpg"></p>
+
+<p>shoff就是这个值，我们用16进制编辑器过去看看</p>
+
+<p><img alt="enter image description here" img-src="03fd1532aef7b669d1d13fdb8ba5737c68baf222.jpg"></p>
+
+<p>全是0，显然这里有问题，我们首先要把这个值清0，保存文件。</p>
+
+<p>再次加载，还有问题，提示如下：</p>
+
+<p><img alt="enter image description here" img-src="e996f870cba553027c9447b4f1821f12a341e018.jpg"></p>
+
+<p>这次通过调试IDA的ELF插件，发现当PROGRAM HEADER中的物理偏移大于文件大小时，就会出现该错误。</p>
+
+<p><img alt="enter image description here" img-src="1ac1ccbd75f3f67c79625dbe1252b8d68b267263.jpg"></p>
+
+<p>显然，Program Header中的第一组数据，p_offset超过了文件大小，根据ELF结构，定位到该数据偏移，改成0，IDA加载成功</p>
+
+<p><strong><em>2.Anti Debugger</em></strong></p>
+
+<p>通过调试该加壳程序，总结他用到的方法：</p>
+
+<p>方法1：检测父进程的文件名</p>
+
+<p>调用getppid，获取父进程的id, open("/proc/ppid/cmdline")获取父进程名称，检测常用调试器的名字，这就是上面我COPY文件时，为啥要把android_server变成随意一个文件名的原因了</p>
+
+<p>对策：修改getppid的返回值，随便给一个可以用的就行了</p>
+
+<p>其实还有其他方法可以获取ppid，比如open("/proc/pid/status")，read这个handle的内容，在里面寻找ppid也行</p>
+
+<p>方法2：异常陷阱</p>
+
+<p>和WINDOWS的方法类似，设置一个trap，检测调试器</p>
+
+<p>对策：IDA默认所有的trap都交给调试器处理，所以我们需要修改对应的设置。菜单选择debugger-debugger options,点击edit exceptions按钮</p>
+
+<p><img alt="enter image description here" img-src="46ca5bfc61c8080608e4f9b74ed88545837c09a7.jpg"></p>
+
+<p>在trap上，右键编辑改成如下即可</p>
+
+<p><img alt="enter image description here" img-src="d4a1bfb05f5ac727b97d7e48a81870c019ccd021.jpg"></p>
+
+<p>当然，检测调试器，还有很多方法，见招拆招就可以，这里就不详述了</p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">哼哈二将</span>
+                 <span class="reply-time">2016-04-25 17:59:01</span>
+        </div>
+        <p></p><p>这篇没有说完整，是否还有个续篇</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Spid3r</span>
+                 <span class="reply-time">2015-09-08 15:03:36</span>
+        </div>
+        <p></p><p>感觉只说了一半，并且有些地方说错了。。</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

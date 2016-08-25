@@ -1,0 +1,44 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">4A安全性分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2015/01/05 9:03" ui-time="" datetime="2015/01/05 9:03" class="published ng-binding ng-isolate-scope">2015/01/05 9:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00.概述</h1><hr><h3>0.1 起因</h3><p>前段时间在zone里看到有人问4A的渗透测试，本人正好接触过几款4A和堡垒机产品，今天抽空就总结下个人在渗透中遇到的4A问题。</p><h3>0.2 4A</h3><p>4A是指：认证Authentication、账号Account、授权Authorization、审计Audit，中文名称为统一安全管理平台解决方案。即将身份认证、授权、审计和账号（即不可否认性及数据完整性）定义为网络安全的四大组成部分，从而确立了身份认证在整个网络安全系统中的地位与作用。（百度百科）。</p><h1>0x01.认证Authentication</h1><hr><p>认证的方式一般有以下几种：</p><ol><li><p>静态口令</p></li><li><p>动态口令令牌</p></li><li><p>USB令牌</p></li></ol><p>存在的问题有：</p><h3>1.1 账号枚举</h3><p>这里的账号枚举并不是仅仅知道哪个账号存在，哪个账号不存在。</p><pre><code>#!php
+$mobile = $_GET["mobile"];  
+......
+if(empty($errMsg)){
+    $errMsg = "认证失败"
+}
+$oper = "主账号:".$username."登录失败，原因:".$errMgs;
+......
+</code></pre><p>从上面账号可以看到，登录时，如果你输入的是手机号，那么登录失败的时候，就会将手机号对应的username返回，那么我们就可以拿手机号和用户名到密码找回页面等地方做进一步的测试。</p><h3>1.2 认证绕过</h3><p>很多写的不严谨的程序，在判断用户是否处于登录状态时，都是根据cookie判断，如下面代码，直接根据cookie中的userid和username，如果存在，就判断用户已经登录。由此就可以修改cookie，登录任意用户的账号。</p><pre><code>#!php
+public function index(){
+$userid = intval($_COOKIE['userid']);
+$username = $_COOKIE['username']; if($userid){
+echo '&lt;a href="'.C('web_path').'index.php?s=user/show" target="_blank" class="username"&gt;'.htmlspecialchars($username).'&lt;/a&gt; | &lt;a href="'.C('web_path').'index.php?s=user/logout/re/true"&gt;退出&lt;/a&gt;';
+}else{
+echo 'false';
+} }
+</code></pre><h1>0x02.账号Account</h1><hr><p>4A中账号分为主账号和从账号，一个用户只会有一个主账号，唯一标识了他的身份。这个主账号还会有N个从账号，对不同的系统会有不同的从账号，方便用户访问其可以访问的系统。如下图</p><p><img alt="enter image description here" img-src="fd6e68e64c1cbf1c1f5d9d7acca487541d0c82f7.jpg"></p><h3>2.1 重置用户密码</h3><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-072644">WooYun: 帕拉迪堡垒机任意用户密码重置</a></p><p>在这个bug中，可以通过修改密码的功能，重置其他用户的密码。典型的账号管理问题。</p><h3>2.2 token</h3><p>token在4A中可谓是到处都是，那么如果token验证不严谨，很可能出现戏剧性的结果。接下来这个漏洞给大家展示token失效的时候。</p><p><img alt="enter image description here" img-src="73093ddc4589792abfb553f435e9b9a590326890.jpg"></p><p>这个页面不是通过4A登录过来的，而是直接访问网站的登录界面，登录后的页面。</p><p><img alt="enter image description here" img-src="cb51e8fbef401bdab928be71f877216509c39122.jpg"></p><p>上面的图是通过4A登录后，访问系统时，将URL和username修改为管理员的页面和用户名，然后可以看到，页面显示的就是管理员的页面了。</p><h1>0x03.授权Authorization</h1><hr><p>授权一般分为：</p><p>1.基于用户的授权UBAC</p><p>2.基于用户角色的授权RBAC</p><p>3.基于资源的授权ABAC</p><p>存在的问题有：</p><h3>3.1 调用cmd</h3><p>4A权限分配中有个很重要的功能就是基于资源的授权，比如给主账号A分配一个securecrt，让其可以使用SSH，给主账号B分配一个notepad，让其可以使用记事本。但是大家都知道通过浏览器、记事本等“查找文件”的功能可以调出cmd等功能。</p><p>如下图，是通过分配的IE浏览器，直接调用出cmd窗口，接下来，你想干什么，都OK。</p><p><img alt="enter image description here" img-src="3ee614f621b7022f821aebff9994910927971ba6.jpg"></p><h3>3.2 越权问题</h3><p>无可厚非，越权问题在现在的程序中，几乎都存在，这个问题，并没有得到太大的重视。</p><pre><code>#!php
+public function payfor() {
+    $subaction = $this­&gt;ev­&gt;url(3); 
+    switch($subaction)
+    {
+        case 'remove':
+        $oid = $this­&gt;ev­&gt;get('ordersn');
+        $order = $this­&gt;order­&gt;getOrderById($oid); 
+        if($order['orderstatus'] == 1)
+        {
+            $this­&gt;order­&gt;delOrder($oid); 
+            $message = array(
+                'statusCode' =&gt; 200,
+                "message" =&gt; "订单信息成功", "callbackType" =&gt; 'forward', "forwardUrl" =&gt; "reload"
+            ); 
+        }
+    }
+}
+</code></pre><p>看上面代码，代码获取到ordersn后，直接执行了删除的动作，而代码本身并没有使用RBAC之类的权限管理，导致存在越权问题。这种属于水平越权，还有一种垂直越权，这里不列举了。</p><h3>3.3 下载文件</h3><p>同样是个人文件夹(或者其他提供下载的地方)的问题，可以下载指定的文件，但是没有对文件做限制，可以下载任意文件。</p><pre><code>#!php
+public function download(){
+    $filename = $_SERVER[DOCUMENT_ROOT].__ROOT__.'/Public/'.(C('UPLOAD_DIR')?C('UPLOAD_DIR'):'Upload').'/download/'.$_GET['filename']; header("Content­type: application/octet­stream");
+    header("Content­Length: ".filesize($filename));
+    header("Content­Disposition: attachment; filename={$_GET['filename']}");
+    $fp = fopen($filename, 'rb');
+    fpassthru($fp);
+    fclose($fp);
+}
+</code></pre><p>从代码中可以看到，通过获取filename等参数，然后直接就下载文件了。。</p><h3>3.4 前置机</h3><p>一些堡垒机具有前置机，意思是某些在堡垒机中实现不了的功能(比如内置pcanywhere，只是比如)，那么就需要把pcanywhere放到前置机中，当需要使用pcanywhere时，就会远程登录到前置机上，调用pcanywhere的页面。</p><p>问题是什么呢，既然是远程登录调用pcanywhere的页面，那么我们只要使用windows键或者使用alt+tab就可以切换到其他程序上，进而就控制了前置机。</p><h3>3.5 奇葩问题</h3><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-048368">WooYun: AuditSec运维操作审计-堡垒机密码的利用</a></p><p>大家可以看看这个密钥问题。。</p><h1>0x04.审计Audit</h1><hr><p>审计主要是对登录、访问等所有的动作记录日志，查看是否有不合规的事件。</p><h3>4.1 伪造登录IP</h3><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-074369">WooYun: 帕拉迪/华为/江南天安堡垒机伪造WEB登录来源IP漏洞</a></p><p>在这个bug中通过x-forwarded-for伪造了登录的IP，这就对日志造成了影响，如果以后需要整理日志，或者根据日志找出不合规事件，那就会存在很大的影响。</p><h1>0x05. 总结</h1><hr><p>以上只是列举了我在测试4A或堡垒机时遇到过的问题，肯定还有许多猥琐的方式我没有观察到，欢迎大家补充。<br>元旦在家码字不容易。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/838" rel="bookmark" id="re2">PHP漏洞挖掘思路+实例</a></li><li><a href="http://drops.wooyun.org/papers/346" rel="bookmark" id="re3">终端机的安全性</a></li><li><a href="http://drops.wooyun.org/papers/345" rel="bookmark" id="re4">在线支付逻辑漏洞总结</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ivan</span> <span class="reply-time">2015-04-16 09:43:26</span></div><p></p><p>谁遇到过启明的4A？以及加密算法</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sunshine</span> <span class="reply-time">2015-01-18 00:52:14</span></div><p></p><p>4A有对外部的运维人员使用的哦，如果4A没有外网IP的话，加上对外部运维人员的信任，可能会对其开设VPN账号。然后就xxxx了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">her0ma</span> <span class="reply-time">2015-01-15 11:35:16</span></div><p></p><p>学习了，感谢分享！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小武</span> <span class="reply-time">2015-01-06 17:55:02</span></div><p></p><p>4A这个东西是给内部人用的，重在记录和追踪，<br>至于登陆后想干点坏事，那还是很容易的，其实用得起这东西的企业可以数得出来的，做这产品的企业也更好数了，呵呵</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">saber</span> <span class="reply-time">2015-01-05 14:37:07</span></div><p></p><p>怎么搞进4A是个问题，没进去啥都不好使。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三叶草</span> <span class="reply-time">2015-01-05 14:21:36</span></div><p></p><p>通过ssh-key+google二次认证登陆堡垒机，然后堡垒机跳转到其他机器上（ssh-agent），这样风险有哪些？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RainShine</span> <span class="reply-time">2015-01-05 13:07:08</span></div><p></p><p>板凳？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">啊L川</span> <span class="reply-time">2015-01-05 12:46:11</span></div><p></p><p>沙发？</p><p></p></div></div></div></div></div></main>

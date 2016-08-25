@@ -1,0 +1,50 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">黑掉俄克拉荷马州立大学的学生卡</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">light</a> <span class="bull">·</span> <time title="2015/03/01 11:40" ui-time="" datetime="2015/03/01 11:40" class="published ng-binding ng-isolate-scope">2015/03/01 11:40</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 磁条基础知识科普</h1><hr><p>文中所有内容仅供学习研究使用，用于非法用途者，一切后果自负！</p><p>注：文中磁卡没有特别说明都是指磁条卡，而非IC卡。</p><p>磁卡是一种卡片状的磁性记录介质，利用磁性载体记录字符与数字信息，用来标识身份或其它用途。磁条是一层薄薄的由排列定向的铁性氧化粒子组成的材料（也称之为颜料）。用树脂粘合剂严密地粘合在一起,并粘合在诸如纸或塑料这样的非磁基片媒介上。</p><p>磁条一般分为高矫顽力（简称HiCo）和低矫顽力（简称LoCo）两种。HiCo的磁条磁量大，较难擦除，适用于使用频率较高的场景，如信用卡。LoCo的磁条磁量小，制作成本低，但缺点就是更容易擦除且寿命较短。</p><p>磁感矫顽力:使磁化至技术饱和的永磁体的磁感应强度降低至零所需要的反向磁场强度称。</p><p>读卡器通常可以兼容HiCo和LoCo两种磁条，并且HiCo写卡器一般可以兼容写入HiCo和LoCo两种磁卡，而LoCo写卡器只能写入LoCo磁卡中。现实生活中的LoCo磁条一般是浅棕色，而HiCo磁条是深黑色。</p><p>目前已知磁卡上有三条磁道，常用的是第一磁道和第二磁道。</p><p>第一磁道上的信息有两种格式：格式A，发卡方使用，格式B，如下：</p><p>起始标志——1个字符（通常是“%”） 格式代码=“B”——1个字符（只能使用字母） 主账号——最多19个字符 字段分隔符——1个字符 国家/地区代码——三个字符 持卡人姓名——2~26个字符 失效日期或字段分隔符——4个字符或1个字符 服务代码——3个字符 自由数据——可变，不超过最大记录长度（79个字符），通常含有PIN验证相关数据；（PVKI, 1个字符）, PIN校验值 （PVV, 4个字符）, 卡校验值或校验码 （CVV or CVC, 3个字符） 结束标志——1个字符（通常是“?”） 纵向冗余校验字符（LRC）——1个字符</p><p>第二磁道：</p><p>起始标志——1个字符（通常是“;”） 主账号——最多19个字符 字段分隔符——1个字符（通常是“=”） 失效日期或字段分隔符——4个字符或1个字符 服务代码——3个字符 自由数据——可变，不超过最大记录长度（79个字符），通常含有PIN验证相关数据；（PVKI, 1个字符）, PIN校验值 （PVV, 4个字符）, 卡校验值或校验码 （CVV or CVC, 3个字符） 结束标志——1个字符（通常是“?”） 纵向冗余校验字符（LRC）——1个字符，读取时无返回值，仅供内部验证</p><p>金融类磁卡中的服务代码值的意义：</p><p>第一位数字：</p><p>1：国际业务</p><p>2：可使用IC（芯片）进行国际业务</p><p>5：国内及双边协议下的国际业务</p><p>6：可使用IC（芯片）进行国内及双边协议下的国际业务</p><p>7：除外双边协议，没有业务（闭环）</p><p>9：测试模式</p><p>第二位数字：</p><p>0：正常</p><p>2：开户方式为网上开通</p><p>4：除外双边协议的在线开通</p><p>第三位数字：</p><p>0：没有限制，需要PIN码验证</p><p>1：没有限制</p><p>2：货贷服务（非现金业务）</p><p>3：只有ATM，需要PIN</p><p>4：只有现金业务</p><p>5：需要PIN码验证的货贷服务（非现金业务）</p><p>6：没有限制，可使用PIN码验证</p><p>7：货贷服务（非现金业务），可使用PIN码验证</p><h1>0x01 俄克拉荷马州立大学ID卡</h1><hr><p>俄克拉荷马州立大学ID卡是该大学官方发布的身份认证卡，用途有：</p><p>持卡人身份认证</p><p>校园特定区域的门禁卡</p><p>一卡通充值</p><p>校园网各种功能使用时的认证（http://it.okstate.edu/services/id/）</p><p><img alt="enter image description here" img-src="c76f43dbef2506eaedcd5da8d13ebc27fcff1f66.jpg"></p><p>该卡就长这样，注意右下角的卡号，目测每张卡都有唯一的16位卡号）</p><h1>0x02 说干就干</h1><hr><p>首先发现每张卡的ID都是以数字“60383800”开头的，这一段之后的两位经过分析只有“05”、“06”、“11”三种情况。</p><p>最后六位，我们把他成为尾数，是0~9的随机数。也就是说总共有100万种可能的卡号，加上前面的三种前缀，总共就是300万种可能性。</p><p>而这个地址可以供我们查看ID是否有效：https://app.it.okstate.edu/idcard/</p><p><img alt="enter image description here" img-src="75622b275a832412e2515c66603b967425da07e6.jpg"></p><p>这个网页允许任何人输入16位的ID号来查询该卡号是否合法。</p><p>一个合法的ID查询后将显示如下结果：</p><p><img alt="enter image description here" img-src="c685503340e86ccda173c008420a4d295117485c.jpg"></p><p>如果卡号不合法，显示结果是这样：</p><p><img alt="enter image description here" img-src="1fa235fce2c95f2228496380d0ba28224f53237a.jpg"></p><p>卡号查询返回的内容有：</p><pre><code>卡号：输入的ID号码
+ID卡状态：有效或无效
+就业状况：持证人当前的就业情况
+学生状态：持证人目前的报名情况
+其他：备注及银行卡信息等
+</code></pre><p>这个查询页面有一个免责声明：“使用这项查询功能的IP将被记录”，设计的本意是防止其他地区的用户未授权访问，但是IP地址是可以通过代理来伪装的，这是连小学生都知道的常识。</p><p>从这里http://www.rakuten.com/prod/usb-3-track-magnetic-credit-card-reader/240738725.html 花25美元购买一个USB的磁条阅读器就可以对ID卡进行解码。</p><p>将我们的学生卡解码后，得到如下信息：</p><pre><code>%B6038380006514029^SNELLING/SAMUEL R      ^491212000000000    000   ?;6038380006514029=49121200000000000000?
+</code></pre><p>对照我们之前讲的磁道结构，可以得出：</p><p>第一磁道：</p><pre><code>%B
+ID卡号
+^
+持卡人姓名
+^
+过期时间： 49/12
+服务代码： 120
+自由数据： 000000000    000   
+? 
+</code></pre><p>第二磁道：</p><pre><code>;
+ID 卡号
+=
+过期时间：49/12
+服务代码： 120
+自由数据： 0000000000000
+?
+</code></pre><p>最有趣的两项是：所有人的过期日期都是49/12，所有自由数据部分（验证PIN码）都是空的（0填充）。</p><h1>0x03 梳理头绪</h1><hr><p>到现在为止，我们得到以下线索：</p><p>该校所有的老师和学生都有这种ID卡 所有卡的前八位都是60383800 所有卡的第九第十位只有三种：05、06、11 有大约300万种可能的卡号 有一个现成的网站可以查询ID卡号的有效性，这个站可能会记录我们的IP 所有卡的过期时间一致，都是49/12 所有卡的自由数据部门都是空的（0填充）</p><h1>0x04 祭出神器</h1><hr><p>我们使用unitech生产的MSRC206磁条读写器（light教授友情提示：我们华强北生产的也不差）。这一一款商业级的磁条读写器，支持HiCo和LoCo的磁卡，并具有相当牛逼的编码器，可以覆盖现有的HiCo卡。</p><p>接下来是激动人心的磁卡复制环节，步骤如下：</p><p>插上MSRC206电源，连接电脑 - 允许安装驱动程序 安装MSRC206附带的软件 等待MSRC206连接到MSRC206软件 点击软件右侧的“读取”按钮 将源卡刷卡，获取其经过编码的数据 点击软件右侧的“写入”按钮 将空白卡刷卡，写入数据</p><p>源卡数据：</p><pre><code>%B6038380006514029^SNELLING/SAMUEL R      ^491212000000000    000   ?;6038380006514029=49121200000000000000?
+</code></pre><p>复制到空白卡的数据：</p><pre><code>%B6038380006514029^SNELLING/SAMUEL R      ^491212000000000    000   ?;6038380006514029=49121200000000000000?
+</code></pre><p>修改持卡人姓名后复制到空白卡的数据：</p><pre><code>%B6038380006514029^PETE/PISTOL           ^491212000000000    000 ?;6038380006514029=49121200000000000000?
+</code></pre><p>对比一下：</p><pre><code>%B6038380006514029^SNELLING/SAMUEL R      ^491212000000000    000   ?;6038380006514029=49121200000000000000?
+
+%B6038380006514029^PETE/PISTOL                 ^491212000000000    000 ?;6038380006514029=49121200000000000000?
+</code></pre><p>这里有个注意点：我们修改了持卡人姓名，但是卡号没有改。</p><p><img alt="enter image description here" img-src="2f8b84591df129c1f88b939cbdbeed9919375fc4.jpg"></p><p>左上方为刷入了修改姓名后数据的复制卡，右上方为源卡数据直接复制的复制卡，左下方是源卡，右下方同右上。</p><p>背面照：</p><p><img alt="enter image description here" img-src="5bb249db8ebbe5c191adb11d11e2fa4508cb2cc2.jpg"></p><h1>0x05 提枪上阵</h1><hr><p>我们的猥琐团队开始在各种场合使用这些复制的空白卡。</p><p>首先，我们让团队的老三办理了一张新卡（学校官方发的）去图书馆使用，结果那里的管理员说这个ID不在系统中，如果的卡是新办的，那么一般需要几天时间来等待服务器的同步。从这个行动中我们了解到学校图书馆每次在使用ID卡时并不是实时和服务器进行验证，而是每隔几天从服务器同步新的内容保存在本地使用。</p><p>接下来，我们又派团队的老皮拿着复制卡在校园里到处铺张浪费，大家可以翻墙看我们录制的演示视频：http://youtu.be/Bw2Ugezb7Fs</p><p><img alt="enter image description here" img-src="51fdecb67a57b3bca96c1c572a3abf774b0d5d8c.jpg"></p><p>以上的测试中我们得到几点经验：</p><p>虽然复制卡看起来比较奇怪，但是在我们帅气的队友色诱下，工作人员还是接受了白卡。 复制卡的持卡人姓名修改后，消费时的单据上看到的依然是源卡持卡人姓名，这就说明在校园销售系统中，消费时数据与服务器实时核验，确保ID卡的有效性。但是持卡人姓名并没有做检测。</p><h1>0x06 整装待发</h1><hr><p>有了上面的试验和经验，我们再次总结一下现在掌握的信息：</p><p>该校所有的老师和学生都有这种ID卡 所有卡的前八位都是60383800 所有卡的第九第十位只有三种：05、06、11 有大约300万种可能的卡号 有一个现成的网站可以查询ID卡号的有效性，这个站可能会记录我们的IP 所有卡的过期时间一致，都是49/12 所有卡的自由数据部门都是空的（0填充） Unitec的MSRC206可以读取、编辑和重新编码磁条 图书馆验证ID卡时并不是实时连接服务器的 白卡（复制卡）拿去消费也是会被工作人员接受的 销售系统是与服务器实时通信验证的 销售系统不进行持卡人身份验证</p><h1>0x07 扩大战果</h1><hr><p>现在所掌握的信息已经足够我们进行大规模行动了。</p><p>首先，我们写了个基于node.js的网络小脚本，不用说你也猜到了，我们将对校园里的有效卡号进行爆破！</p><p>代码：</p><pre><code>#!javascript
+var cheerio = require('cheerio'), 
+request = require('request'), 
+fs = require('fs'), 
+headnumber = '06';
+
+for (var i=1; i &lt;= 100; i += 1){
+    var tailnumber = '';
+    while (tailnumber.length &lt; 6) 
+    tailnumber = tailnumber + '' + [0,1,2,3,4,5,6,7,8,9][Math.floor(Math.random()*9)];
+    request.post('https://app.it.okstate.edu/idcard/index.php/module/Default/action/IDCardEntry', {form:{card_id:'60383800'+headnumber+tailnumber}}, function (error, response, html) {
+        if (!error &amp;&amp; response.statusCode == 200) {
+            var $ = ch3eerio.load(html);
+            $('td.formText').each(function() {
+                var text = $(this).next().text();
+                fs.appendFile('osu_ids.txt', text+';', function(err){});
+            });
+            fs.appendFile('osu_ids.txt', '\r\n', function(err){});
+        }
+    }); 
+}
+</code></pre><p>由于所有ID卡自由数据部分（验证PIN码）都是空的（0填充），再加上服务器不对持卡人身份进行验证，我们可以利用爆破的有效卡号大规模制作复制卡，然后拿来做各种猥琐的事情。</p><p>这样造成的危害是远远超出很多人想象的，试想一下，刚刚充值了500万的一卡通突然只剩下零头；莫名其妙被学校警告借了图书馆1000本书没有还；悠闲地走在校园里突然过来两个保安把你架住说你昨晚猥亵女同学......</p><h1>0x08 回归和谐</h1><hr><p>接下来的步骤将带我们逃离上述的可怕情景，回归平静、和谐的校园生活，但实施起来会有点痛苦。</p><p>立即下线ID卡号查询网站 https://app.it.okstate.edu/idcard/ 重新设计ID卡 每个人都重新发一张新的ID卡 审核、测试涉及ID卡的所有系统 所有系统对验证事务进行严格检查 添加双重验证</p><p>参考文档：http://en.wikipedia.org/wiki/Magnetic&#95;stripe&#95;card 原文地址：http://snelling.io/hacking-oklahoma-state-university-student-id</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Catsay</span> <span class="reply-time">2015-03-03 10:17:28</span></div><p></p><p>叼爆了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">500万的一卡通</span> <span class="reply-time">2015-03-01 17:58:08</span></div><p></p><p>略吊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">500万的一卡通</span> <span class="reply-time">2015-03-01 12:12:19</span></div><p></p><p>500万的一卡通</p><p></p></div></div></div></div></div></main>

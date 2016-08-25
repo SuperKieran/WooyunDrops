@@ -1,0 +1,91 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">当Bcrypt与其他Hash函数同时使用时造成的安全问题</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">phith0n</a> <span class="bull">·</span> <time title="2015/03/17 16:06" ui-time="" datetime="2015/03/17 16:06" class="published ng-binding ng-isolate-scope">2015/03/17 16:06</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>php在5.5版本中引入了以bcrypt为基础的哈希函数password&#95;hash，和其对应的验证函数password&#95;verify，让开发者轻松实现加盐的安全密码。本文就是围绕着password_hash函数讲述作者发现的安全问题。</p><p>有一次，我在StackOverflow上看到个有趣的问题：当密码位数过长的时候，password_verify()函数是否会被DOS攻击？很多哈希算法的速度都受到数据的量的影响，这将导致DOS攻击：攻击者可以传入一个非常长的密码，来消耗服务器资源。这个问题对于Bcrypt和PasswordHash也很有意义。我们都知道，Bcrypt限制密码的长度在72个字符以内，所以在这点上它不会被影响的。但我选择进行深入挖掘的时候，却发现了其他令我惊讶的问题。</p><h1>0x01 crypt.c分析</h1><hr><p>首先我们看看php是怎么实现crypt()函数的，这个我们感兴趣的函数在源码中对应“php_crypt()”，声明如下：</p><pre><code>#!c
+PHPAPI zend_string *php_crypt(const char *password, const int pass_len, const char *salt, int salt_len)
+</code></pre><p>我们看看进行加密的部分</p><pre><code>#!c
+} else if (
+        salt[0] == '$' &amp;&amp;
+        salt[1] == '2' &amp;&amp;
+        salt[3] == '$') {
+    char output[PHP_MAX_SALT_LEN + 1];
+
+    memset(output, 0, PHP_MAX_SALT_LEN + 1);
+
+    crypt_res = php_crypt_blowfish_rn(password, salt, output, sizeof(output));
+    if (!crypt_res) {
+        ZEND_SECURE_ZERO(output, PHP_MAX_SALT_LEN + 1);
+        return NULL;
+    } else {
+        result = zend_string_init(output, strlen(output), 0);
+        ZEND_SECURE_ZERO(output, PHP_MAX_SALT_LEN + 1);
+        return result;
+    }
+}
+</code></pre><p>注意到了吗？由于password变量一个是char指针（char *)，所以php&#95;crypt&#95;blowfish_rn()并不能知道参数password的长度。我想看看他是怎么获得长度的。</p><p>跟进php&#95;crypt&#95;blowfish&#95;rn()，我发现唯一使用password变量（函数里叫key）的地方，是把它传给了 BF&#95;set_key()函数。这个函数的注释中说明了一些设置和安全使用事项，实际上总结起来就是下面这个循环（去除了注释）：</p><pre><code>#!c
+const char *ptr = key;
+/* ...snip... */
+for (i = 0; i &lt; BF_N + 2; i++) {
+    tmp[0] = tmp[1] = 0;
+    for (j = 0; j &lt; 4; j++) {
+        tmp[0] &lt;&lt;= 8;
+        tmp[0] |= (unsigned char)*ptr; /* correct */
+        tmp[1] &lt;&lt;= 8;
+        tmp[1] |= (BF_word_signed)(signed char)*ptr; /* bug */
+        if (j)
+            sign |= tmp[1] &amp; 0x80;
+        if (!*ptr)
+            ptr = key;
+        else
+            ptr++;
+    }
+    diff |= tmp[0] ^ tmp[1]; /* Non-zero on any differences */
+
+    expanded[i] = tmp[bug];
+    initial[i] = BF_init_state.P[i] ^ tmp[bug];
+}
+</code></pre><p>给不懂C语言的人：<em>用来解引用指针，也就是返回这个指针指向的值。所以我们定义char *abc = ”abc”，那么</em>abc的值就是’a’（事实上是’a’的ascii码值）。当你执行了abc++以后*abc的值就等于’b’。这就是C语言中字符串string的工作原理。</p><p>接着看，这个循环会迭代72次（因为BF_N等于16），每次迭代会“吃掉”字符串的一个字符。</p><p>那么看以下代码：</p><pre><code>#!c
+if (!*ptr)
+    ptr = key;
+else
+    ptr++;
+</code></pre><p>如果*ptr的值为0，那么重新让它指向字符串的首字符，依此规则循环，执行72次。这就是为什么传入的字符串要小于72个字符（因为C语言字符串是以NUL结尾，所以要占用一个字节）。</p><p>那我们来想想，以上代码意味着”test\0abc”将会被处理成”test\0test\0test\0test\0test\0test\0test\0test\0test\0test\0test\0test\0test\0test\0te”。实际上，所有以”test\0”开头的字符串都会被处理成这样。</p><p>结果就是，它忽略了第一个NUL以后的所有内容（test\0abc中的abc）。</p><p>这样会产生什么问题呢？很明显，你的密码变短了（从test\0abc变成test\0）。但因为没有人会在密码中使用“\0”，那么它是不是不算问题了？</p><p>事实上，的确没人会在密码中使用“\0”，所以如果你单独使用password_hash()或crypt()的时候，你是100%安全的。 但如果你不是直接使用他们，而是进行了“预哈希”（pre-hash），那你就会遇到本文中说的主要问题。</p><h1>0x02 主要问题</h1><hr><p>有些同学觉得单独使用bcrypt不够，而是选择去”预哈希（pre-hash）”，也就是预先计算一次哈希，再把返回结果传入正式的哈希函数进行计算。</p><p>这样可以让用户去使用“更长”的密码（超过72个字符），如：</p><pre><code>#!c
+password_hash(hash('sha256', $password, true), PASSWORD_DEFAULT)
+</code></pre><p>另外，也有些同学想给哈希加点“salt”，所以配合私钥使用HMAC：</p><pre><code>#!c
+password_hash(hash_hmac('sha256', $password, $key, true), PASSWORD_DEFAULT)
+</code></pre><p>问题在于，以上用法中hash和hash_hmac函数的最后一个参数传入的都是true，它强制函数返回原始（二进制）数据。使用原始数据而非编码后的数据，再次计算哈希，这种做法在加密函数中是很常见的。这样做可以在你把sha512加密后128位的数据截断成72位而失去熵的同时，也还能多留一些熵。</p><p>但这意味着第一次哈希函数输出的内容中，可以含有“\0”。而且有高达近1/256（0.39%）的可能性第一位是”\0”（这时候你的密码等于变成了一个空字符串）。那么我们只需要去尝试大概177次密码，就有50%的机会获得一个第一位是NULL字符的密码，等于大概177个用户就有50%的概率使用了一个NULL开头的密码。所以我们尝试31329（177 * 177）个账号和密码的组合就有25%的概率成功登录一个账户。这给在线碰撞哈希提供了可能（如：通过分布式的方式）。</p><p>这真是糟糕透了。</p><p>我们来看一个利用上述方法碰撞账号密码的例子：</p><pre><code>#!c
+$key = "algjhsdiouahwergoiuawhgiouaehnrgzdfgb23523";
+$hash_function = "sha256";
+$i = 0;
+$found = [];
+
+while (count($found) &lt; 2) {
+    $pw = base64_encode(str_repeat($i, 5));
+    $hash = hash_hmac($hash_function, $pw, $key, true);
+    if ($hash[0] === "\0") {
+        $found[] = $pw;
+    }
+    $i++;
+}
+
+var_dump($i, $found);
+</code></pre><p>我选择了一个随机的$key，然后我用一个看似“随机”的密码$pw（其实是5个重复字符进行base64编码后的值），然后开始跑。这段傻傻的代码开始进行碰撞（效率比较低）。最后获得了如下结果：</p><pre><code>#!c
+int(523)
+array(2) {
+  [0]=&gt;
+  string(16) "MzEzMTMxMzEzMQ=="
+  [1]=&gt;
+  string(20) "NTIyNTIyNTIyNTIyNTIy"
+}
+</code></pre><p>我们在523次尝试中碰撞出了2个密码“MzEzMTMxMzEzMQ==”和“NTIyNTIyNTIyNTIyNTIy”，尝试的次数将会随着密钥的改变而改变。 然后我们做以下实验：</p><pre><code>#!c
+$hash = password_hash(hash_hmac("sha256", $found[0], $key, true), PASSWORD_BCRYPT);
+var_dump(password_verify(hash_hmac("sha256", $found[1], $key, true), $hash));
+</code></pre><p>得到如下输出：</p><pre><code>#!c
+bool(true)
+</code></pre><p>十分有趣。两个不同的密码却被认为是同一个hash，我们的哈希碰撞奏效了。</p><h1>0x03 检测有问题的哈希值</h1><hr><p>我们可以用如下方法简单地测试我们的哈希值是否是NULL字符开头的：</p><pre><code>#!c
+password_verify("\0", $hash)
+</code></pre><p>比如，我们测试下面的哈希：</p><pre><code>#!c
+$2y$10$2ECy/U3F/NSvAjMcuBeI6uMDmJlI8t8ux0pXOAoajpv2hSH0veOMi
+</code></pre><p>返回结果为bool(true)，说明它是由首字符为NULL的字符串加密得到的。</p><p>所以，在离线情况下，只用一行的代码即可检测这个问题。</p><p>另外，就算你计算二次哈希值的字符串不是以NULL字符开头，也不代表你绝对的安全（假设你使用了上述有缺陷的加密算法）。当第二个字符是NUL的时候，同样的事情也可能发生：</p><pre><code>a\0bc
+a\0cd
+a\0ef
+</code></pre><p>这些都是可以碰撞的，你将会有0.39%的概率碰撞到第二个字符是\0的结果。在所有首字母为a的字符串中，你也将有0.39%的概率获得一个第二个字符是\0的结果。这意味着我们的破解密码的工作量从碰撞整个字符串哈希变成了只用碰撞以上很短的字符串。 这个问题将一直延续下去（第3个字符是\0、第4个、第5个……）。</p><p>有些人说我并未使用password&#95;hash，我用了CRYPT&#95;SHA256！</p><p>看到源码中的php_crypt()函数，我们可以发现crypt()中所有加密方式都有这样的行为，它并不仅存在于bcrypt，也不仅集中于php，整个crypt(3) C语言库都有这个问题。</p><p>我在文中主要使用bcrypt来说明问题的原因是password&#95;hash()调用了它，而password&#95;hash是当前PHP推荐的加密算法。</p><p>值得注意的是，如果你使用了hash_pbkdf2()，就不容易被影响，而使用的是scrypt库会更好。</p><h1>0x04 修复方法</h1><hr><p>这个问题不是出在bcrypt，而是同时使用了bcrypt与其他加密方式造成的。事实证明，也并不是所有组合都是不安全的。《Mozilla's system》里提到的方式password&#95;hash(base64&#95;encode(hash&#95;hmac("sha512", $password, $key, true)), PASSWORD&#95;BCRYPT) 是安全的，因为它在获得了hash_hmac的返回值后进行了base64编码。另外，如果hash/hmac返回值是hex形式的话你也是安全的（最后一个参数是默认的false）。</p><p>如果你按以下说明去做，你就是100%安全的：</p><ul><li>1.直接使用bcrypt加密（而不去pre_hash）</li><li>2.使用hex形式的值作为pre_hash的参数</li><li>3.使用base64编码后的值作为pre_hash的参数</li></ul><p>总之，要不就不要pre&#95;hash，要不就编码后再进行pre&#95;hash。</p><h1>0x04 根本问题</h1><hr><p>根本问题就是加密算法最初就不是为同时使用而设计的。同时使用多个加密算法会让开发者觉得安全，但实际上并不是，上述问题只是这种错误做法的一个体现。</p><p>所以，我们应该按照算法设计者预想的方式去使用他们。如果你想在bcrypt上再加强防御，那就加密它的输出结果：</p><pre><code>#!c
+encrypt(password_hash(...), $key)。
+</code></pre><p>最后，也是最最重要的是：绝不要发明自己的加密算法，否则会导致致命后果。</p><p>原文：http://blog.ircmaxell.com/2015/03/security-issue-combining-bcrypt-with.html?m=1</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/2016012414014966dd256dd9219030aec2a4c8fbe00433.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/1409" rel="bookmark" id="re1">WordPress 3.8.2 cookie伪造漏洞再分析</a></li><li><a href="http://drops.wooyun.org/news/1401" rel="bookmark" id="re2">WordPress更新至 3.8.2 修复多个漏洞</a></li><li><a href="http://drops.wooyun.org/papers/1404" rel="bookmark" id="re3">WordPress 3.8.2补丁分析 HMAC timing attack</a></li><li><a href="http://drops.wooyun.org/papers/892" rel="bookmark" id="re4">调皮的location.href</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">foo</span> <span class="reply-time">2015-04-07 13:47:14</span></div><p></p><p>源码不泄露比源码泄露安全，但不见得会很安全</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-03-21 23:33:43</span></div><p></p><p>自己写算法的渣路过。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2015-03-19 09:01:12</span></div><p></p><p>强调不要自己发明算法是不要用自己民科的实力去写个算法然后开源出去（算法没有数学理论，很难支撑住啊）。你不公开出去自己用，在源码不泄露的情况下完全很安全啊。（逃</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L.N.</span> <span class="reply-time">2015-03-18 02:00:18</span></div><p></p><p>第二次看这篇文章，果然是语言不同收获不同，还是母语好啊！这类问题可以归结为“思维不对称”漏洞。经常出现在二次开发中。不好意思，半夜出来装逼！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2015-03-18 01:26:03</span></div><p></p><p>挺有意思的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-03-17 17:09:06</span></div><p></p><p>乌云的算法哥发明的</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,73 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">J2EE MVC模式框架中,表单数据绑定功能不安全实现在Tomcat下造成的DoS及RCE</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Nebula</a> <span class="bull">·</span> <time title="2014/04/10 11:27" ui-time="" datetime="2014/04/10 11:27" class="published ng-binding ng-isolate-scope">2014/04/10 11:27</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>当这个<a href="http://drops.wooyun.org/papers/1377">《Struts2 Tomcat class.classLoader.resources.dirContext.docBase赋值造成的DoS及远程代码执行利用!》</a>在Tomcat下的利用出来以后,它其实秒杀的不是一个框架,而是所有表单数据绑定功能不安全实现的J2EE MVC模式框架(因为国内运营商共享协议的限制,远程代码执行漏洞在国内难以大规模实现.但DoS漏洞还是存在的!).</p><h2>0x01 细节</h2><hr><p>稍微列一下清单:</p><h3>Struts1框架:</h3><p>2013年已经停止更新了,所以不会有补丁,出于节操,报了一下官方,Struts2项目leader 波兰小胖子 Lukasz Lenar 是这样回复的:</p><p><img alt="2014040921474585720.png" img-src="0e4e5974c7b8284264509964bac3bbb47c35db90.jpg"></p><p>如图:</p><p><img alt="2014040922063313735.png" img-src="73b4898cd32594523dd8fa6f7e96c971e0f9b9ea.jpg"></p><h3>webWork框架:</h3><p>struts2框架的前身,由于与struts2框架合并,所以不会有补丁!</p><p><img alt="2014040922091186766.png" img-src="461c8c606fcae537fe65eb53ba76ceb0d0ebd079.jpg"></p><h3>Struts2框架:</h3><p>前面文章已经介绍了(不过发现,到现在很多重要厂商都没修复!)</p><h3>Spring 框架:</h3><p>已经在cve-2010-1622中,补丁对class.classLoader的限制.但利用从此可以简化!</p><p>还有就是,自己早年学习java时,写的简易框架,也可以打(只是表单填充需要多写一行代码手动调用填充,而其他常规框架是自动的)<img alt="40.gif" img-src="c021526ade1d231d309da05b9feedb31a41b8de9.jpg"></p><p>就以自己写的框架说明问题:</p><p>表单参数绑定功能是MVC模式的框架一项非常重要的功能,比如:</p><p>没有表单参数绑定功能的时代,我们填充javabean的属性都需要:</p><pre><code>#!java
+... 
+dto.setUserName(request.getParameter("userName"));  
+dto.setPassWord(request.getParameter("passWord"));  
+.... 
+</code></pre><p>框架表单参数绑定出现以后,就节约了很多硬编码(这是框架的主要作用之一!)</p><p>通常实现表单参数绑定需要用到Java的两个重要机制:</p><p>内省（introspector）与反射（reflection）</p><p>而Apache commons-beanutils组件就提供了javaBean的内省与反射操作简化API</p><p>哥的框架使用commons-beanutils,实现表单参数绑定的部分代码块:</p><pre><code>#!java
+... 
+public static Object parseRequest(HttpServletRequest request, Object bean) throws ServletException, IOException {
+        Enumeration enums = request.getParameterNames();
+        while (enums.hasMoreElements()) {
+            Object obj = enums.nextElement();
+            try {
+                Class cls = PropertyUtils.getPropertyType(bean, obj.toString());
+                Object beanValue = ConvertUtils.convert(request.getParameter(obj.toString()), cls);
+                HashMap map = new HashMap();
+                BeanUtils.populate(bean, map);
+                PropertyUtils.setProperty(bean, obj.toString(), beanValue);
+            } catch (Exception e) {
+                // e.printStackTrace();
+            }
+        }
+        return bean;
+    }
+... 
+</code></pre><p>这里不会框架的可以用servlet测试一下漏洞!</p><p>这里有一个重要的问题,就是为什么能访问到基类Object.class ?</p><p>看内省机制,内省是 Java 语言对 Bean 类属性、事件的一种缺省处理方法。例如类 A 中有属性 name, 那我们可以通过 getName,setName 来得到其值或者设置新的值。通过 getName/setName 来访问 name 属性，这就是默认的规则(*但是只要有 getter/setter 方法中的其中一个，那么 Java 的内省机制就会认为存在一个属性)。</p><p>本身就业务逻辑讲,访问javaBean的属性就够了,是不需要访问其他基类的Object.class,但是内省机制使用不当,就会造成这个问题.</p><p>问题非常简单,在内省机制获取javaBean属性的一个小细节,测试代码:</p><pre><code>#!java
+public class TestBean {
+
+    private String id;
+    private String name;
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+}
+
+
+
+public class Test {
+
+    public static void main(String[] args) throws IntrospectionException,
+            IllegalArgumentException, IllegalAccessException,
+            InvocationTargetException {
+
+        TestBean dto = new TestBean();
+
+        BeanInfo bi = Introspector.getBeanInfo(dto.getClass());
+
+        // BeanInfo bi = Introspector.getBeanInfo(dto.getClass(),Object.class);
+
+        PropertyDescriptor[] props = bi.getPropertyDescriptors();
+        for (int i = 0; i &lt; props.length; i++) {
+            System.out.println(props[i].getName());
+        }
+        BeanInfo bi = Introspector.getBeanInfo(dto.getClass());
+    }
+
+}
+</code></pre><p>获取包括父类的所有属性,如图:</p><p><img alt="2014040922595023935.png" img-src="124c50658b33668add83dcfa031696ca0dfd09f2.jpg"></p><p>如果不想获取父类的属性.可以使用</p><pre><code>#!java
+Introspector.getBeanInfo(dto.getClass(),Object.class);
+</code></pre><p>其中第二个参数就是终止遍历到的父类(如:终止到基类Object),如图(这才是表单绑定实现正确的做法):</p><p><img alt="2014040923033384924.png" img-src="82292d77ceaea4693c9cb99eb8b9eee525a4242f.jpg"></p><p>然后只要属性有set器,参数就会被填充,以及后面的Tomcat的一些属性被挂载到class.classLoader下等原因,然后Tomcat的属性被访问到并且赋值.然后才是发生上面的利用!</p><h2>0x02 总结</h2><hr><p>任何使用commons-beanutils组件或内省(及反射)不安全实现表单参数绑定功能的框架,都会受影响(当然,我这里只测试了Tomcat,其他web容器感兴趣的也可以测试一下利用思路!).</p><p>J2EE规范在现今使用极广了，但如果不是Struts2漏洞，或许很少有人关注Java安全，这点很是奇怪！</p><p>Author: Nebula, HelloWorld security team</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141029134414dab631e232f29abd6908a1eacf4f6ae3.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nebula</span> <span class="reply-time">2014-04-11 07:44:19</span></div><p></p><p>DoS随手就可以找一个案例看效果啊!RCE国内国外各给一台公网win主机给我，哥给你实现案例</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-04-11 02:34:06</span></div><p></p><p>没找到什么好案例啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">拆哪小白菜</span> <span class="reply-time">2014-04-10 20:12:37</span></div><p></p><p>Introspector.getBeanInfo这个东西平时写代码基本没用过啊，底层框架在初始化bean的时候会用吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱上平顶山</span> <span class="reply-time">2014-04-10 13:51:49</span></div><p></p><p>soga</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nebula</span> <span class="reply-time">2014-04-10 13:24:27</span></div><p></p><p>不是,这里是内省机制获取到基类Object.class,然后才是反射填充等操作，实现功能时，多做了一步（使用内省应该限制基类的访问Introspector.getBeanInfo(dto.getClass(),Object.class);方法第二个参数是限制参数），没用好这个方法！</p><p>正常业务中的javaBean是不需要访问父类的，访问到当前javaBean类就可以了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2014-04-10 11:33:44</span></div><p></p><p>@RequestMapping("/show/{id}")<br>public String articleContent(@PathVariable("id") long id,User u,HttpServletRequest request) throws Exception {<br>(.............)<br>return URL+"show_article.jsp";<br>}<br>自动映射一直都会有这样的问题存在，说白了就是反射动态设值。如果从开发角度来说直接映射非常爽。</p><p></p></div></div></div></div></div></main>

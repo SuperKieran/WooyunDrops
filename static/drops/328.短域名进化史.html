@@ -1,0 +1,97 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">短域名进化史</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">mramydnei</a> <span class="bull">·</span> <time title="2014/08/20 10:52" ui-time="" datetime="2014/08/20 10:52" class="published ng-binding ng-isolate-scope">2014/08/20 10:52</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>一个短的域名一直都是很多人所推崇的。因为对于大部分人来说，域名越短就会越好记忆。但是，还存在一部分人，他们不在乎域名是否好记，但是他们巴不得自己的域名只有三位，两位甚至是没有长度。他们，就是XSSer。</p><h2>0x00 男人为什么要比短</h2><hr><p>正常的男人都喜欢比谁长，而狂热的XSSer都喜欢比谁短。因为在真实的世界里，我们往往都会遇见字符长度限制。其中的部分问题，是可以通过Short Talk Of XSS中提到的方法进行解决的。但还有一部分极端的场景，是没有办法靠那些硬技术去解决的。比如，我的好友@/fd最近出的prompt.ml这个XSS系列挑战当中就有这样的一道题：</p><pre><code>function escape(input) {
+    // make sure the script belongs to own site
+    // sample script: http://prompt.ml/js/test.js
+    if (/^(?:https?:)?\/\/prompt\.ml\//i.test(decodeURIComponent(input))) {
+        var script = document.createElement('script');
+        script.src = input;
+        return script.outerHTML;
+    } else {
+        return 'Invalid resource.';
+    }
+}
+</code></pre><p>由于挑战还没有结束，所以在这篇文章中我们会避免一些可能会透露答案的信息。但是，可以确定的是我们是没有办法从src跳出来的。也就是说，故事会围绕怎么在这个场景下调用远程JS文件这个话题进行下去。所以，那些Short Talk Of XSS当中给出的解决方案，对于这种场景来说是无能为力的。我们需要关注的是如何让自己的域名变短。</p><h2>0×01 短域名之初体验</h2><hr><p>一个即简单又直接的方法就是买。通常三位的域名，基本上都是XSSer人手一个。比如，我在不久前就买了x55.me.看上去很丑，但是起码算总长度的话，它还是6位的。有了一个短的域名不但能帮助你绕过一些长度限制，还可以让你在与大牛同台竞技时，不会输在非技术性的细节上。</p><p>既然靠钱可以解决，那我们为什么不买两位的呢？问题是两位域名价格相对较高而且很难能找到没有被注册。</p><p><img alt="enter image description here" img-src="fb45fffa1e73928b00eb6f2fdf484d0c625372ef.jpg"></p><p>而且作为有Hack精神的群体，我们更希望用技术来解决问题。所以让我们先回到购买3位域名的问题。有没有办法不花钱就弄到和三位域名一样效果的URL呢？答案是，有的。这里和大家分享一个生成短网址的网站：</p><pre><code>http://xn--hqd.ws/
+</code></pre><p><img alt="enter image description here" img-src="45d09a1bbe18fdf6e155d15819f26c8195930f04.jpg"></p><p>借助这个网站，就可以让我们拥有一个和xxx.xx一样长度的域名来调用远程JS了。^_^</p><p>得到生成的链接：</p><p><img alt="enter image description here" img-src="dd4939108f169d46a3f197422bd5c4d0c06cb4bc.jpg"></p><p>but，wait！那个看上去不怎么可爱的韩文字符长度真的是1么？</p><p>让我们打开浏览器验证一下：</p><p><img alt="enter image description here" img-src="5131971a39dbc61d5859ebf96a818919a8546bf4.jpg"></p><p>看上去Javascript确实认为”ᄒ”的长度为1.但，如果验证长度的是Javascript还需要整这么麻烦？直接抓包改包，不就过去了么？是的，所以让我们在PHP里再做一下验证。php当中判断字符串长度的函数有两个，分别是strlen和mb_strlen。后者，与前者最大的不同就是就是可以在参数中定义字符集。我们来写一个简单的脚本：</p><pre><code>&lt;?php
+echo 'strlen is:'.strlen($_GET["str"]).'&lt;br&gt;';
+echo ' mb_strlen is:'.mb_strlen($_GET["str"]).'&lt;br&gt;';
+echo 'utf-8 mb_strlen is:'.mb_strlen($_GET["str"], 'utf-8').'&lt;br&gt;';
+echo 'gbk mb_strlen is:'.mb_strlen($_GET["str"], 'gbk').'&lt;br&gt;';
+echo 'gb2312 mb_strlen is:'.mb_strlen($_GET["str"], 'gb2312').'&lt;br&gt;';
+echo 'gb18030 mb_strlen is:'.mb_strlen($_GET["str"], 'gb18030').'&lt;br&gt;';
+echo 'big5 mb_strlen is:'.mb_strlen($_GET["str"], 'big5').'&lt;br&gt;';
+?&gt;
+</code></pre><p>通过脚本来观察一下，不同函数和字符集设定的情况下”ᄒ”长度分别会是多少：</p><p><img alt="enter image description here" img-src="447c69e0e74fe92c35fa64dc9c22d59964377827.jpg"></p><p>可以看到当我们使用更为规范的mb&#95;strlen并将字符集设定为比较常见的utf-8和gb18030时，该字符长度只有1.也就是说，在面对懂得规范输写的码农时，这种方法是成立的。我们并没有花一分钱就得到了一个和三位域名在长度上等效的URL。awesome！ PS:由于mb&#95;strlen在字符集为utf-8的情况下，长度结果和控制台是一样的，所以下面都使用控制台截图代替。</p><p><img alt="enter image description here" img-src="a7bba0e3898b1426b1a424f35feda9202bc49c31.jpg"></p><p>但是还不够短，因为后面还有路径。既然韩国人的玩意儿字符长度可以是1，那中文可以么？答案自然是可以的。我们只需要购买一个后缀为两位的中文域名（如果你看明白了，就该懂其实中文，韩文什么的一点都不重要）。而且已经有人这么去做了。比如我们的小伙伴，0x_Jin已经入坑。</p><p>http://靖.pw</p><p><img alt="enter image description here" img-src="90ad1bb8034732027f32fed7638f0f388fad9ed1.jpg"></p><h2>0×02 Unicode黑魔法</h2><hr><p>回顾一下，我们从收费的xxx.xx进化到了免费的x.xx/x,再进一步进化到了x.xx。我们已经将域名缩短到了传说中的4位。还能再短么？如果不能就真的没有必要写这个文章了。在这里，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="21c8bda1c987a0c4a4a9c7a5bec9918361524940474846544d4d484fc7b4b8c59dbbc59ba7c7a9b0c59a8dc99eb8c5998bc7aba1c49686c2a1a3">[email&#160;protected]</a></p><p>http://靖.㎺</p><p><img alt="enter image description here" img-src="0b45f38953aea868ddaa972eeaf8d1ba118f7dd4.jpg"></p><p>看上去pw有些奇怪？没错，因为这并不是p和w，而是unicode字符㎺(U+33BA)。这个也能访问？点一下链接不就知道喽。这是个即神奇但又不陌生的现象。为什么这么说呢，因为我们经常会碰到这样的情况。当我们在忘记切换输入法，拿着中文输入法就在URL敲入:</p><pre><code>http://www。baidu。com
+</code></pre><p>并按下回车时，会发现还是会正常跳入www.baidu.com，这个问题其实就已经证明了在hostname中，这种事情是有在发生的。但需要尊重的是，我们谁都没有想过可以借助这种现象来缩短我们的域名长度。所以技术一直都在于创新度而不在于难<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="5fbae5f9bcdfddbac3f7b7e0c6b6d8d3bad9d2b9f3feb7fef7b8fbe5b9d7cebaf0e61f2c373e3936382a33333631b8c5db2d3a2c2f3a3c2b71b9cadabbe5d4b7f1ed">[email&#160;protected]</a>到这里，我们的域名已经进化到x.x也就是三位的长度了。但是，我们不可能停留在pw上面，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="38d09691deb0a9dc8394dea59ddd84b8dd9fb3dfae97dfb3badfa2bc5e4d424251565fdda89fdbb8badc80b3d1a59adea097deb0a9dfa2bcdd88b7dc84a1dc848c78">[email&#160;protected]</a>/fd写的一个hostname的fuzzer：</p><p><img alt="enter image description here" img-src="3e6f5feae05c17918fc9173c1fdec665bff52437.jpg"></p><p>然后我们得到了一些非常有趣的结果。由于内容比较多在这里只显示部分结果。首先是一些可以作为域名后缀的unicode字符：</p><pre><code>ǳ : dz     //valid domain ext
+₨ : rs     //valid domain ext
+№ : no     //valid domain ext
+℠ : sm     //valid domain ext
+℡ : tel    //valid domain ext
+™ : tm     //valid domain ext
+㎁ : na    // valid domain ext
+U+3377 : dm   //valid domain ext
+㎃ : ma  // valid domain ext
+㎋ : nf  //valid domain ext
+㎖ : ml  //valid domain ext
+㎙ : fm  //valid domain ext
+㎝ : cm  //valid domain ext
+㎰ : ps  //valid domain ext
+㎳ : ms  //valid domain ext
+㎺ : pw  //valid domain ext
+㎽ : mw  //valid domain ext
+㏄ : cc  //valid domain ext
+㏅ : cd  //valid domain ext
+㏉ : gy  //valid domain ext
+㏌ : in  //valid domain ext
+㏗ : ph //valid domain ext
+㏚ : pr  //valid domain ext
+㏛ : sr  //valid domain ext
+ﬁ : fi  //valid domain ext
+ﬅ : st //valid domain ext
+ﬆ : st //valid domain ext
+</code></pre><p>这样一来，我们能够买的就不单是pw结尾的域名了。不过需要说一下的是，在我们现在的比价结果中，pw是最便宜的。一个汉字.pw的域名在XX互联只需要18元就能拿下了。让我们继续来看其它的一些有趣的结果。这次，让我们继续回到免费这个话题上面。</p><p>Ⅷ : viii ㎉ : kcal 可以看到在这次的结果中。我们列出来了两个可以用一个unicode字符代替4个字符的结果。然而.ml结尾的域名，是可以免费注册到长度大于等于4的域名的。所以，我们的小伙伴就抢占先机，拿下了:</p><p><img alt="enter image description here" img-src="ef6c2d159493acc6e66e5b4e0a0bf8af14565880.jpg"></p><p>Ⅷ.㎖ 和 ㎉.㎖ 4 这样，两个免费的3位域名（总长度）就到手了。但是三位还是有点长。我们能做到2位么？让我们再来看看另一部分的fuzz结果：</p><pre><code>⒈ : 1.   //use one unicode char instead of 2 chars and include dot
+⒉ : 2.   //use one unicode char instead of 2 chars and include dot
+⒊ : 3.   //use one unicode char instead of 2 chars and include dot
+⒋ : 4.   //use one unicode char instead of 2 chars and include dot
+⒌ : 5.   //use one unicode char instead of 2 chars and include dot
+⒍ : 6.   //use one unicode char instead of 2 chars and include dot
+⒎ : 7.   //use one unicode char instead of 2 chars and include dot
+⒏ : 8.   //use one unicode char instead of 2 chars and include dot
+⒐ : 9.   //use one unicode char instead of 2 chars and include dot
+⒑ : 10.   //use one unicode char instead of 3 chars and include dot
+⒒ : 11.   //use one unicode char instead of 3 chars and include dot
+⒓ : 12.   //use one unicode char instead of 3 chars and include dot
+⒔ : 13.   //use one unicode char instead of 3 chars and include dot
+⒕ : 14.   //use one unicode char instead of 3 chars and include dot
+⒖ : 15.   //use one unicode char instead of 3 chars and include dot
+⒗ : 16.   //use one unicode char instead of 3 chars and include dot
+⒘ : 17.   //use one unicode char instead of 3 chars and include dot
+⒙ : 18.   //use one unicode char instead of 3 chars and include dot
+⒚ : 19.   //use one unicode char instead of 3 chars and include dot
+⒛ : 20.   //use one unicode char instead of 3 chars and include dot
+㏘ : p.m. //include dot
+㏂ : a.m. //include dot
+㏇ : co. //valid domain ext and also include dot
+
+这部分结果，非常的有趣。因为这些unicode字符最后会被解释为带”.”的字符。也就是说，如果我们购买了20.xx，然而这个xx又正好是可以用一个unicode字符可以代替的后缀的话，我们的长度就会变成？2位！当然，我们已经这么去做了。这是我们的战利品：
+
+http://⒛₨
+</code></pre><p>PS:当然这不是免费的。如果你有办法注册2位的免费域名也希望你能告诉我</p><p><img alt="enter image description here" img-src="f2525a311cf0cc60227cca8fe6c95f6dc782bc5f.jpg"></p><p>不过机智的你，可能会发现在webkit下面当你点击上面的链接时，会跳转到about:blank。也就是说这种使用带dot的unicode字符的方法在webkit下面是不适用的。那这样一来，如果使用20.₨的话，长度不就又变成3+1了么？我们还有别的辅助：</p><pre><code>⑩ : 10   //use one unicode char instead of 2 chars
+⑪ : 11   //use one unicode char instead of 2 chars
+⑫ : 12   //use one unicode char instead of 2 chars
+⑬ : 13   //use one unicode char instead of 2 chars
+⑭ : 14   //use one unicode char instead of 2 chars
+⑮ : 15   //use one unicode char instead of 2 chars
+⑯ : 16   //use one unicode char instead of 2 chars
+⑰ : 17   //use one unicode char instead of 2 chars
+⑱ : 18   //use one unicode char instead of 2 chars
+⑲ : 19   //use one unicode char instead of 2 chars
+⑳ : 20   //use one unicode char instead of 2 chars
+</code></pre><p>原来20也是可以通过单个字符来代替的。这样一来，我们就可以通过灵活的切换游走在2位和3位之间了。</p><pre><code>http://⑳.₨  //兼容所有浏览器
+http://⒛₨  //兼容Firefox和IE
+</code></pre><p><img alt="enter image description here" img-src="2a52c78d8d318b0de52d310fe1af8c74db160704.jpg"></p><p>这真是非常激动人心的。在将域名长度缩短到了两位之后，让我们再来看看另外一部分的结果：</p><pre><code>℀ : a/c    // path
+℁ : a/s    // path
+℅ : c/o    // path
+℆ : c/u    // path
+</code></pre><p>在这部分结果当中，发现有些unicode字符最终会被解释称 字符/字符。此外，我们之前提到的会带”.”的结果作为二级域名提供给用户，也将会是一个很不错的选择。比如：</p><pre><code>http://⒛⒛₨  //兼容IE和FF
+</code></pre><p><img alt="enter image description here" img-src="b089b4e423d5a2c6ceea05f9cafc76848dc304fb.jpg"></p><h2>0×03 写在最后</h2><hr><p>这就是，我们在这些日子里不停的fuzzing，思考，调查所得到的结果。</p><pre><code>x55.me(6位)-&gt;20.rs(5位)-&gt;靖.pw(4位)-&gt;⑳.₨(3位)-&gt;⒛₨(2位)-&gt;？ 
+</code></pre><p>我们讨论了很多。讨论了如果在这些知识基础上开放一个XSS平台会如何，是否会被山寨？我觉得山寨是肯定会有的。因为trick都已经放出来了，所以对于效仿者来说只需要照着用就可以了。但是，好的技术支持和功能模块也许真的不是ctrl+c就能带走的。所以我相信我们会做出来一个不会被复制的平台。</p><p>最后，让我们再次以长度的话题结尾。那么，1位是可能的么？也许对于土豪来说买个tld就是可能的。</p><pre><code>http://ai
+</code></pre><p>你需要做的就是买一个可以用单个unicode字符代替的tld。</p><p>Thanks for your time.</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">鱼肠</span> <span class="reply-time">2016-05-09 22:17:45</span></div><p></p><p>赞！！！！！！！！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">imlonghao</span> <span class="reply-time">2015-06-10 12:16:12</span></div><p></p><p>Awesome</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">理工小强</span> <span class="reply-time">2015-06-07 23:25:46</span></div><p></p><p>短到如此长度 也是醉了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RM</span> <span class="reply-time">2015-01-23 10:13:40</span></div><p></p><p>太強。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">popok</span> <span class="reply-time">2015-01-22 11:31:04</span></div><p></p><p>wooyun筹个款，我们去买一个TLD</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rafay</span> <span class="reply-time">2014-09-09 12:15:07</span></div><p></p><p>Awesome discovery. Kudos</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">阿梦</span> <span class="reply-time">2014-09-06 09:06:48</span></div><p></p><p>顶一个 ~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aner</span> <span class="reply-time">2014-08-26 14:00:16</span></div><p></p><p>太牛了，已测试</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-08-25 14:28:26</span></div><p></p><p>重要的还是一个考虑的过程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">noob</span> <span class="reply-time">2014-08-22 20:57:43</span></div><p></p><p>学习到了，这姿势好，感谢大神分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">M4sk</span> <span class="reply-time">2014-08-22 17:47:19</span></div><p></p><p>NB~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑色的屌丝</span> <span class="reply-time">2014-08-22 17:01:15</span></div><p></p><p>顶</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sneezry</span> <span class="reply-time">2014-08-21 16:41:13</span></div><p></p><p>我访问http://ai，结果访问到内网了 LoL</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">香草</span> <span class="reply-time">2014-08-21 10:21:43</span></div><p></p><p>fuzzing走起来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱上平顶山</span> <span class="reply-time">2014-08-20 22:44:44</span></div><p></p><p>不错 支持</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">what_news</span> <span class="reply-time">2014-08-20 21:31:04</span></div><p></p><p>厉害</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">/fd</span> <span class="reply-time">2014-08-20 16:20:28</span></div><p></p><p>我是來為parsec打廣告的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">adm1n</span> <span class="reply-time">2014-08-20 16:13:40</span></div><p></p><p>顶M哥</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wkc_2014</span> <span class="reply-time">2014-08-20 14:01:44</span></div><p></p><p>涨姿势了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">along</span> <span class="reply-time">2014-08-20 13:38:06</span></div><p></p><p>太强了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x_Jin</span> <span class="reply-time">2014-08-20 12:42:56</span></div><p></p><p>终于在M牛的文章中 露了次脸了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F1uYu4n</span> <span class="reply-time">2014-08-20 12:23:38</span></div><p></p><p>很有意思</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Anymous</span> <span class="reply-time">2014-08-20 12:23:22</span></div><p></p><p>中文的想到了，unicode的没想到</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">看风者</span> <span class="reply-time">2014-08-20 12:11:56</span></div><p></p><p>太强了</p><p></p></div></div></div></div></div></main>

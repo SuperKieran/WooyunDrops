@@ -1,0 +1,147 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">linux ddos恶意软件分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">winsyk</a> <span class="bull">·</span> <time title="2015/06/25 10:18" ui-time="" datetime="2015/06/25 10:18" class="published ng-binding ng-isolate-scope">2015/06/25 10:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00</h1><hr><p>好久没写文章了,正好吃完饭回来习惯性的翻翻twitter,一篇文章写的真是行云流水不翻译来真是可惜。<br>废话不多说，这篇文章是一个针对恶意软件"Linux/XOR.DDoS" 感染事件分析，该恶意软件试图感染真正的linux服务器。原文：http://blog.malwaremustdie.org/2015/06/mmd-0033-2015-linuxxorddos-infection_23.html<br></p><h1>0x01 背景：</h1><hr><p>事件细节：</p><p>攻击源：通过某种方式监控来到攻击来源107.182.141.40，可以看到这个ip的一些具体信息。</p><pre><code>#!bash
+"ip": "107.182.141.40",
+"hostname": "40-141-182-107-static.reverse.queryfoundry.net",
+"city": "Los Angeles",
+"region": "California",
+"country": "US",
+"loc": "34.0530,-118.2642",
+"org": "AS62638 Query Foundry, LLC",
+"postal": "90017",
+"phone": "213"
+</code></pre><p>攻击者登录通过ssh密码登录一台linux：</p><pre><code>#!bash
+[2015-06-23 01:29:42]: New connection: 107.182.141.40:41625
+[2015-06-23 01:29:42]: Client version: [SSH-2.0-PUTTY]
+[2015-06-23 01:29:43]: Login succeeded [***/***]
+</code></pre><p>然后通过shell执行了如下命令：</p><p><img alt="Alt text" img-src="aa4130fe931f528e614fb366ae737653557fcf16.jpg"></p><p>然后恶意软件启动命令在受感染机器上执行。</p><p><img alt="Alt text" img-src="ec29af023a27221f01cfc9e151fd5d26e4a7968f.jpg"></p><p>攻击者使用的Web服务器（域：44ro4.cn）面板截图，当时采取的攻击执行步骤。</p><p><img alt="Alt text" img-src="bf373f0d333227cbdc7fc068a3a9c0b955ca432b.jpg"></p><p>这个web上的ip信息：</p><pre><code>#!bash
+"ip": "198.15.234.66",
+"hostname": "No Hostname",
+"city": "Nanjing",
+"region": "Jiangsu",
+"country": "CN",
+"loc": "32.0617,118.7778",
+"org": "AS11282 SERVERYOU INC",
+"postal": "210004"
+</code></pre><p>通过dig 发现该ip的一些附加域信息：</p><pre><code>#!bash
+;; QUESTION SECTION:
+;44ro4.cn.                      IN      A
+
+;; ANSWER SECTION:
+44ro4.cn.               600     IN      A       23.228.238.131
+44ro4.cn.               600     IN      A       198.15.234.66
+
+;; AUTHORITY SECTION:
+44ro4.cn.               3596    IN      NS      ns2.51dns.com.
+44ro4.cn.               3596    IN      NS      ns1.51dns.com.
+</code></pre><p>下边是更多的证据：</p><p><img alt="Alt text" img-src="634ee700ccc5ac73b223bb5c6e6b68805b8f61f0.jpg"></p><h1>0x02 感染的方法，伪装和总结</h1><hr><p>通过进一步研究恶意软件，该软件看起来像是ZIP压缩文件的恶意软件，从文件格式上看出像是一个shell脚本的恶意软件安装程序见下图：</p><p><img alt="Alt text" img-src="00c55f2ddd239cd3269ab0b7de10d6a63374fdad.jpg"></p><p><img alt="Alt text" img-src="e0c7e1830738e6ce30a2aac51751d495bb920cc8.jpg"></p><p>这是Linux/XorDDOSs，这种恶意软件的感染后使作为BOT被感染的机器，远程控制的恶意程序，配置，拒绝IP，程序和配置。他们使用的是XOR'ed加密通信，发送预先与MD5编码过程。该恶意软件的精灵的主要功能是为一个隐形的DDoS攻击的僵尸网络。</p><p>这一事件的重要亮点和恶意软件使用：</p><ol><li>我们使用用于此恶意软件感染的基础设施 (攻击者的IP来自美国主机，一个IP用于感染)</li><li>总在Linux/XorDDOSs，多个主机的使用：四数控系统。三的人建议是硬编码在主机名（有相关的领域），从被感染的机器接收回调，而其中的主机充当下载服务器被感染的机器要求后门下载可疑的恶意文件。</li><li>异或加密功能是用现在解密滴，读取配置文件从远程主机下载（是的，它似乎被下载的配置文件），并发送通信数据。</li></ol><p>这里是poc：</p><p>这些是cnc 与kernel的交互信息，这里用到了调试神器strace.</p><p><img alt="Alt text" img-src="495e2550d2bd31625ffbefc93a9445a084d7ce67.jpg"></p><p>通过恶意软件交互分析到的dns请求：</p><p><img alt="Alt text" img-src="cc48662d1f1032decc39eb768993cf9f6ef06344.jpg"></p><p>tcpdump中的timestamp时间戳。</p><pre><code>#!bash
+08:21:20.078878 IP mmd.bangs.xorddos.40274 &gt; 8.8.8.8: 27458+ A? aa.hostasa.org. (32)
+08:21:20.080602 IP mmd.bangs.xorddos.38988 &gt; 8.8.8.8: 44387+ A? ns4.hostasa.org. (33)
+08:21:25.092061 IP mmd.bangs.xorddos.45477 &gt; 8.8.8.8: 58191+ A? ns3.hostasa.org. (33)
+08:21:25.269790 IP mmd.bangs.xorddos.51687 &gt; 8.8.8.8: 22201+ A? ns2.hostasa.org. (33)
+</code></pre><p>和cnc(hostasa.org)建立连接，注意它使用google dns的方式：</p><p><img alt="Alt text" img-src="f503208a4d889560930591999e98f8cbf5675789.jpg"></p><p>cnc（hostasa.org）回调都是加密的，这是在2个独立的地方初步回调。</p><p><img alt="Alt text" img-src="2246926211bd5ab98724be726861a1cf8a205e37.jpg"></p><p>通过解密它的请求，这里记录了一些解密图：</p><p><img alt="Alt text" img-src="de4e3b6cfe48e3310733c9a4d728d88ffa44bab9.jpg"></p><p>这里是代码中通讯二进制编码部分：</p><p><img alt="Alt text" img-src="1fdb8496868960892715326af9ba129a7e77ade5.jpg"></p><p>下载者：</p><p><img alt="Alt text" img-src="be51742f4ccb4ea45e19df5fb2ee4e8108553ab0.jpg"></p><p>这里是下载函数硬编码在二进制里</p><p><img alt="Alt text" img-src="c9c6c6699f69347dd5177782831fcae68ffd602d.jpg"></p><p>也有确凿的证据在wireshark抓包通信中，如图：</p><p><img alt="Alt text" img-src="6bf29b9bf3e92936fed0fb174ee73f369e33682b.jpg"></p><h1>0x03 有趣的事实</h1><hr><p>这些都是用恶意软件项目的源代码文件，它是Linux/xor.ddos集编译设置（在C语言中，没有"+"。）作者很无耻的收藏了，这里我帮他翻译下。</p><p><img alt="Alt text" img-src="c25a5e16edc3c59b9a5a02c7ef37b9da393f55fc.jpg"></p><p>恶意软件的脚本在二进制中编码，这是通用的很多恶意软件在中国制造。</p><p><img alt="Alt text" img-src="039e8d2e71f12fab2cb797b0ecbdbfa46d997bc5.jpg"></p><p>发现XOR加密运行安装程序和"据说"用于解密的配置数据，在样本我破解的关键是BB2FA36AAA9541F0</p><p><img alt="Alt text" img-src="6c0ee0bf71a68db180041bd83f41b2ef87e47314.jpg"></p><p>这是自我复制的恶意软件的安装文件，使用逆向工具追踪代码，可以看到这里：</p><p><img alt="Alt text" img-src="dba0f16290f398a7a463694ccccb5d0f8b944a27.jpg"></p><p>和这里：</p><p><img alt="Alt text" img-src="e0e7f1f5e27dbb13971723d3ae2a5ca238067a93.jpg"></p><p>acl功能，拒绝访问的ip，来保护受感染的主机。</p><p><img alt="Alt text" img-src="e5e3ad62a6c2de9614c85b98614df87c478072ee.jpg"></p><h1>0x04 对于恶意软件作者追踪</h1><hr><p>通过逆向分析得到的数据，cnc使用的dns记录在下边：</p><pre><code>#!bash
+;; ANSWER SECTION:
+aa.hostasa.org. 300 IN  A   23.234.60.143
+ns2.hostasa.org.300 IN  A   103.240.140.152
+ns3.hostasa.org.300 IN  A   103.240.141.54
+ns4.hostasa.org.300 IN  A   192.126.126.64
+
+;; AUTHORITY SECTION:
+hostasa.org.3600IN  NS  ns4lny.domain-resolution.net.
+hostasa.org.3600IN  NS  ns1cnb.domain-resolution.net.
+hostasa.org.3600IN  NS  ns3cna.domain-resolution.net.
+hostasa.org.3600IN  NS  ns2dky.domain-resolution.net.
+
+;; ADDITIONAL SECTION:
+ns3cna.domain-resolution.net. 2669 IN   A   98.124.246.2
+ns2dky.domain-resolution.net. 649 INA   98.124.246.1
+ns1cnb.domain-resolution.net. 159 INA   50.23.84.77
+ns4lny.domain-resolution.net. 2772 IN   A   98.124.217.1
+</code></pre><p>经过分析，活着的cnc（hostasa.org）服务器在美国。</p><pre><code>#!bash
+"ip": "23.234.60.143",
+"hostname": "No Hostname",
+"city": "Newark",
+"region": "Delaware",
+"country": "US",
+"loc": "39.7151,-75.7306",
+"org": "AS26484 HOSTSPACE NETWORKS LLC",
+"postal": "19711"
+
+"ip": "192.126.126.64",
+"hostname": "No Hostname",
+"city": "Los Angeles",
+"region": "California",
+"country": "US",
+"loc": "34.0530,-118.2642",
+"org": "AS26484 HOSTSPACE NETWORKS LLC",
+"postal": "90017"
+</code></pre><p>其他的cnc（hostasa.org）服务器在香港。</p><pre><code>#!bash
+"ip": "103.240.140.152",
+"hostname": "No Hostname",
+"city": "Central District",
+"country": "HK",
+"loc": "22.2833,114.1500",
+"org": "AS62466 ClearDDoS Technologies"
+
+"ip": "103.240.141.54",
+"hostname": "No Hostname",
+"city": "Central District",
+"country": "HK",
+"loc": "22.2833,114.1500",
+"org": "AS62466 ClearDDoS Technologies"
+</code></pre><p>域名hostasa.org无法证明是用于恶意目的的怀疑，3台主机看起来像一个DNS服务器，下面是注册的数据来自Name.com那里注册.org，与隐私保护：</p><pre><code>#!bash
+Domain Name:"HOSTASA.ORG"
+Domain ID: 2D175880649-LROR"
+"Creation Date: 2015-03-31T06:56:01Z
+Updated Date: 2015-05-31T03:45:36Z"
+Registry Expiry Date: 2016-03-31T06:56:01Z
+Sponsoring Registrar:"Name.com, LLC (R1288-LROR)"
+Sponsoring Registrar IANA ID: 625
+WHOIS Server:
+Referral URL:
+Domain Status: clientTransferProhibited -- http://www.icann.org/epp#clientTransferProhibited
+Registrant ID:necwp72276k4nva0
+Registrant Name:Whois Agent
+Registrant Organization:Whois Privacy Protection Service, Inc.
+Registrant Street: PO Box 639
+Registrant City:Kirkland
+Registrant State/Province:WA
+Registrant Postal Code:98083
+Registrant Country:US
+Registrant Phone:+1.4252740657
+Registrant Phone Ext:
+Registrant Fax: +1.4259744730
+Registrant Fax Ext:
+Registrant Email:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="91f9fee2e5f0e2f0bffee3f6d1e1e3fee5f4f2e5f4f5f5fefcf0f8ffe2f4e3e7f8f2f4e2bff2fefc">[email&#160;protected]</a>
+Tech Email:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="274f485453465446094855406757554853424453424343484a464e49544255514e4442540944484a">[email&#160;protected]</a>
+Name Server:NS3CNA.DOMAIN-RESOLUTION.NET
+Name Server:NS1CNB.DOMAIN-RESOLUTION.NET
+Name Server:NS2DKY.DOMAIN-RESOLUTION.NET
+Name Server:NS4LNY.DOMAIN-RESOLUTION.NET
+DNSSEC:Unsigned
+</code></pre><p>此外，所使用的44ro4.cn域，这是DNS指向恶意的payload的Web页面，这不是巧合，这是注册在下面的QQ ID和名称（可能是假的）：</p><pre><code>#!bash
+Domain Name: 44ro4.cn
+ROID: 20141229s10001s73492202-cn
+Domain Status: ok
+Registrant ID: ji27ikgt6kc203
+Registrant: "蔡厚泉 (Cai Hou Sien/Quan)"
+Registrant Contact Email: "<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dfedeaeeeee6eee9e8e9eb9faeaef1bcb0b2">[email&#160;protected]</a>"
+Sponsoring Registrar: 北京新网数码信息技术有限公司
+Name Server: ns1.51dns.com
+Name Server: ns2.51dns.com
+Registration Time: 2014-12-29 10:13:43
+Expiration Time: 2015-12-29 10:13:43
+DNSSEC: unsigned
+</code></pre><p>PS：CNNIC有更多这样的注册信息，我把自由查询他们找到这个骗子用的和其他身份的几个可怜的cn域名，相同和不同的名字下，在同一个QQ：</p><pre><code>Domain   RegistrantID     Name
+------------------------------
+n1o9n.cn ej55v35357p95m   沈涛
+u7ju0.cn ej55v35357p95m   沈涛
+568b5.cn ej55v35357p95m   沈涛
+93t9i.cn ej55v35357p95m   沈涛
+5ntdu.cn ej55v35357p95m   沈涛
+v90b8.cn ej55v35357p95m   沈涛
+av732.cn ej55v35357p95m   沈涛
+iqny7.cn ej55v35357p95m   沈涛
+ewkp7.cn ej55v35357p95m   沈涛
+8vu55.cn ji27ikgt6kc203   蔡厚泉
+tj17e.cn ej55v35357p95m   沈涛
+o88pn.cn ji27ikgt6kc203   蔡厚泉
+</code></pre><p>通过进一步的分析，发现如下信息和域名所有者信息相吻合。</p><p><img alt="Alt text" img-src="5c4fa30d41266cffd932e637878bd9f1aa8393c6.jpg"></p><p>看起来这个域名所有者是住在，住在附近的潭溪公交站在三元里街头，白云区，广州地区，中华人民共和国，按照该地图描述：</p><p><img alt="Alt text" img-src="4bec731acf1cee03facb19b1b6485bf11b30ee5c.jpg"></p><h6>####注：文中的cnc处(就是HOSTASA.ORG)</h6><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2015-06-30 00:12:53</span></div><p></p><p>51dns一看就是国内的了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rockes</span> <span class="reply-time">2015-06-25 17:52:31</span></div><p></p><p>求分享</p><p>0x03 有趣的事实</p><p>那些C</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SPRITEKING</span> <span class="reply-time">2015-06-25 15:11:32</span></div><p></p><p>chmod +x a07.zip ./a07.zip .....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">winsyk</span> <span class="reply-time">2015-06-25 10:30:39</span></div><p></p><p>此篇为翻译文，原文地址：http://blog.malwaremustdie.org/2015/06/mmd-0033-2015-linuxxorddos-infection_23.html</p><p></p></div></div></div></div></div></main>

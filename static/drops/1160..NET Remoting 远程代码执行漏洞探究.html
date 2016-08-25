@@ -1,0 +1,203 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">.NET Remoting 远程代码执行漏洞探究</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Her0in</a> <span class="bull">·</span> <time title="2016/04/22 9:21" ui-time="" datetime="2016/04/22 9:21" class="published ng-binding ng-isolate-scope">2016/04/22 9:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><a href="https://parsiya.net/blog/2015-11-14-intro-to-.net-remoting-for-hackers/">本文</a>是一篇关于<a href="https://msdn.microsoft.com/en-us/library/kwdt6w2k%28v=vs.71%29.aspx">.NET Remoting</a>安全的科普文，在文章中会使用一个简单的 RCE 漏洞和提权案例进行说明。</p><p>本文主要有以下内容：</p><ol><li>对 .NET Remoting 技术作一个简单的介绍</li><li>使用 VS 编写一个简单的.NET Remoting客户端和有漏洞的服务端。</li><li>获取.NET Remoting传输的数据。</li><li>使用 dnSpy 对 .NET Remoting 过程进行简单的调试。</li><li>重新创建一个有缺陷的应用程序，演示漏洞。</li><li>使用dnSpy对修改过的 .NET 模块打补丁，并对有漏洞的服务端继续攻击利用。</li></ol><h1>0x00 所需的工具及说明</h1><hr><ul><li>Win7 虚拟机。</li><li><a href="https://www.visualstudio.com/en-us/products/visual-studio-community-vs.aspx.">VS 2015 社区版</a>，本文只需要C#组件。</li><li>RawCap 抓取本地网络传输的数据包。</li><li>Wireshark 分析抓取到的数据包。</li><li><a href="https://github.com/0xd4d/dnSpy/releases/tag/v1.4.0.0">dnSpy (1.4.0.0)</a> 反编译，调试 C# 代码。</li></ul><h1>0x01 .NET Remoting 技术简介</h1><hr><p>总的来说，.NET Remoting是一种进程间通信（IPC）的方式。一个程序（可以称之为服务端）暴露一些可以远程调用的对象。其他程序（可以称之为客户端）可以创建这些对象的实例，就如同创建本地对象一样。但是，这些“本地的对象”运行在服务器端。通常情况下，这些可远程调用的对象放在一个共享的库中（如：DLL）。客户端和服务端各自保存一份此DLL文件。.NET Remoting 机制可以使用 TCP，HTTP 以及命名管道传输可远程调用的对象。</p><p>.NET Remoting 的概念与 Java 中的<a href="http://www.oracle.com/technetwork/java/javase/tech/index-jsp-138781.html">远程方法调用（Java RMI）</a>非常类似。在 Java 的RMI中，传递的是序列化的Java对象，在 .NET 中传递的则是一个 .NET 对象。</p><h1>0x02 编写一个 .NET Remoting 应用程序</h1><hr><p>接下来我会创建两个简单的 .NET Remoting 应用程序。第一个程序主要是说明创建一个.NET Remoting 客户端/服务端应用程序的方法。第二个程序的目的是描述重新创建一个有缺陷的服务端程序。</p><p>整个程序由以下三部分组成：</p><ol><li>远程可调用的库：是一个DLL文件，包含了可远程调用的对象。</li><li>服务端</li><li>客户端</li></ol><p>第一个 DLL 文件。创建一个解决方案和一个新的工程。选择工程类型为“类库”。根据<a href="https://msdn.microsoft.com/en-us/library/vstudio/h8f0y3fc%28v=vs.100%29.aspx"> MSDN 文档</a>的描述，要创建一个可远程调用的对象，此对象要么是一个Serializable对象，要么需要继承MarshalByRefObject类。需要了解更多信息，可以在<a href="https://msdn.microsoft.com/library/wcf3swha%28v=vs.100%29.aspx">这里</a>看到。</p><p>远程调用库（DLL文件）的代码如下：</p><pre><code>#!csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace RemotingSample
+{
+  public class RemoteMath : MarshalByRefObject
+  {
+    public int Add(int a, int b)    // 加法
+    {
+      Console.WriteLine("Add({0},{1}) called", a, b);
+      return a + b;
+    }
+
+    public int Sub(int a, int b)    // 减法
+    {
+      Console.WriteLine("Sub({0},{1}) called", a, b);
+      return a - b;
+    }
+  }
+}
+</code></pre><p>我们需要在工程中添加两个引用，“工程（菜单） > 添加引用”：</p><ol><li>System.Runtime.Remoting</li><li>Remoting Library project</li></ol><p>服务端将会暴露 RemoteMath 类。客户端则会调用 RemoteMath 类中的方法。</p><p>客户端依旧需要添加上述引用。客户端调用 Add 和 Sub 方法，并打印出结果。</p><p>客户端代码如下：</p><pre><code>#!csharp
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Runtime.Remoting;
+using System.Runtime.Remoting.Channels;
+using System.Runtime.Remoting.Channels.Tcp;
+
+namespace RemotingSample
+{
+  class Client
+  {
+    static void Main(string[] args)
+    {
+      // 创建并注册 TCP 信道
+      // 将信道的安全属性设置为 false
+      TcpChannel clientRemotingChannel = new TcpChannel();
+      ChannelServices.RegisterChannel(clientRemotingChannel, false);
+
+      // 创建一个 RemothMath 对象
+      // 需要做一个转换，因为 Activator.GetObject 返回值了一个 RemoteMath 对象
+      // 服务器地址在 Server.cs 文件中设置 (端口:8888 和 rMath)
+
+      // Server.cs code:
+      // TcpChannel remotingChannel = new TcpChannel(8888);
+      // ChannelServices.RegisterChannel(remotingChannel, false);
+      // WellKnownServiceTypeEntry remoteObject = new WellKnownServiceTypeEntry(typeof(RemoteMath), "rMath", WellKnownObjectMode.SingleCall);
+
+      RemoteMath remoteMathObject = (RemoteMath)Activator.GetObject(typeof(RemoteMath), "tcp://localhost:8888/rMath");
+
+      // 调用 Add 和 Sub 方法
+      Console.WriteLine("Result of Add(1, 2): {0}", remoteMathObject.Add(1, 2));
+      Console.WriteLine("Result of Sub(10, 3): {0}", remoteMathObject.Sub(10, 3));
+
+      Console.WriteLine("Press any key to exit");
+      Console.ReadLine();
+    }
+  }
+}
+</code></pre><p>现在编译此解决方案，之后你会注意到客户端和服务端程序所在目录都包含一个 RemotingLibrary.dll 文件。</p><p>如下图所示：</p><p><img alt="p1" img-src="bf0b9d1574fb7b0b6a3d80fe62fa4e86ace46519.jpg"></p><p>现在可以启动 RawCap 对本地网卡进行抓包。</p><h1>0x03 .NET Remoting 消息分析</h1><hr><p>启动服务端程序进行初始化，将会弹出 Windows 防火墙例外提示。由于客户端和服务端都运行在本地，所以这里你可以安全的选择“拒绝”。此处的设置也是大多数 .NET Remoting 应用程序出现漏洞的原因。使用 netstat 命令（如下图所示）可以看到服务端监听的地址为 0.0.0.0 。这意味着任何人都可以连接到服务端并且在服务端本地执行暴露的功能。</p><p><img alt="p2" img-src="2d50f74d8c22dfb5f9d8aa9592e8f819a16660bd.jpg"></p><p>现在运行客户端和服务端，并观察执行结果。我们可以看到，客户端调用了上述两个方法并且打印出了结果。如下图所示：</p><p><img alt="p3" img-src="f433a2ea6ea89296f7c0555b262fdd46a087dd1d.jpg"></p><p>同时，我们可以清楚的看到上述方法已经在服务端应用程序的上下文中执行，因为服务端打印出了 RemotingLibrary.dll 中的详细信息。</p><p><img alt="p4" img-src="0a4457154799c5786ae473721792385282860435.jpg"></p><p>在 Wireshark 中设置过滤器并观察在 8888 端口中传输的数据。</p><p><img alt="p5" img-src="04ce91b103cad0efdbcdbba011945167e3616d21.jpg"></p><p>可以在下面的两个文档了解 .NET Remoting 传输协议的格式结构：</p><ol><li><a href="http://download.microsoft.com/download/9/5/E/95EF66AF-9026-4BB0-A41D-A4F81802D92C/%5BMS-NRTP%5D.pdf">[MS-NRTP].NET Core Protocol - PDF</a></li><li><a href="http://download.microsoft.com/download/9/5/E/95EF66AF-9026-4BB0-A41D-A4F81802D92C/%5BMS-NRBF%5D.pdf">[MS-NRBF] .NET Remoting: Binary Format Data Structure - PDF</a></li></ol><p>在 TCP 握手之后，我们可以看到客户端发送给服务端的第一个数据包。根据 [MS-NRTP] 文档中的 2.2.3.3 小节 （消息帧结构）的描述，每一个消息的起始信息指示为 ProtocolId ，这是一个 4 字节的数据结构，通常为 0x54454E2E 对应的字符为 .NET。</p><p><img alt="p6" img-src="84b712807880a0fdacab7427b36f3a4d2ecf094d.jpg"></p><p>之后的信息取决于 .NET Remoting 的信道并指明了客户端将会使用 rMath 访问服务端所暴露的类。接下来是第一个消息的第二部分。</p><pre><code>#!bash
+00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00  ................
+00 15 12 00 00 00 12 03 41 64 64 12 61 52 65 6d  ........Add.aRem
+6f 74 69 6e 67 53 61 6d 70 6c 65 2e 52 65 6d 6f  otingSample.Remo
+74 65 4d 61 74 68 2c 20 52 65 6d 6f 74 69 6e 67  teMath, Remoting
+4c 69 62 72 61 72 79 2c 20 56 65 72 73 69 6f 6e  Library, Version
+3d 31 2e 30 2e 30 2e 30 2c 20 43 75 6c 74 75 72  =1.0.0.0, Cultur
+65 3d 6e 65 75 74 72 61 6c 2c 20 50 75 62 6c 69  e=neutral, Publi
+63 4b 65 79 54 6f 6b 65 6e 3d 6e 75 6c 6c 02 00  cKeyToken=null..
+00 00 08 01 00 00 00 08 02 00 00 00 0b           .............
+
+Add RemotingSample.RemoteMath, RemotingLibrary, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null
+</code></pre><p>这个是 Add(1, 2) 方法的数据。我们可以在消息中看到如下信息：</p><pre><code>#!bash
+RemotingLibrary: DLL 文件中所暴露的类
+RemotingSample.Remotemath: 暴露的类的名称
+Add: 被调用的方法
+</code></pre><p>可以仔细的观察到 Add 方法的参数在最后一行里面，并且以小字节序的方式存储（32位整数 or 4 字节的数据）。</p><pre><code>#!bash
+01 00 00 00: int a
+02 00 00 00: int b
+</code></pre><p>关于消息的具体结构在此不做过多介绍，只是想通过上述分析确认被调用的方法，参数，类以及DLL文件。</p><p>有关于消息中的所有字段的全面解释可以参考 [MS-NRTP] 文档的 4.1 小节（使用 TCP 二进制进行双向方法调用的方式）。</p><p>和其他的 .NET Remoting 消息一样，TCP 传输的 ACK 响应包同样以 .NET 作为起始标识。根据 [MS-NRTP] 文档的 2.1.1.1.2 小节（接受响应）中所描述的 “如果消息的操作类型(OperationType)为请求（值为 0 ），类的实现方法必须要等待在同一连接中的双向响应消息”。</p><pre><code>#!bash
+2e 4e 45 54 01 00 02 00 00 00 1c 00 00 00 00 00 .NET............
+
+ProtocolId: 0x54454E2E or .NET
+Major version: 0x00
+Minor Version: 0x00
+OperationType: 0x0002 or Response
+</code></pre><p>从服务端发送到客户端的实际结果如下：</p><pre><code>#!bash
+00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00  ................
+00 16 11 08 00 00 08 03 00 00 00 0b              ............
+</code></pre><p>可以看到返回值（依旧是一个32位的整数 or 4 字节的数据）在数据包的结尾处，前缀同样为 0x08 ，同时我们在这里能看到之前所描述的参数，为 03 00 00 00 。</p><p>Sub 方法的消息与上述消息非常相似。在此不做过多分析。</p><h1>0x04 使用 dnSpy 进行调试分析</h1><hr><p>运行 Server.exe 和 dnSpy（x86 平台执行 dnSpy-x86.exe）。把 Client.exe 拖到 dnSpy 中，然后定位到 Main 方法。dnSpy 会自动加载引用的 DLL 文件，包括 RemotingLibrary.dll。dnSpy 的反编译代码与原始代码一样，只是没有了注释。<br>如下图所示：</p><p><img alt="p7" img-src="a36aa280d6127e05c9da7264f0434a65e3066085.jpg"></p><p>现在我们可以在 dnSpy 里面运行客户端。点击 Start 按钮，选择客户端程序。之后可以指定参数和下断点的顺序及断点事件。使用默认的选项运行 Client.exe ，dnSpy 将会在 main 函数下断。</p><p><img alt="p8" img-src="3bb562e6c97f400641f90384342d8952a4f8d98b.jpg"></p><p>现在我们可以使用快捷键进行调试或者点击右侧的 Continue 按钮。<br>可以通过 F2 来设置断点，如下图，是在第 16 行下了一个断点。</p><p><img alt="p9" img-src="9bbc1237daa7c7f831edccc14cb6beee737e4c4d.jpg"></p><h3>找到被调用的函数</h3><p>现在，我们可以清楚的看到客户端在何处调用了 Add 函数。但是，实际情况中，会有很多函数且函数名称不是 Add ，那我们又该如何找到这些函数呢？</p><p>在上述传输的数据里面，我们可以看到函数名为 Add ，它在类 RemotingSample.Remotemath 中，并且被放在 RemotingLibrary.dll 文件中。通过这些条件，我们可以在 dnSpy 中快速找到 Add 函数。</p><p><img alt="p10" img-src="9e7ee15388e8bc726f46ba23697deb9d9a13af89.jpg"></p><p>这种情况下，我们会本能的在 Add 函数处下个断点，并继续运行 Client.exe 。但是，要注意，这个断点永远不会被触发。因为在 .NET Remoting 机制中，调用函数的实例是在客户端创建的，但是是在服务端运行的。</p><h3>继续分析</h3><p>现在我们可以使用 dnSpy 的分析功能继续分析，右击 Add 函数点击 Analyze。此时会出现一个新的面板，有两个重要的功能， Uses 和 Used By。 Uses 功能可以列出 Add 函数所调用的函数。Used By 功能会列出调用 Add 函数的其他函数。</p><p><img alt="p11" img-src="4dd229739011184bba8849998fa052cdcb1b73df.jpg"></p><p>从图中我们可以看到 Main 函数调用了 Add 函数，双击 Main 函数会跳回原始的入口点。</p><h3>.NET Remoting 调试实战</h3><p>接下来可以单步进入（Setp Into）调用 Add 函数的地方，如果你没有改变默认的设置，将会进入 mscorlib.dll 准确的说是 CommonLanguageRuntimeLibrary.System.Runtime.Remoting.Proxies.RealProxy.PrivateInvoke() 函数中。dnSpy 的默认设置会跳过一些其他的代码（如设置/获取属性的 set/get 操作等等）。可以在菜单 View (menu) > Options (menu item) > Debugger (tab) > DebuggerBrowsable 和 Call string-conversion 里面设置。</p><p><img alt="p12" img-src="fae705350181d22b95cd4813c2ff9d2fd1b2441a.jpg"></p><p>可以按下 Alt+4 快捷键打开 Locals 窗口，查看本地变量的值。</p><p><img alt="p13" img-src="b43a63ec9de790c09410c8b647cde087c8e65058.jpg"></p><p>跟踪 .NET Remoting 的调用过程最终都会跳到此处。因为此处刚好是消息被发送的地方，因此我们能看到发送的内容。在 dnSpy 1.3 版本中，在此处下断点是不会被触发的。在第 404 行（RemotingProxy remotingProxy = null;）处下断点，也就是 if (1 == type) 语句之前下断点，之后就可以跟踪调试查看消息内容。</p><p>Type == 1 语句为真，仔细来看看这块的代码：</p><pre><code>#!csharp
+if (1 == type)
+{
+  Message expr_14 = new Message();
+
+  // msgData 是函数的参数，其包含了消息的信息
+  // 我们可以看到它填充了 expr_14 变量，而这个变量是一个临时的 Message 对象
+  expr_14.InitFields(msgData);
+
+  // 将 expr_14 赋值给了 message 变量
+  message = expr_14;            // 在此处下个断点
+
+  num = expr_14.GetCallType();
+}
+</code></pre><p>在第 409 行（<code>num = message = expr_14;</code>）处下个断点，可以单步步过中间的调用过程，直接运行到 410 行，此时就可以看到 message 变量的值了。由于在启动 dnSpy 时没有改变默认的设置，所以在此处下断点是会触发的。 按下 Alt+4 可以查看 message 变量的值。</p><p><img alt="p14" img-src="4974e985ab88fb160a5e86fcedaadc906a7a358d.jpg"></p><p>此时,我们可以看到 message 的很多信息。转到 474 行（ RealProxy.HandleReturnMessage(message, message2);） ，在第 475 行处下个断点，点击 Continue。此时可以看到服务端打印出来函数中的文本信息。在 message2 变量中保存了返回值。</p><p><img alt="p15" img-src="a21e99f3b32ac5a7e80f23743e17fdd75442731c.jpg"></p><p>此时执行 Setp Out ,跳过子函数的执行过程后,返回到了 Main 函数中。可以同样的方法对 Sub 函数进行调试分析。</p><p>现在我们已经找到了 .NET Remoting 传递消息和返回值的地方了，在实际操作中，也可以使用 WireShark 和 .NET Remoting 代理工具进行分析消息的内容。</p><h1>0x05 漏洞重现</h1><hr><p>用于演示的应用程序叫 Remoting Expanded 它有两个组件。服务端是一个开机自启动的 Windows 服务程序，执行权限为系统权限。客户端程序由一个标准的用户执行。客户端使用 .NET Remoting 技术在服务端执行一些函数并执行一些标准用户不可执行的操作。基本上，利用上述调试方法就可以摸清 .NET Remoting 的调用过程。在分析了反编译的代码后，我发现 DLL 文件里面包含了可远程调用的对象和许多暴露出来的函数，但是这些函数客户端是不可以调用的。其中有一个名为 StartProcess 的函数是使用系统权限执行的，用于启动一个进程。</p><p>为了演示漏洞，我们需要修改之前的代码，在 RemotingLibrary DLL 文件里添加一个函数。客户端和服务端程序不需要修改，但是要注意生成新的解决方案后，会在客户端和服务端的文件夹里生成新的 DLL 文件。我创建了一个新的工程，名为：RemotingLibraryExpanded。</p><pre><code>#!csharp    
+namespace RemotingLibraryExpanded
+{
+  public class RemoteMathExpanded : MarshalByRefObject
+  {
+    public int Add(int a, int b)    // 加法
+    {
+      Console.WriteLine("Add({0},{1}) called", a, b);
+      return a + b;
+    }
+
+    public int Sub(int a, int b)    // 减法
+    {
+      Console.WriteLine("Sub({0},{1}) called", a, b);
+      return a - b;
+    }
+
+    // 启动一个进程
+    public void StartProcess(string processPath)
+    {
+      Console.WriteLine("Starting process {0}", processPath);
+      Process.Start(processPath);
+    }
+  }
+}
+</code></pre><p>重新生成解决方案，像之前一样运行客户端和服务端。此时，我们可以利用新增的方法进行权限提升（此处使用系统权限进行演示）。可以通过编写代码或者使用 dnSpy 等工具修改客户端程序。为了方便演示，我直接编写了新的代码。</p><h1>0x06 使用 dnSpy 修改 IL 指令并打补丁</h1><hr><p>修改调用 StartProcess 的代码的方式很简单，可以直接修改为运行一个指定的程序（如：C:\Windows\System32\calc.exe）。在 dnSpy 中打开客户端程序，右击调用 Add 函数的地方。选择 “编辑 IL 指令”。</p><p><img alt="p16" img-src="5e2b6fb09b25337dae2ce3df8575179533c93e97.jpg"></p><p>CIL(通用中间语言)也被称作 IL 和 Java 的字节码类似。修改细节如下：</p><pre><code>#!bash
+// 将 remoteMathObject 从堆中弹出并赋值给本地变量 1
+12  0028    stloc.1
+
+// 将字符串压入堆中
+13  0029    ldstr   "Result of Add(1, 2): {0}"
+
+// 将本地变量 1 压入堆中。此时 remoteMathObject 被压入了堆中
+// 此时执行 remoteMathObject.Add
+14  002E    ldloc.1
+
+// 将 0x1 压入堆中
+// 在IL 中的 ldc.i4.1 到 ldc.i4.8 会对 ldc.i4 &lt;Int32&gt; 进行分割并将一个整数压入堆中
+15  002F    ldc.i4.1
+
+// 将 0x2 压入堆中
+16  0030    ldc.i4.2
+
+// 调用 Add
+17  0031    callvirt    instance int32 [RemotingLibrary]RemotingSample.RemoteMath::Add(int32, int32)
+
+// box 将一个值类型转换为了对象引用类型
+// I assume it means that we are converting the result of add to Int32
+18  0036    box [mscorlib]System.Int32
+
+// 调用 console.writeline (参数是压入堆中格式化的字符串和 Add 的返回值)
+19  003B    call    void [mscorlib]System.Console::WriteLine(string, object)
+</code></pre><p>现在需要把 Add 改为 StartProcess。单击 Add 会出现右键菜单。<br>选择 方法（Method）会弹出一个新的标签页，此时你可以将它修改为任意一个已经加载的程序集里的方法。</p><p><img alt="p17" img-src="8bd5d5a5dac95f8027c6039bc62d1d1c70448352.jpg"></p><p>方法名称已经修改了，但是 Add 方法有两个整数类型的参数，而 StartProcess 方法只有一个字符串类型的参数。如果不做修改， 在“新”方法调用前，Int32 将被压入堆中。此时点击 OK，可以看到下图的糟糕情况：</p><p><img alt="p18" img-src="fa5c7db725205360a6cc931dbee55f20ae24c543.jpg"></p><p>不要紧，我们可以编辑 IL 指令修复它。在了解了 IL 指令后，可以这样修改它，删掉 Console.WriteLine ，因为 StartProcess 没有返回值。</p><p>修改后如下图：</p><pre><code>#!bash
+12  0028    stloc.1
+13  0029    ldloc.1
+14  002A    ldstr   "c:\\windows\\system32\\calc.exe"
+15  002F    callvirt    instance void [RemotingLibraryExpanded]RemotingLibraryExpanded.RemoteMathExpanded::StartProcess(string)
+16  0034    nop
+</code></pre><p><img alt="p19" img-src="27df1cbde4e0be2992b4db118fdc0cdc4ca98686.jpg"></p><p>在这可以用另外一个工具——<a href="https://www.linqpad.net/Download.aspx">LINQPad 5.0</a> 进行修改。只有标准版是免费的，但是也满足需求了。将客户端的代码复制到工具里面，像在 VS 里面一样添加引用并导入命名空间。</p><ol><li>选择语言为 C# 程序</li><li>右击并选择 引用和属性</li><li>在 引用 标签页点击 添加 并搜索 System.Runtime.Remoting.dll</li><li>单击 浏览 选择 RemotingLibraryExpanded.dll</li><li>选择 导入额外的命名空间 标签页</li><li>单击 来自程序集</li><li>选择 RemotingLibraryExpanded.dll 并添加其命名空间</li><li>选择 System.Runtime.Remoting.dll 并添加 System.Runtime.Remoting.Channels 和 System.Runtime.Remoting.Channels.Tcp</li></ol><p><img alt="p20" img-src="a322f7cd30b8ace9b5a6b05fc6eea1681298e0e8.jpg"></p><p><img alt="p21" img-src="4b71977058389e54447f000b35c22402c25cde20.jpg"></p><p>现在就可以在 LINQPad 里面修改代码了，修改 Console.WriteLine 为 StartProcess("c:\windows\system32\calc.exe")，并点击 执行 。如果运行失败，不用管它。点击 IL 按钮，可以在下面看到生成的 IL 代码，和前面在 dnSpy 中编写的一样。</p><p><img alt="p22" img-src="2a379625fee84ec0f5397fb79d08d53a9bc5549b.jpg"></p><p>使用 dnSpy 保存已修改过的模块，使用菜单 File (menu) > Save Module 保存为新的可执行程序 Client1.exe。 运行 Client1.exe。可以看到成功运行了前面指定的程序（calc.exe）。</p><p><img alt="p23" img-src="4f43eca60082ae0441cc9aa3c2e79a58c179a733.jpg"></p><p>此程序现在有两个缺陷：</p><ol><li>提权漏洞——服务端使用系统权限运行</li><li>RCE——服务端监听的地址为 0.0.0.0</li></ol><h1>0x07 缺陷修复</h1><hr><p>在 MSDN 中有针对 .NET Remoting 的漏洞缺陷的安全设置方法 —— <a href="https://msdn.microsoft.com/en-us/library/9hwst9th%28v=vs.85%29.aspx">Security in Remoting</a> 以及 <a href="https://msdn.microsoft.com/en-us/library/ms973907.aspx">.NET Remoting 配置文件的格式说明</a> 。</p><p>在上面的演示场景中，监听的地址需要修改为 localhost 。查看 <a href="https://msdn.microsoft.com/library/bb397830%28v=vs.100%29.aspx">TcpChannel的属性</a> 有一个 bindTo 属性，可以设置绑定的地址。</p><pre><code>#!csharp    
+using System.Collections;
+
+IDictionary tcpChannelProperties = new Hashtable();
+tcpChannelProperties["port"] = 8888;
+tcpChannelProperties["bindTo"] = "127.0.0.1";
+
+TcpChannel remotingChannel = new TcpChannel(tcpChannelProperties, null, null);
+
+
+&lt;channels&gt;
+  &lt;channel ref="tcp" port="8888" bindTo="127.0.0.1" /&gt;
+&lt;/channels&gt;
+</code></pre><p>也可以使用<a href="https://msdn.microsoft.com/en-us/library/bb187429%28v=vs.85%29.aspx">客户端验证</a></p><h3>信道的加密和验证</h3><p>信道有一个 Secure 属性，可以设置为 true 增强安全性，但是客户端和服务端都必须将 tcpChannelProperties 的 secure 设置为 true 才能起到增强作用。</p><pre><code>#!csharp    
+using System.Collections;
+
+IDictionary tcpChannelProperties = new Hashtable();
+properttcpChannelPropertiesies["port"] = 8888;
+tcpChannelProperties["bindTo"] = "127.0.0.1";
+tcpChannelProperties["secure"] = true
+
+TcpChannel remotingChannel = new TcpChannel(tcpChannelProperties, null, null);
+
+
+&lt;channels&gt;
+    &lt;channel ref="tcp" port="8888" bindTo="127.0.0.1" secure="true" /&gt;
+&lt;/channels&gt;
+</code></pre><p>如果只把服务端的 secure 设置为 true ，抓取的数据包如下图所示：</p><p><img alt="p24" img-src="fdd77aba250167719dcfb6efbaaa603cc6dafa2d.jpg"></p><p>客户端建立了 TCP 连接，发送的消息为纯文本，但是服务端未作任何响应。对客户端做如下设置：</p><pre><code>#!csharp
+using System.Collections;
+
+IDictionary tcpChannelProperties = new Hashtable();
+tcpChannelProperties["secure"] = true;
+
+&lt;channels&gt;
+    &lt;channel ref="tcp" secure="true" /&gt;
+&lt;/channels&gt;
+</code></pre><p>此时抓取数据包，信道就被加密了。</p><p><img alt="p25" img-src="5a37ff12dcef995c7d3ccf4eb008ac398842913e.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2016-04-25 08:32:49</span></div><p></p><p>我也是到中间开始慌了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hacker</span> <span class="reply-time">2016-04-24 11:52:08</span></div><p></p><p>中间有点没看懂。。。</p><p></p></div></div></div></div></div></main>

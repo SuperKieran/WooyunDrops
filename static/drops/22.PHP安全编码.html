@@ -1,0 +1,237 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">PHP安全编码</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/06/03 18:56" ui-time="" datetime="2013/06/03 18:56" class="published ng-binding ng-isolate-scope">2013/06/03 18:56</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>译自：《Pro PHP Security》</p><h2>验证过滤用户的输入</h2><hr><p>即使是最普通的字母数字输入也可能是危险的，列举几个容易引起安全问题的字符：</p><pre><code>! $ ^ &amp; * ( ) ~ [ ] \ | { } ' " ; &lt; &gt; ? - `
+</code></pre><p>在数据库中可能有特殊意义的字符：</p><pre><code>' " ; \
+</code></pre><p>还有一些非打印字符：</p><p>字符\x00或者说ASCII 0，NULL或FALSE</p><p>字符\x10和\x13，或者说ASCII 10和13，\n \r</p><p>字符\x1a或者说ASCII 26，表示文件的结束</p><p>输入错误的参数类型，也可能导致程序出现意想不到的错误。</p><p>输入过多的参数值，可能导致溢出等错误。</p><h3>PHP中验证用户的输入</h3><p>这里特别要注意php.ini中的register_globals的设定，在早期的php版本中是默认开启的，这会导致很严重的安全问题：</p><pre><code>#!php
+&lt;?php
+// set admin flag
+if ($auth-&gt;isAdmin()) {
+$admin = TRUE;
+}
+// ...
+if ($admin) {
+// do administrative tasks
+}
+?&gt;
+</code></pre><p>上面这段代码看起来是安全的，但是如果register_globals开启了的话，在访问的url中加入?admin=1即可绕过前半部分的逻辑判断。</p><p>更安全的代码应该给$admin赋默认FALSE值：</p><pre><code>#!php
+&lt;?php
+// create then set admin flag
+$admin = FALSE;
+if ($auth-&gt;isAdmin()) {
+    $admin = TRUE;
+}
+// ...
+if ($admin) {
+    // do administrative tasks
+}
+?&gt;
+</code></pre><p>早期人们开发调试的时候发现使用register_globals有极大的便利，所以早期的php版本中默认开启。</p><p>但是随着越来越多的安全问题，从php 4.2.0开始，register_globals变为了默认关闭。</p><p>当你发现register_globals是on的时候，你可能会在脚本当中加入如下代码使其关闭：</p><pre><code>#!php
+ini_set('register_globals', 0);
+</code></pre><p>但实际上，当所有的全局变量已经创建了之后，以上代码并不会起到作用。</p><p>但是你可以在文档的根目录下的.htaccess的文件中加上下面这一行：</p><pre><code>php_flag register_globals 0
+</code></pre><p>变量声明：强烈建议总是事先声明变量。</p><p>检查输入的类型，长度和格式：</p><p>字符串检查：在PHP中，字符串几乎可以是任何事情，但有些值并不是严格的字符串类型，可以用is_string()函数来确定。</p><p>有些时候你不介意数字作为字符串，可以用empty()函数。</p><p>数字类型检查：使用is&#95;int()函数或者is&#95;integer()或is_long()，例如：</p><pre><code>#!php
+$year = $_POST['year'];
+if (!is_int($year))
+exit("$year is an invalid value for year!");
+</code></pre><p>也可以使用gettype()函数判断类型后做处理：</p><pre><code>#!php
+if (gettype($year) != 'integer') {
+exit("$year is an invalid value for year!");
+}
+</code></pre><p>至少还有三种方式可以吧$year变量转变为整数：</p><pre><code>#!php
+$year = intval($_POST['year']);
+$year = ( int ) $_POST['year'];
+if (!settype($year, 'integer')) {exit("$year is an invalid value for year!");}
+</code></pre><p>如果允许浮点型与零的值，可以使用is&#95;numeric()函数来做判断。 判断一个值是否为布尔型的时候使用is&#95;bool()函数。</p><p>下表是对各种类型变量使用各函数判断的结果：</p><p><img alt="http://static.wooyun.org/20141017/2014101711111019667.jpg" img-src="6ede5c3d4b22223bc16f9ff70bb8ab1a7e3b4f3e.jpg"></p><p>检查字符串的长度使用strlen()变量：</p><pre><code>#!php
+if (strlen($year) != 4)
+    exit("$year is an invalid value for year!");
+</code></pre><p>概括总结一下PHP中类型，长度，格式等验证：</p><pre><code>#!php
+&lt;?php
+// set up array of expected values and types
+$expected = array(
+    'carModel' =&gt; 'string',
+    'year' =&gt; 'int',
+    'imageLocation' =&gt; 'filename'
+);
+// check each input value for type and length
+foreach ($expected AS $key =&gt; $type) {
+    if (empty($_GET[$key])) {
+        ${$key} = NULL;
+        continue;
+    }
+    switch ($type) {
+        case 'string':
+            if (is_string($_GET[$key]) &amp;&amp; strlen($_GET[$key]) &lt; 256) {
+                ${$key} = $_GET[$key];
+            }
+            break;
+        case 'int':
+            if (is_int($_GET[$key])) {
+                ${$key} = $_GET[$key];
+            }
+            break;
+        case 'filename':
+            // limit filenames to 64 characters
+            if (is_string($_GET[$key]) &amp;&amp; strlen($_GET[$key]) &lt; 64) {
+                // escape any non-ASCII
+                ${$key} = str_replace('%', '_', rawurlencode($_GET[$key]));
+                // disallow double dots
+                if (strpos(${$key}, '..') === TRUE) {
+                    ${$key} = NULL;
+                }
+            }
+            break;
+    }
+    if (!isset(${$key})) {
+        ${$key} = NULL;
+    }
+}
+// use the now-validated input in your application
+</code></pre><p>对于一些可能有害的字符，可以用如下的几种方式进行保护：</p><ul><li><p>使用 \ 对其进行转义。</p></li><li><p>使用引号把他引起来。</p></li><li><p>使用%nn的方式编码，如urlencode()函数。</p></li></ul><p>可以尝试在php.ini中开启magic&#95;quotes&#95;gpc，这样对于所有由用户GET、POST、COOKIE中传入的特殊字符都会转义。</p><p>也可是使用addslashes()函数，但是开启magic&#95;quotes&#95;gpc所造成的影响可能远超过益处。</p><p>addslashes()也只对最常见的四个字符做了转义：单引号、双引号、反斜线、空字符。</p><p>同时为了使数据还原，需要使用stripslashes()函数，也可能破坏一些多字节的转义。</p><p>推荐使用mysql&#95;real&#95;escape_string()函数，虽然只是用来设计转义插入数据库的数据，但是他能转义更多的字符。</p><p>如：NULL、\x00、\n、\r、\、'、"和\x1a。使用用例：</p><pre><code>#!php
+&lt;?php
+$expected = array(
+    'carModel',
+    'year',
+    'bodyStyle'
+);
+foreach ($expected AS $key) {
+    if (!empty($_GET[$key])) {
+        ${$key} = mysql_real_escape_string($_GET[$key]);
+    }
+}
+?&gt;
+</code></pre><p>使用mysql&#95;real&#95;escape_string()函数也不是万能的，转义一些并非是要写入mysql的数据库的数据可能不会产生作用或者出现错误。</p><p>可以根据自己的实际需要，自己使用str_replace()函数写一个针对特殊字符的转义。</p><h3>对于文件的路径与名称的过滤</h3><p>文件名中不能包含二进制数据，否则可能引起问题。</p><p>一些系统允许Unicode多字节编码的文件名，但是尽量避免，应当使用ASCII的字符。</p><p>虽然Unix系统几乎可以在文件名设定中使用任何符号，但是应当尽量使用 - 和 _ 避免使用其他字符。</p><p>同时需要限定文件名的长度。</p><p>php中的文件操作通常使用fopen()函数与file&#95;get&#95;contents()函数。</p><pre><code>#!php
+&lt;?php
+$applicationPath = '/home/www/myphp/code/';
+$scriptname      = $_POST['scriptname'];
+highlight_file($applicationPath . $scriptname);
+?&gt;
+</code></pre><p>上面代码的问题在于用户POST输入的scriptname没有做任何过滤，如果用户输入../../../../etc/passwd，则有可能读取到系统的passwd文件。</p><pre><code>#!php
+&lt;?php
+$uri = $_POST['uri'];
+if (strpos($uri, '..'))
+    exit('That is not a valid URI.');
+$importedData = file_get_contents($uri);
+</code></pre><p>如果发现 .. 字符串就不执行会不会出现问题呢？如果前面并没有路径限制的话，仍然会出现问题：</p><p>使用file协议，当用户输入file:///etc/passwd的时候，会把passwd的内容带入$importedData变量中。</p><h2>防止SQL注入</h2><hr><h3>SQL注入是如何产生的：</h3><p>1、接收一个由用户提交的变量，假设变量为$variety：</p><pre><code>#!php
+$variety = $_POST['variety'];
+</code></pre><p>2、接收的变量带入构造一个数据库查询语句：</p><pre><code>#!php
+$query = "SELECT * FROM wines WHERE variety='$variety'";
+</code></pre><p>3、把构造好的语句提交给MySQL服务器查询，MySQL返回查询结果。</p><p>当由用户输入lagrein' or 1=1#时，产生的结果将会完全不同。</p><h3>防止SQL注入的几种方式：</h3><p>检查用户输入的类型，当用户输入的为数字时可以使用如下方式：</p><p>使用is&#95;int()函数（或is&#95;integer()或is_long()函数）</p><p>使用gettype()函数</p><p>使用intval()函数</p><p>使用settype()函数</p><p>检查用户输入字符串的长度使用strlen()函数。</p><p>检查日期或时间是否是有效的，可以使用strtotime()函数</p><p>对于一个已经存在的程序来说，可以写一个通用函数来过滤：</p><pre><code>#!php
+function safe($string)
+{
+    return "'" . mysql_real_escape_string($string) . "'";
+}
+</code></pre><p>调用方式：</p><pre><code>#!php
+$variety = safe($_POST['variety']);
+$query   = "SELECT * FROM wines WHERE variety=" . $variety;
+</code></pre><p>对于一个刚开始写的程序，应当设计的更安全一些，PHP5中，增加了MySQL支持，提供了mysqli扩展：</p><p>PHP手册地址：<a href="http://php.net/mysqli">http://php.net/mysqli</a></p><pre><code>#!php
+&lt;?php
+// retrieve the user's input
+$animalName = $_POST['animalName'];
+// connect to the database
+$connect    = mysqli_connect('localhost', 'username', 'password', 'database');
+if (!$connect)
+    exit('connection failed:  ' . mysqli_connect_error());
+// create a query statement resource
+$stmt = mysqli_prepare($connect, "SELECT intelligence FROM animals WHERE name = ?");
+if ($stmt) {
+    // bind the substitution to the statement
+    mysqli_stmt_bind_param($stmt, "s", $animalName);
+    // execute the statement
+    mysqli_stmt_execute($stmt);
+    // retrieve the result...
+    mysqli_stmt_bind_result($stmt, $intelligence);
+    // ...and display it
+    if (mysqli_stmt_fetch($stmt)) {
+        print "A $animalName has $intelligence intelligence.\n";
+    } else {
+        print 'Sorry, no records found.';
+    }
+    // clean up statement resource
+    mysqli_stmt_close($stmt);
+}
+mysqli_close($connect);
+?&gt;
+</code></pre><p>mysqli扩展提供了所有的查询功能。</p><p>mysqli扩展也提供了面向对象的版本：</p><pre><code>#!php
+&lt;?php
+$animalName = $_POST['animalName'];
+$mysqli     = new mysqli('localhost', 'username', 'password', 'database');
+if (!$mysqli)
+    exit('connection failed:  ' . mysqli_connect_error());
+$stmt = $mysqli-&gt;prepare("SELECT intelligence FROM animals WHERE name = ?");
+if ($stmt) {
+    $stmt-&gt;bind_param("s", $animalName);
+    $stmt-&gt;execute();
+    $stmt-&gt;bind_result($intelligence);
+    if ($stmt-&gt;fetch()) {
+        print "A $animalName has $intelligence intelligence.\n";
+    } else {
+        print 'Sorry, no records found.';
+    }
+    $stmt-&gt;close();
+}
+$mysqli-&gt;close();
+?&gt;
+</code></pre><h2>防止XSS攻击</h2><hr><p>xss攻击一个常用的方法就是注入HTML元素执行js脚本，php中已经内置了一些防御的函数（如htmlentities或者htmlspecialchars）：</p><pre><code>#!php
+&lt;?php
+function safe($value)
+{
+    htmlentities($value, ENT_QUOTES, 'utf-8');
+    // other processing
+    return $value;
+}
+// retrieve $title and $message from user input
+$title   = $_POST['title'];
+$message = $_POST['message'];
+// and display them safely
+print '&lt;h1&gt;' . safe($title) . '&lt;/h1&gt;
+       &lt;p&gt;' . safe($message) . '&lt;/p&gt;';
+?&gt;
+</code></pre><h3>过滤用户提交的URL</h3><p>如果允许用户输入一个URL用来调用一个图片或者链接，你需要保证他不传入javascript:或者vbscript:或data:等非http协议。</p><p>可以使用php的内置函数parse_url()函数来分割URL，然后做判断。</p><p>设置允许信任的域：</p><pre><code>#!php
+&lt;?php
+$trustedHosts      = array(
+    'example.com',
+    'another.example.com'
+);
+$trustedHostsCount = count($trustedHosts);
+function safeURI($value)
+{
+    $uriParts = parse_url($value);
+    for ($i = 0; $i &lt; $trustedHostsCount; $i++) {
+        if ($uriParts['host'] === $trustedHosts[$i]) {
+            return $value;
+        }
+    }
+    $value .= ' [' . $uriParts['host'] . ']';
+    return $value;
+}
+// retrieve $uri from user input
+$uri = $_POST['uri'];
+// and display it safely
+echo safeURI($uri);
+?&gt;
+</code></pre><h2>防止远程执行</h2><hr><p>远程执行通常是使用了php代码执行如eval()函数，或者是调用了命令执行如exec()，passthru()，proc&#95;open()，shell&#95;exec()，system()或popen()。</p><p>注入php代码：</p><p>php为开发者提供了非常多的方法可以来调用允许php脚本，我们就需要注意对用户可控的数据进行过滤。</p><h3>调用的几种方式：</h3><p>include()和require()函数，eval()函数，preg_replace()采用e模式调用，编写脚本模板。</p><pre><code>#!php
+&lt;?php
+print Hello . world;
+?&gt;
+</code></pre><p>上面代码将会输出Helloworld，php在解析的时候会检查是否存在一个名为Hello的函数。</p><p>如果没有找到的话，他会自己创建一个并把它的名字作为它的值，world也是一样。</p><p>上传文件中嵌入php代码：</p><p>攻击者可以上传一个看似很普通的图片，PDF等，但是实际上呢？</p><p>linux下可以使用如下命令插入php代码进入图片中：</p><pre><code>$ echo '&lt;?php phpinfo();?&gt;' &gt;&gt; locked.gif
+</code></pre><p>把<?php phpinfo();?>代码插入到了locked.gif图片中。</p><p>并且此时用file命令查看文件格式仍为图片：</p><pre><code>$ file -i locked.giflocked.gif: image/gif
+</code></pre><p>任何的图像编辑或图像处理的程序包括PHP的getimagesize()函数，都会认为它是一个GIF图像。</p><p>但是当你使用cat命令查看图片时，可以看到图片末尾的<?php phpinfo();?></p><p>当把图片的后缀改为php或者已php的方式解析时，插入的phpinfo()函数便会执行。</p><h3>Shell命令执行</h3><p>PHP提供了一些可以直接执行系统命令的函数，如exec()函数或者 `（反引号）。</p><p>PHP的安全模式会提供一些保护，但是也有一些方式可以绕过安全模式：</p><p>1、上传一个Perl脚本，或者Python或Ruby等，服务器支持的环境，来执行其他语言的脚本可绕过PHP的安全模式。</p><p>2、利用系统的缓冲溢出漏洞，绕过安全模式。</p><p>下表列出了跟Shell相关的一些字符：</p><table><thead><tr><th>名称</th><th>字符</th><th>ASCII</th><th>16进制</th><th>URL编码</th><th>HTML编码</th></tr></thead><tbody><tr><td>换行</td><td></td><td>10</td><td>\x0a</td><td>%0a</td><td>&amp;#10</td></tr><tr><td>感叹号</td><td>!</td><td>33</td><td>\x21</td><td>%21</td><td>&amp;#33</td></tr><tr><td>双引号</td><td>"</td><td>34</td><td>\x22</td><td>%22</td><td>&amp;#34或&amp;quot</td></tr><tr><td>美元符号</td><td>$</td><td>36</td><td>\x24</td><td>%24</td><td>&amp;#36</td></tr><tr><td>连接符</td><td>&amp;</td><td>38</td><td>\x26</td><td>%26</td><td>&amp;#38或&amp;#amp</td></tr><tr><td>单引号</td><td>'</td><td>39</td><td>\x27</td><td>%27</td><td>&amp;#39</td></tr><tr><td>左括号</td><td>(</td><td>40</td><td>\x28</td><td>%28</td><td>&amp;#40</td></tr><tr><td>右括号</td><td>)</td><td>41</td><td>\x29</td><td>%29</td><td>&amp;#41</td></tr><tr><td>星号</td><td>*</td><td>42</td><td>\x2a</td><td>%2a</td><td>&amp;#42</td></tr><tr><td>连字符号</td><td>-</td><td>45</td><td>\x2d</td><td>%2d</td><td>&amp;#45</td></tr><tr><td>分号</td><td>;</td><td>59</td><td>\x3b</td><td>%3b</td><td>&amp;#59</td></tr><tr><td>左尖括号</td><td>&lt;</td><td>60</td><td>\x3c</td><td>%3c</td><td>&amp;#60</td></tr><tr><td>右尖括号</td><td>></td><td>62</td><td>\x3e</td><td>%3e</td><td>&amp;#62</td></tr><tr><td>问号</td><td>?</td><td>63</td><td>\x3f</td><td>%3f</td><td>&amp;#63</td></tr><tr><td>左方括号</td><td>[</td><td>91</td><td>\x5b</td><td>%5b</td><td>&amp;#91</td></tr><tr><td>反斜线</td><td>\</td><td>92</td><td>\x5c</td><td>%5c</td><td>&amp;#92</td></tr><tr><td>右方括号</td><td>]</td><td>93</td><td>\x5d</td><td>%5d</td><td>&amp;#93</td></tr><tr><td>插入符</td><td>^</td><td>94</td><td>\x5e</td><td>%5e</td><td>&amp;#94</td></tr><tr><td>反引号</td><td>`</td><td>96</td><td>\x60</td><td>%60</td><td>&amp;#96</td></tr><tr><td>左花括号</td><td>{</td><td>123</td><td>\x7b</td><td>%7b</td><td>&amp;#123</td></tr><tr><td>管道符</td><td>&#124;</td><td>124</td><td>\x7c</td><td>%7c</td><td>&amp;#124</td></tr><tr><td>右花括号</td><td>}</td><td>125</td><td>\x7d</td><td>%7d</td><td>&amp;#125</td></tr><tr><td>波浪号</td><td>~</td><td>126</td><td>\x7e</td><td>%7e</td><td>&amp;#126</td></tr></tbody></table><p>如下PHP脚本：</p><pre><code>#!php
+&lt;?php
+// get the word count of the requested file
+$filename = $_GET['filename'];
+$command  = "/usr/bin/wc $filename";
+$words    = shell_exec($command);
+print "$filename contains $words words.";
+?&gt;
+</code></pre><p>用户可以输入如下的URL来攻击读取passwd文件：</p><pre><code>wordcount.php?filename=%2Fdev%2Fnull%20%7C%20cat%20-%20%2Fetc%2Fpasswd
+</code></pre><p>字符串拼接之后，将会执行 <code>/usr/bin/wc /dev/null | cat - /etc/passwd</code>这条命令</p><p>如果能够不适用命令执行函数与eval()函数，可以在php.ini中禁止：disable_functions = "eval,phpinfo"</p><p>PHP中还有一个preg_replace()函数，可能引起代码执行漏洞。</p><pre><code>mixed preg_replace ( mixed $pattern , mixed $replacement , mixed $subject [, int $limit ] )
+</code></pre><p>在 subject 中搜索 pattern 模式的匹配项并替换为 replacement 。如果指定了 limit ，则仅替换 limit 个匹配。</p><p>如果省略 limit 或者其值为 -1，则所有的匹配项都会被替换。</p><p>特别注意：</p><p>/e 修正符使 preg_replace() 将 replacement 参数当作 PHP 代码（在适当的逆向引用替换完之后）。</p><p>提示：要确保 replacement 构成一个合法的 PHP 代码字符串，否则 PHP 会在报告在包含 preg_replace() 的行中出现语法解析错误。</p><pre><code>#!php
+&lt;?php
+function test($str)
+{
+    //......
+    //......
+    return $str;
+}
+echo preg_replace("/\s*\[p hp language=""](.+?)\[\/php\]\s*/ies", 'test("\1")', $_GET["h"]);
+?&gt;
+</code></pre><p>当用户输入</p><pre><code>?h=[p hp]phpinfo()[/php]
+</code></pre><p>经过正则匹配后， replacement 参数变为'test("phpinfo()")'，</p><p>此时phpinfo仅是被当做一个字符串参数了。</p><p>但是当我们提交</p><pre><code>?h=[p hp]{${phpinfo()}}[/php]
+</code></pre><p>时，phpinfo()就会被执行。</p><p>在php中，双引号里面如果包含有变量，php解释器会将其替换为变量解释后的结果；单引号中的变量不会被处理。</p><p>注意：双引号中的函数不会被执行和替换。</p><p>在这里我们需要通过{${}}构造出了一个特殊的变量，'test("{${phpinfo()}}")'，达到让函数被执行的效果 ${phpinfo()} 会被解释执行。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7679" rel="bookmark" id="re1">php比较操作符的安全问题</a></li><li><a href="http://drops.wooyun.org/tips/12751" rel="bookmark" id="re2">代码审计入门总结</a></li><li><a href="http://drops.wooyun.org/tips/10564" rel="bookmark" id="re3">几期『三个白帽』小竞赛的writeup</a></li><li><a href="http://drops.wooyun.org/web/13249" rel="bookmark" id="re4">PHP本地文件包含漏洞环境搭建与利用</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wusuowei</span> <span class="reply-time">2016-04-26 15:22:49</span></div><p></p><p>2、利用系统的缓冲溢出漏洞，绕过安全模式。其他的基本程序员都知道，这个怎么溢出 ？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">张的高</span> <span class="reply-time">2016-02-28 09:23:58</span></div><p></p><p>比较全面，嘿嘿嘿</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">打酱油的小时工</span> <span class="reply-time">2016-02-25 16:37:51</span></div><p></p><p>挺全的，赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hh2014</span> <span class="reply-time">2015-05-12 13:34:56</span></div><p></p><p>总结的很详细啊，赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">an0nym0u5</span> <span class="reply-time">2015-04-26 13:28:37</span></div><p></p><p>“推荐使用mysql_real_escape_string()函数，虽然只是用来设计转义插入数据库的数据，但是他能转义更多的字符。如：NULL、\x00、\n、\r、\、&#039;、&quot;和\x1a。”<br>NULL和\x00有啥区别呀？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaoL</span> <span class="reply-time">2014-07-24 17:42:59</span></div><p></p><p>disable_functions是禁不了eval的<br>这个要改下吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wolvez</span> <span class="reply-time">2013-06-10 11:28:27</span></div><p></p><p>翻译的不错，看好楼主做专业翻译，造福大家。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">se55i0n</span> <span class="reply-time">2013-06-08 11:02:13</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">肉肉</span> <span class="reply-time">2013-06-06 16:45:26</span></div><p></p><p>写得好全呀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">leehenwu</span> <span class="reply-time">2013-06-04 14:16:31</span></div><p></p><p>如果能够不适用命令执行函数与eval()函数，可以在php.ini中禁止：disable_functions = "eval,phpinfo"<br>eval?!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2013-06-04 11:45:09</span></div><p></p><p>学习啦。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">happytree</span> <span class="reply-time">2013-06-04 10:47:27</span></div><p></p><p>不错，一直都有关注wooyun知识库</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2013-06-04 09:27:42</span></div><p></p><p>不是，这个是团队账号</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖胖要减肥</span> <span class="reply-time">2013-06-04 00:34:33</span></div><p></p><p>不是金龙哥自己发的？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2013-06-03 22:20:25</span></div><p></p><p>真nb啊<br>基本都说的差不多了，沙发个</p><p></p></div></div></div></div></div></main>

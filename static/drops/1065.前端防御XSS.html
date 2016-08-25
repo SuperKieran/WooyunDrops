@@ -1,0 +1,148 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">前端防御XSS</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Black_Hole</a> <span class="bull">·</span> <time title="2016/03/02 16:37" ui-time="" datetime="2016/03/02 16:37" class="published ng-binding ng-isolate-scope">2016/03/02 16:37</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>我不否认前端在处理XSS的时候没有后端那样方便快捷，但是很多人都在说过滤XSS的事就交给后端来做吧。前端做没什么用。我个人是非常反感这句话的。虽然说前端防御XSS比较麻烦，但是，不是一定不行。他只是写的代码比后端多了而已。而且前端防御XSS比后端防御XSS功能多，虽说后端也可以完成这些功能，但是代码量会比前端代码多很多很多。其实说了那么多，交给nginx||apache||nodeJs||Python会更好处理。但是我不会C，也就没办法写nginx模块了。而且也不在本文章的范围内，等我什么时候学会C再说把。</p><h1>0x01 后端数据反馈过滤</h1><hr><p>现在大部分的网站都是在后端过滤一下后，就交给数据库，然后前端输出，整个流程只有后端做了防护，一般这个防护被绕过或者某个参数的防护没有做，那么网站就会被沦陷了（请别以为XSS只能获取cookie，熟练的程度取决于你的思想和编程） 现在我们来假设一下网站的一个URL参数没有做好过滤，直接导入数据库了，然后在前端反馈结果。代码如下：</p><p>把用户输入的内容导入到数据库里defenderXssTest_GetData.php：</p><pre><code>#!php
+&lt;?php
+if(empty($_GET['xss'])){        //判断当前URL是否存在XSS参数
+    exit(); 
+}
+$xssString = $_GET['xss'];
+/*数据库基础配置*/
+$mysql_name ='localhost';
+$mysql_username ='root';
+$mysql_password ='123456';
+$mysql_database ='xsstest'; 
+$conn = mysql_connect($mysql_name,$mysql_username,$mysql_password);
+mysql_query("set names 'utf8'");
+mysql_select_db($mysql_database);
+
+$sql = "insert into XSSTest (xss) values ('$xssString')";
+mysql_query($sql);
+mysql_close();
+</code></pre><p>返回数据库中最后一条数据内容（即最新的内容）defenderXssTest_QueryData.php：</p><pre><code>#!php
+&lt;?php
+/*数据库基础配置*/
+$mysql_name ='localhost';
+$mysql_username ='root';
+$mysql_password ='123456';
+$mysql_database ='xsstest'; 
+$conn = mysql_connect($mysql_name,$mysql_username,$mysql_password);
+mysql_query("set names 'utf8'");
+mysql_select_db($mysql_database);
+
+$sql ="select * from XSSTest where id = (select max(id) from XSSTest)"; //返回数据库中最后一条数据
+$xssText = mysql_query($sql);
+while($row = mysql_fetch_array($xssText)){  //显示从数据库中返回的数据
+    echo $row['xss'];
+}
+mysql_close();
+</code></pre><p>前端输入及反馈defenderXssTest.html：</p><pre><code>#!xml
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="utf-8"&gt;
+    &lt;title&gt;前端防御XSS#Demo1&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;input type="text" name="xss"&gt;
+    &lt;input type="submit" value="提交" id="xssGet"&gt;
+&lt;/body&gt;
+&lt;!--测试请记得更换jQuery路径！--&gt;
+&lt;script type="text/javascript" src="/Public/js/library/jquery.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+    $("#xssGet").click(function(){
+        $.ajax({
+            url: '/defenderXssTest_GetData.php',
+            type: 'get',
+            dataType: 'text',
+            data: "xss="+$('input:first').val(),
+            cache:false, 
+            async:false,
+        })
+        .done(function() {
+            $.ajax({
+                url: '/defenderXssTest_QueryData.php',
+                type: 'post',
+                dataType: 'text',
+                cache:false, 
+                async:false,
+            })
+            .done(function(data) {
+                $("body").append(data);
+            })
+        })
+    });
+&lt;/script&gt;
+&lt;/html&gt;
+</code></pre><p>一共三个文件，因为测试用，我就没把数据库基础配置分离出来放在其他文件里了。</p><p>现在我们在浏览器里打开defenderXssTest.html文件:</p><p><img alt="p1" img-src="0ae4473f8c4b72136f200ef876d6942b162646f3.jpg"></p><p><img alt="p2" img-src="c622cb5816924adbbf1f82874fabc8edf4da286a.jpg"></p><p>现在我们再看下数据库：</p><p><img alt="p3" img-src="46b3d10deb79d33af2c8230ed2c00185d7f4549b.jpg"></p><p>已经导入到数据库里了。</p><p>OK，以上就是最普通的储蓄型XSS案例。为什么会出现这个问题呢，是因为PHP没有做好过滤。同时前端也没有做好过滤，这里会有人说前端做没用的，攻击者可以使用burp抓到此数据包，然后改包就可以绕过了。对，确实是这样。但是大伙从一开始就已经被误导了。想知道哪里被误导么，往下看。</p><p>这里我画个前端、Nginx、后端都做了过滤的图：</p><p><img alt="p4" img-src="afd469a238c980da1635d133f584bb6f6cca39d7.jpg"></p><p>思维导图URL：<a href="https://www.processon.com/view/link/56c486cde4b0e2317a8b6681">https://www.processon.com/view/link/56c486cde4b0e2317a8b6681</a></p><p>这里我们可以看到防火墙的第一道门是前端过滤XSS机制。也是目前被大家所熟知的过滤结构。而本章要说的是：为什么不把前端过滤copy或者move到后端过滤机制下呢？</p><p>这里是新型的过滤机制的图：</p><p><img alt="p5" img-src="09b7bc4edc27daec88d9d1e87795d2d86ed4fab1.jpg"></p><p>思维导图URL：<a href="https://www.processon.com/view/link/56c4882ce4b0e5041c35ab53">https://www.processon.com/view/link/56c4882ce4b0e5041c35ab53</a></p><p>这里我们在后端过滤机制的后面加上了前端过滤。为什么要这样做呢？</p><p>大家都知道前端过滤XSS是可以被抓包软件给修改的，所以是可以绕过，没有什么用。而Nginx过滤我相信大家都知道，很少有人愿意去用它，因为如果是做安全文章一类的话，是会被Nginx给抛弃当前的数据包的，也就是你发布的文章不会被存到数据库里，而且Nginx防御XSS模块并没有前端、后端那样简单方便，需要配置的东西很多。也导致了很多管理员不在Nginx安全上下功夫，即使管理员配置了Nginx过滤XSS模块，也可以绕过。</p><p>利用Nginx的一处逻辑缺陷（详情请移步到：<a href="http://www.freebuf.com/articles/web/61268.html">http://www.freebuf.com/articles/web/61268.html</a> 文章里的0x03小节：利用Nginx&amp;Apache环境bug来实现攻击）,至于后端过滤机制肯定会有不严谨的时候，不然也而不会导致那么多XSS漏洞了。所以当攻击者输入的XSS字符串绕过了前端、Nginx、后端的话，那么就会直接导入到数据库中。那么这个时候后端传来的数据就不可信了。而如果我们在前端显示后端传来的数据时加了过滤会怎么样呢，答案是very good。当然了，这里有个前提，是前端显示后端传来数据的时候使用的是AJAX方法，而不是类似ThinkPHP这样在模板里调用。确切的说：此方法只针对于API接口</p><p>现在我们来做一个测试，之前的代码就是使用了AJAX方法，而</p><p>defenderXssTest&#95;GetData.php和defenderXssTest&#95;QueryData.php就类似于后端的API接口。我们现在在原有的基础上添加一些代码：</p><p>下面是前端过滤XSS的代码，取自于百度FEX前端团队的Ueditor在线编辑器：</p><pre><code>#!php
+function xssCheck(str,reg){
+    return str ? str.replace(reg || /[&amp;&lt;"&gt;'](?:(amp|lt|quot|gt|#39|nbsp|#\d+);)?/g, function (a, b) {
+        if(b){
+            return a;
+        }else{
+            return {
+                '&lt;':'&amp;lt;',
+                '&amp;':'&amp;amp;',
+                '"':'&amp;quot;',
+                '&gt;':'&amp;gt;',
+                "'":'&amp;#39;',
+            }[a]
+        }
+    }) : '';
+}
+</code></pre><p>然后我们在原有代码的基础上添加xssCheck()函数就行了。如下：</p><pre><code>#!xml
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+    &lt;meta charset="utf-8"&gt;
+    &lt;title&gt;前端防御XSS#Demo1&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;input type="text" name="xss"&gt;
+    &lt;input type="submit" value="提交" id="xssGet"&gt;
+&lt;/body&gt;
+&lt;script type="text/javascript" src="/Public/js/library/jquery.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+    $("#xssGet").click(function(){
+        $.ajax({
+            url: '/defenderXssTest_GetData.php',
+            type: 'get',
+            dataType: 'text',
+            data: "xss="+$('input:first').val(),
+            cache:false, 
+            async:false,
+        })
+        .done(function() {
+            $.ajax({
+                url: '/defenderXssTest_QueryData.php',
+                type: 'post',
+                dataType: 'text',
+                cache:false, 
+                async:false,
+            })
+            .done(function(data) {
+                $("body").append(xssCheck(data));
+            })
+        })
+    });
+    function xssCheck(str,reg){
+        return str ? str.replace(reg || /[&amp;&lt;"&gt;'](?:(amp|lt|quot|gt|#39|nbsp|#\d+);)?/g, function (a, b) {
+            if(b){
+                return a;
+            }else{
+                return {
+                    '&lt;':'&amp;lt;',
+                    '&amp;':'&amp;amp;',
+                    '"':'&amp;quot;',
+                    '&gt;':'&amp;gt;',
+                    "'":'&amp;#39;',
+                }[a]
+            }
+        }) : '';
+    }
+&lt;/script&gt;
+&lt;/html&gt;
+</code></pre><p>现在我们来输入XSS字符串看看：</p><p><img alt="p6" img-src="99644f6e8897279275245a4fbc032f0be6c1f2ec.jpg"></p><p>变成了这个样子。我们再去数据库里看下：</p><p><img alt="p7" img-src="960ada7972faa286732dca31d03f8f0331856f5f.jpg"></p><p>的确是完整的XSS字符串，但是前端过滤了，导致此XSS没有用武之地。</p><p>所以前端开发人员只需要在网站的base.js代码里把过滤XSS的函数写进去，再把每一个ajax传过来的数据加上函数就可以了。</p><h1>0x02 前端报警机制</h1><hr><p>这里的报警机制不能说特别的完整，是可以绕过的。那这个报警机制到底有何用处呢？就是在攻击者测试的时候发现及报警。</p><p>我们都知道测试XSS的时候和装逼的时候，攻击者会输入<code>alert()</code>函数，而之前的过滤方式，都是使用正则匹配，从而导致正则过长，匹配不易，运行过慢等问题。而现在我们完全可以重写alert函数来让攻击者在测试的时候，使用的是我们已经重写后的函数，这样做的好处是：当当前的参数不存在XSS的时候，这些函数是不会被触发的。而当当前参数存在XSS的时候，攻击者会依次输入：<code>woaini</code>->查看是否在源码里输出-><code>woaini&lt;&gt;</code>->查看<code>&lt;&gt;</code>有没有被过滤->输入<code>&lt;script&gt;alret(1)&lt;/script&gt;</code>或者<code>&lt;img src="test" onerror="alert(1)" /&gt;</code>->使用了我们重写的函数->触发报警机制。这样说可能有些人看不懂，下面是我画的图：</p><p><img alt="p8" img-src="00e84a130307d55788099b6a1bbea8eb15b8c781.jpg"></p><p>思维导图：<a href="https://www.processon.com/view/link/56c55805e4b0e5041c39261f">https://www.processon.com/view/link/56c55805e4b0e5041c39261f</a></p><p>让我们来看下具体的代码吧：</p><pre><code>#!php
+var backAlert = alert;  //把alert赋值给backAlert ，当后面重写alert时，避免照成死循环，照成溢出错误。
+window.alert = function(str){       //重写alert函数
+    backAlert(str);
+    console.log("已触发报警,将数据发送到后台");
+}
+</code></pre><p>再把console.log换成ajax把数据发送给后台应用。后台接受的时候记得做过滤。前端代码记得加密，防止攻击者看出意图从而导致绕过，不触发报警。因为可能有些公司、个人网站已经有了自己的攻击报警系统、智能日志检索系统，我也就不再写了。把ajax发送的数据过滤后存到数据库里，再显示就行了。可以根据自己现有的框架进行开发，思路上面已经了，不难理解，代码也不难写。如果你不会或者说是不想写，可以等到我下一篇的文章。到时候里面会有全部的源代码。</p><p>下一章也是有关XSS防御的，在“前端报警机制”的基础上做的完善，有可能会用到后端，目前思路已经有了，但是没时间写。看三月底之前能不能写出来吧。</p><h1>0x03 结语</h1><hr><p>之前EtherDream已经说了前端防火墙了，只是他做的是防御，而我是不防御直接报警。然后人工修复代码。因为虽然你防御住了，但是后端漏洞还在那，而触发报警机制后就可以进行人工修复。不是说EtherDream写的不好，反之非常好，在他的基础上也可以修改成前端报警机制，不过我还是喜欢让攻击者高兴几十分钟后，就懵逼的样子。在EtherDream的代码中有一个很棒的代码片段，他使用了内联事件监听了onclick等on事件，可以近一步的监听到黑客的操作。因为版权问题，我不方便把代码贴到本文中，毕竟是别人的思想结晶。想了解的话可以去查看：</p><p><a href="http://fex.baidu.com/blog/2014/06/xss-frontend-firewall-1/">http://fex.baidu.com/blog/2014/06/xss-frontend-firewall-1/</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/845" rel="bookmark" id="re1">Bypass xss过滤的测试方法</a></li><li><a href="http://drops.wooyun.org/tips/3059" rel="bookmark" id="re2">xss挑战赛writeup</a></li><li><a href="http://drops.wooyun.org/papers/512" rel="bookmark" id="re3">Short XSS</a></li><li><a href="http://drops.wooyun.org/tips/150" rel="bookmark" id="re4">Browser Security-css、javascript</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xi</span> <span class="reply-time">2016-03-25 13:08:10</span></div><p></p><p>@SPRITEKING 角度刁钻</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Satan</span> <span class="reply-time">2016-03-19 22:19:33</span></div><p></p><p>alret是什么鬼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wangy3e</span> <span class="reply-time">2016-03-14 13:54:46</span></div><p></p><p>不错的思路~~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wclssdn</span> <span class="reply-time">2016-03-09 10:45:16</span></div><p></p><p>只要是过滤，不是转义，就永远解决不了问题。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">哥们儿该吃药了</span> <span class="reply-time">2016-03-07 14:02:37</span></div><p></p><p>虽然说前端防御XSS比较麻烦，但是，不是一定不行。他只是写的代码比后端多了而已。而且前端防御XSS比后端防御XSS功能多，虽说后端也可以完成这些功能，但是代码量会比前端代码多很多很多。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vc1</span> <span class="reply-time">2016-03-06 02:48:38</span></div><p></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6284ecf085ebea87e7ca84d0c386d8e422150d0d1b170c">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">vc1</span> <span class="reply-time">2016-03-06 02:47:52</span></div><p></p><p>画着原型切着图，突然飞来一口锅。。。</p><p>只谈0x01，<br>-<br>$(&quot;body&quot;).append(xssCheck(data))<br>-<br>jQueyr API : .append(content [, content] )<br>content<br>类型: String, Element, jQuery<br>DOM 元素，DOM 元素数组，HTML 字符串，或者 jQuery 对象，用来插在每个匹配元素里面的末尾。.append()函数将特定内容插入到每个匹配元素里面的最后面，作为它的最后一个【子元素】<br>-<br>append实际上插入的是html元素，参数可以是字符串形式。<br>xss就是把数据当成代码执行了<br>jquery中有操作文本的函数<br>$(&#039;&lt;p&gt;&#039;).text(data).appendTo($(&#039;body&#039;))<br>-<br>escapeHtml这种函数，一般用在标签与数据混合在一起的情况<br>比如从模版或者字符串拼接生成dom<br>$(&#039;&lt;div user-name=&quot;&#039; + escapeHtml(data) + &#039;&quot;&gt;&lt;/div&gt;&#039;).attr(&#039;user-name&#039;, &#039;data&#039;)<br>原生js也有setAttribute接口<br>-<br>近几年的MVC、更新的MVVC框架已经很好的解决了M、V分离的问题，而且很大的改善了有一处数据改一处代码的繁琐修复工作。<br>-<br>另外，有些网站的接口是跨平台使用，后端统一转义html，app开发还不干呢，在前端转义也是很普遍的做法了<br>-<br>崔更等下篇-。-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Black_Hole</span> <span class="reply-time">2016-03-05 15:58:57</span></div><p></p><p>@看不下去了 客户端可以绕过:）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">看不下去了</span> <span class="reply-time">2016-03-05 14:03:15</span></div><p></p><p>只看了前面一部分就看不下去了。<br>过滤不应该在写入数据库之前做，而是应该在显示时做。<br>写入数据库前做发现过滤有问题怎么修改？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dakemao</span> <span class="reply-time">2016-03-04 12:09:04</span></div><p></p><p>@隐形人真忙 大哥 给个blog的链接啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱梅小礼</span> <span class="reply-time">2016-03-03 19:35:13</span></div><p></p><p>如何在一个已有的cms上方便地加上这个过滤功能呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">22222</span> <span class="reply-time">2016-03-03 14:49:52</span></div><p></p><p>楼主说的东西ALI貌似有一个产品在线上，可以抓包看看源码。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">第四维度</span> <span class="reply-time">2016-03-03 13:42:04</span></div><p></p><p>先赞一下文章</p><p>我认为在后端过滤比前端过滤要好一点，毕竟几句代码的事情</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Wooyun第一大屌</span> <span class="reply-time">2016-03-03 09:15:06</span></div><p></p><p>小哥留下QQ</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">suolong</span> <span class="reply-time">2016-03-02 20:02:05</span></div><p></p><p>如果是接口后端很有优势吧，如果考虑多终端的话，有个场景就是 接口 输出多个端，你a业务前端处理了，b引用前端未处理那么是不是就会触发xss 。如果后端处理完前端又处理一次，某些大业物上这里处理会影响效率吧，只是表达下想法。 赞文章！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2016-03-02 18:56:07</span></div><p></p><p>思路很陈旧了 建议看看护心镜源码 仔细读读ED牛的全部blog</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">喷子</span> <span class="reply-time">2016-03-02 17:50:39</span></div><p></p><p>这个小哥写的东西还都挺多人喷的哈。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Black_Hole</span> <span class="reply-time">2016-03-02 17:32:30</span></div><p></p><p>@莫里 这个文章的前提就是后端没有做好过滤</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SPRITEKING</span> <span class="reply-time">2016-03-02 17:11:28</span></div><p></p><p>XSS漏洞没出来，MySQL弱口令已经暴露了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">莫里</span> <span class="reply-time">2016-03-02 17:05:09</span></div><p></p><p>后端几行代码的事情<br>干嘛前端这么麻烦，维护都蛋疼事情<br>大多数前端都是弱智的好吗，哪里懂这玩意</p><p></p></div></div></div></div></div></main>

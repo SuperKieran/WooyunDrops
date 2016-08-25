@@ -1,0 +1,77 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">代码审计之逻辑上传漏洞挖掘</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">felixk3y</a> <span class="bull">·</span> <time title="2014/05/14 11:23" ui-time="" datetime="2014/05/14 11:23" class="published ng-binding ng-isolate-scope">2014/05/14 11:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 前言</h2><hr><p>话说一个人的快乐,两个人分享就成为两份快乐,这个我看未必吧,倘若分享与被分享的两者之间是情敌关系,而分享者快乐的原因恰好是… 哈哈,不说了,都懂的;</p><p>BUT, 倘若一个技巧被分享出来,那么受益的人我坚信肯定远远不只两个,所以我们更应该学会的是--分享!</p><p>Today,简单说说漏洞挖掘中由逻辑缺陷造成的文件上传漏洞。</p><p>Tips:传统的MIME验证、客户端js验证、黑名单验证、解析漏洞等这些都比较简单,不在我们讨论的范围内。</p><h2>0x01 程序员对某些常用函数的错误认识</h2><hr><p>这些函数有:<code>empty()、isset()、strpos()、rename()</code>等，如下面的代码(摘自用友ICC软件):</p><pre><code>#!php
+if($operateId == 1){
+    $date = date("Ymd");
+    $dest = $CONFIG-&gt;basePath."data/files/".$date."/";
+    $COMMON-&gt;createDir($dest);
+    //if (!is_dir($dest))   mkdir($dest, 0777);
+    $nameExt = strtolower($COMMON-&gt;getFileExtName($_FILES['Filedata']['name']));
+    $allowedType = array('jpg', 'gif', 'bmp', 'png', 'jpeg');
+    if(!in_array($nameExt, $allowedType)){
+        $msg = 0;
+    }
+    if(empty($msg)){
+        $filename = getmicrotime().'.'.$nameExt;
+        $file_url = urlencode($CONFIG-&gt;baseUrl.'data/files/'.$date."/".$filename);
+        $filename = $dest.$filename;
+        if(empty($_FILES['Filedata']['error'])){
+            move_uploaded_file($_FILES['Filedata']['tmp_name'],$filename);
+        }
+        if (file_exists($filename)){
+            //$msg = 1;
+            $msg = $file_url;
+            @chmod($filename, 0444);
+        }else{
+            $msg = 0;
+        }
+    }
+    $outMsg = "fileUrl=".$msg;
+    $_SESSION["eoutmsg"] = $outMsg;
+    exit;
+}
+</code></pre><p>我们来看上面的这段代码,要想文件成功的上传, if(empty($msg)) 必须为True才能进入if的分支,接下来我们来看empty函数何时返回True,看看PHP Manual怎么说,如图</p><p><img alt="enter image description here" img-src="8eb7e95d707687caf4c973a68cd0d0bb23ef3048.jpg"></p><p>很明显，""、0、"0"、NULL、FALSE、array()、var $var; 以及没有任何属性的对象都将被认为是空的，如果var为空，则返回True。 非常好，接下来我们往回看，有这样的几行代码</p><pre><code>#!php
+$allowedType = array('jpg', 'gif', 'bmp', 'png', 'jpeg');
+if(!in_array($nameExt, $allowedType)){
+    $msg = 0;
+}
+</code></pre><p>看见没有,即使我们上传类似shell.php的文件，虽然程序的安全检查把$msg赋值为0,经empty($msg)后，仍然返回True，于是我们利用这个逻辑缺陷即可成功的上传shell.php。</p><p>具体详见漏洞案例：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-04685">WooYun: 用友ICC网站客服系统远程代码执行漏洞</a></p><h2>0x02 程序员对某些常用函数的错误使用</h2><hr><p>这些函数有iconv()、copy()等,如下面的这段代码(摘自SiteStar)</p><pre><code>#!php
+public function img_create(){
+     $file_info =&amp; ParamHolder::get('img_name', array(), PS_FILES);
+     if($file_info['error'] &gt; 0){
+         Notice::set('mod_marquee/msg', __('Invalid post file data!'));
+         Content::redirect(Html::uriquery('mod_tool', 'upload_img'));
+     }
+     if(!preg_match('/\.('.PIC_ALLOW_EXT.')$/i', $file_info["name"])){
+         Notice::set('mod_marquee/msg', __('File type error!'));
+         Content::redirect(Html::uriquery('mod_marquee', 'upload_img'));
+     }
+     if(file_exists(ROOT.'/upload/image/'.$file_info["name"])){
+         $file_info["name"] = Toolkit::randomStr(8).strrchr($file_info["name"],".");
+     }
+     if(!$this-&gt;_savelinkimg($file_info)){
+         Notice::set('mod_marquee/msg', __('Link image upload failed!'));
+         Content::redirect(Html::uriquery('mod_marquee', 'upload_img'));
+      }
+      //...
+ }
+private function _savelinkimg($struct_file){
+    $struct_file['name'] = iconv("UTF-8", "gb2312", $struct_file['name']);
+    move_uploaded_file($struct_file['tmp_name'], ROOT.'/upload/image/'.$struct_file['name']);
+    return ParamParser::fire_virus(ROOT.'/upload/image/'.$struct_file['name']);
+}
+</code></pre><p>我们再来看看这段代码, img&#95;create()函数的逻辑非常严密，安全检查做的很到位。然而问题出在了&#95;savelinkimg()函数，即在保存文件的前面程序员错误的使用了iconv()函数,并且文件名经过了此函数,为什么是错用了呢?因为啊 iconv函数在转码过程中，可能存在字符串截断的问题：</p><p>在iconv转码的过程中,utf->gb2312(其他部分编码之间转换同样存在这个问题)会导致字符串被截断，如：<code>$filename="shell.php(hex).jpg";</code>(hex为0x80-0x99)，经过iconv转码后会变成<code>$filename="shell.php ";</code></p><p>所以，经过iconv 后$struct_file['name'])为shell.php，于是我们利用这个逻辑缺陷可以成功的上传shell.php(前提是上传的文件名为shell.php{%80-%99}.jpg)。</p><p>具体详见漏洞案例：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-048293">WooYun: 建站之星模糊测试实战之任意文件上传漏洞</a></p><h2>0x03 历史经典漏洞再次爆发</h2><hr><p>条件竞争漏洞,这类历史经典漏洞在逐渐淡出人们视线的时候,再次爆发..</p><p>接着看下面这段代码(摘自某VPN系统)</p><pre><code>#!php
+&lt;?
+if($_POST['realfile']){
+    copy($_POST['realfile'],$_POST['path']);
+}
+$file = mb_convert_encoding($_POST[file],"GBK","UTF-8");
+header("Pragma:");
+header("Cache-Control:");
+header("Content-type:application/octet-stream");
+header("Content-Length:".filesize($_POST[path]));
+header("Content-Disposition:attachment;filename=\"$file\"");
+readfile($_POST[path]);
+if($_POST['realfile']){
+    unlink($_POST["path"]);
+}
+?&gt;
+</code></pre><p>上述代码的逻辑表面上看起来是这样的(对于攻击者来说)：</p><p>利用copy函数，将realfile生成shell.php-→删除掉shell.php</p><p>这样初看起来没办法利用，但是仔细一想, 这段代码其实是存在逻辑问题的，所以我们可以利用这个逻辑缺陷达到GetShell的目的。</p><p>具体利用方法：</p><p>copy成temp.php-->不断访问temp.php->temp.php生成shell.php->删除temp.php</p><p>具体详见漏洞案例：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-048202">WooYun: 国内外多家vpn设备厂商批量漏洞(续集一)</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-049794">WooYun: PHPCMS前台设计缺陷导致任意代码执行</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/345" rel="bookmark" id="re1">在线支付逻辑漏洞总结</a></li><li><a href="http://drops.wooyun.org/papers/346" rel="bookmark" id="re2">终端机的安全性</a></li><li><a href="http://drops.wooyun.org/papers/506" rel="bookmark" id="re3">[代码审计]web程序对客户端数据加解密带来的安全问题</a></li><li><a href="http://drops.wooyun.org/web/3295" rel="bookmark" id="re4">密码找回功能可能存在的问题（补充）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无敌情痴</span> <span class="reply-time">2016-05-01 11:45:14</span></div><p></p><p>好文章，收藏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">watchdoge</span> <span class="reply-time">2016-03-24 16:51:28</span></div><p></p><p>iconv 这个5.4就不好使了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">神奇=路人甲</span> <span class="reply-time">2014-06-14 10:50:56</span></div><p></p><p>高端大气上档次！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">侠之心</span> <span class="reply-time">2014-05-29 22:27:25</span></div><p></p><p>你说的是哪一句啊？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xyang</span> <span class="reply-time">2014-05-20 14:49:59</span></div><p></p><p>学习到了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">廷廷</span> <span class="reply-time">2014-05-18 10:53:05</span></div><p></p><p>感谢分享，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F4K3R</span> <span class="reply-time">2014-05-17 21:26:46</span></div><p></p><p>感谢分享～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sogili</span> <span class="reply-time">2014-05-16 21:24:35</span></div><p></p><p>牛逼啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fengziseo</span> <span class="reply-time">2014-05-16 17:02:35</span></div><p></p><p>高大上，争取早点融入集体</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">uedte4t</span> <span class="reply-time">2014-05-16 16:58:03</span></div><p></p><p>good</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CplusHua</span> <span class="reply-time">2014-05-16 00:13:32</span></div><p></p><p>楼主，我问了好几个同志，都不懂第一句话是啥意思，可不可以告诉我呀~呜呜~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-05-15 12:46:06</span></div><p></p><p>源码分析的比较适合程序员转白盒审计~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-15 12:35:09</span></div><p></p><p>怎么现在都是程序员？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">洋子</span> <span class="reply-time">2014-05-14 22:46:38</span></div><p></p><p>我使用iconv都会加上//IGNORE</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">【|→上善若水】</span> <span class="reply-time">2014-05-14 22:28:04</span></div><p></p><p>为了apple这几天有点给力哦！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">laterain</span> <span class="reply-time">2014-05-14 17:17:52</span></div><p></p><p>条件竞争漏洞 很不错，代码第一眼看过去就觉得没什么问题，看完才知道可以利用时间差，赞一个！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">maodun</span> <span class="reply-time">2014-05-14 12:39:06</span></div><p></p><p>赞分享。http://hi.baidu.com/qingsh4n/item/e3c4261e045d17161994ecaa iconv在字符编码转换时可能导致字符串截断。当$str中有一个字符不能被目标字符集所表示时，str 从第一个无效字符开始截断并导致一个 E_NOTICE。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2014-05-14 12:29:01</span></div><p></p><p>最后的那个建站之心洞主碉堡了啊，求科普为何%80可以起到截断文件名的作用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">all</span> <span class="reply-time">2014-05-14 11:58:44</span></div><p></p><p>希望能看见更多的实例^^</p><p></p></div></div></div></div></div></main>

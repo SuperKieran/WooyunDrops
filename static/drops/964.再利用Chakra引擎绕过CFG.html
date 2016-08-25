@@ -1,0 +1,209 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">再利用Chakra引擎绕过CFG</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">xlab</a> <span class="bull">·</span> <time title="2015/12/24 15:00" ui-time="" datetime="2015/12/24 15:00" class="published ng-binding ng-isolate-scope">2015/12/24 15:00</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="22475a520f51495b62caa79cca8c8dc5aca6c48f84c78cbccb88aec78c86">[email&#160;protected]</a></strong></p><h1>0x00 前言</h1><hr><p>本文源自一次与<a href="http://weibo.com/101174?source=webim&amp;is_all=1">TK</a>闲聊，期间得知成功绕过CFG的经过与细节(参考：[利用Chakra JIT绕过DEP和CFG])。随即出于对技术的兴趣，也抽出一些时间看了相关的东西，结果发现了另一处绕过CFG的位置。所以这篇文章中提到的思路与技术归根结底是来自<a href="http://weibo.com/101174?source=webim&amp;is_all=1">TK</a>提示的，在此特别感谢。</p><p>关于CFG的分析文章已经有很多了，想要了解的话可以参考我之前在HitCon 2015上的演讲(<a href="https://github.com/exp-sky/HitCon-2015-spartan-0day-exploit/blob/master/Spartan%200day%20&amp;%20Exploit-m.pdf">spartan 0day &amp; exploit</a>)。要说明的是，本文的内容即为我演讲中马赛克的部分，至此通过一次内存写实现edge的任意代码执行方法就全部公开了。</p><h1>0x01 Chakra调用函数的逻辑</h1><hr><p>chakra引擎在函数调用时，会根据所调用函数状态的不同进行不同的处理。比如第一次调用的函数、多次调用的函数、DOM接口函数及经过jit编译后的函数。不同的函数类型会有不同的处理流程，而这些不同的处理都会通过<code>Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;</code>函数调用<code>Js::JavascriptFunction::CallFunction&lt;1&gt;</code>函数来实现。</p><h3>1.函数的首次调用与多次调用</h3><p>当调用如下脚本时,<code>Js::JavascriptFunction::CallFunction&lt;1&gt;</code>函数会被<code>Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;</code>函数调用。</p><pre><code>#!js
+function test(){}
+
+test();
+</code></pre><p>如果函数是第一次被调用，则执行流程如下。</p><pre><code>#!bash
+chakra!Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;
+    |-chakra!Js::JavascriptFunction::CallFunction&lt;1&gt;
+        |-chakra!Js::JavascriptFunction::DeferredParsingThunk
+            |-chakra!Js::JavascriptFunction::DeferredParse
+            |-chakra!NativeCodeGenerator::CheckCodeGenThunk
+                |-chakra!Js::InterpreterStackFrame::DelayDynamicInterpreterThunk
+                    |-jmp_code
+                        |-chakra!Js::InterpreterStackFrame::InterpreterThunk
+</code></pre><p>如果再次调用这个函数的话，调用流程如下。</p><pre><code>#!bash
+chakra!Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;
+    |-chakra!Js::JavascriptFunction::CallFunction&lt;1&gt;
+        |-chakra!NativeCodeGenerator::CheckCodeGenThunk
+            |-chakra!Js::InterpreterStackFrame::DelayDynamicInterpreterThunk
+                |-jmp_code
+                    |-chakra!Js::InterpreterStackFrame::InterpreterThunk
+</code></pre><p>两次的调用流程大致是相同的，其中主要不同是因为，函数在第一次调用时候需要通过DeferredParsingThunk函数对其进行解析。其实函数只有在第一次调用时才进行进一步的初始化解析操作，这样设计主要是为了效率。而后续调用再直接解释执行。</p><p>分析发现，<code>Js::JavascriptFunction::CallFunction&lt;1&gt;</code>函数调用的子函数是通过Js::ScriptFunction对象中的数据获得的。后续调用的函数<code>Js::JavascriptFunction::DeferredParsingThunk</code>和<code>NativeCodeGenerator::CheckCodeGenThunk</code>都存在于<code>Js::ScriptFunction</code>对象中。两次调用中<code>Js::ScriptFunction</code>对象的变化。</p><p>第一次调用时的Js::ScriptFunction对象。</p><pre><code>#!bash
+0:010&gt; u poi(06eaf050 )
+chakra!Js::ScriptFunction::`vftable':
+
+0:010&gt; dd 06eaf050 
+06eaf050  5f695580 06eaf080 00000000 00000000
+
+0:010&gt; dd poi(06eaf050+4) 
+06eaf080  00000012 00000000 06e26c00 06e1fea0
+06eaf090  5f8db3f0 00000000 5fb0b454 00000101
+
+0:010&gt; u poi(poi(06eaf050+4)+0x10)
+chakra!Js::JavascriptFunction::DeferredParsingThunk:
+</code></pre><p>第二次调用时的Js::ScriptFunction对象。</p><pre><code>#!bash
+0:010&gt; u poi(06eaf050 )
+chakra!Js::ScriptFunction::`vftable':
+
+0:010&gt; dd 06eaf050 
+06eaf050  5f695580 1ce1a0c0 00000000 00000000
+
+0:010&gt; dd poi(06eaf050+4)
+1ce1a0c0  00000012 00000000 06e26c00 06e1fea0
+1ce1a0d0  5f8db9e0 00000000 5fb0b454 00000101
+
+0:010&gt; u poi(poi(06eaf050+4)+0x10)
+chakra!NativeCodeGenerator::CheckCodeGenThunk:
+</code></pre><p>所以函数在第一次调用与后续调用的不同，是通过修改Js::ScriptFunction对象中的函数指针来实现的。</p><h3>2.函数的jit</h3><p>接下来我们看一下函数的jit。测试脚本代码如下，多次调用test1函数触发其jit。</p><pre><code>#!js
+function test1(num)
+{
+    return num + 1 + 2 + 3;
+}
+
+//触发jit
+
+test1(1);
+</code></pre><p>经过jit的<code>Js::ScriptFunction</code>对象。</p><pre><code>#!bash
+//新的调试，对象内存地址会不同
+
+0:010&gt; u poi(07103050 )
+chakra!Js::ScriptFunction::`vftable':
+
+0:010&gt; dd 07103050 
+07103050  5f695580 1d7280c0 00000000 00000000
+
+0:010&gt; dd poi(07103050+4)
+1d7280c0  00000012 00000000 07076c00 071080a0
+1d7280d0  0a510600 00000000 5fb0b454 00000101
+
+0:010&gt; u poi(poi(07103050+4)+0x10)              //jit code
+0a510600 55              push    ebp
+0a510601 8bec            mov     ebp,esp
+0a510603 81fc5cc9d005    cmp     esp,5D0C95Ch
+0a510609 7f21            jg      0a51062c
+0a51060b 6a00            push    0
+0a51060d 6a00            push    0
+0a51060f 68d0121b04      push    41B12D0h
+0a510614 685c090000      push    95Ch
+0a510619 e802955b55      call    chakra!ThreadContext::ProbeCurrentStack2 (5fac9b20)
+0a51061e 0f1f4000        nop     dword ptr [eax]
+0a510622 0f1f4000        nop     dword ptr [eax]
+0a510626 0f1f4000        nop     dword ptr [eax]
+0a51062a 6690            xchg    ax,ax
+0a51062c 6a00            push    0
+0a51062e 8d6424ec        lea     esp,[esp-14h]
+0a510632 56              push    esi
+0a510633 53              push    ebx
+0a510634 b8488e0607      mov     eax,7068E48h
+0a510639 8038ff          cmp     byte ptr [eax],0FFh
+0a51063c 7402            je      0a510640
+0a51063e fe00            inc     byte ptr [eax]
+0a510640 8b450c          mov     eax,dword ptr [ebp+0Ch]
+0a510643 25ffffff08      and     eax,8FFFFFFh
+0a510648 0fbaf01b        btr     eax,1Bh
+0a51064c 83d802          sbb     eax,2
+0a51064f 7c2f            jl      0a510680
+0a510651 8b5d14          mov     ebx,dword ptr [ebp+14h] //ebx = num
+0a510654 8bc3            mov     eax,ebx        //eax = num (num &lt;&lt; 1 &amp; 1)
+0a510656 d1f8            sar     eax,1          //eax = num &gt;&gt; 1
+0a510658 732f            jae     0a510689
+0a51065a 8bf0            mov     esi,eax
+0a51065c 8bc6            mov     eax,esi
+0a51065e 40              inc     eax            //num + 1
+0a51065f 7040            jo      0a5106a1
+0a510661 8bc8            mov     ecx,eax
+0a510663 83c102          add     ecx,2          //num + 2
+0a510666 7045            jo      0a5106ad
+0a510668 8bc1            mov     eax,ecx
+0a51066a 83c003          add     eax,3          //num + 3
+0a51066d 704a            jo      0a5106b9
+0a51066f 8bc8            mov     ecx,eax
+0a510671 d1e1            shl     ecx,1          //ecx = num &lt;&lt; 1
+0a510673 7050            jo      0a5106c5
+0a510675 41              inc     ecx            //ecx = num += 1
+0a510676 8bd9            mov     ebx,ecx
+0a510678 8bc3            mov     eax,ebx
+0a51067a 5b              pop     ebx
+0a51067b 5e              pop     esi
+0a51067c 8be5            mov     esp,ebp
+0a51067e 5d              pop     ebp
+0a51067f c3              ret
+</code></pre><p><code>Js::ScriptFunction</code>对象中原本指向<code>NativeCodeGenerator::CheckCodeGenThunk</code>函数的指针，在jit之后变为指向jit code的指针。实现了直接调用函数jit code。</p><p>这里简单说明一下，在调用函数传递参数时，是先将参数左移一位，然后将最低位置1之后的值进行传递的（parameter = (num &lt;&lt; 1) &amp; 1）。所以其在获取参数之后的第一件事是将其右移1位，获取参数原始的值。至于为什么要这样，我想应该是因为脚本引擎垃圾回收机制导致的，引擎通过最低位来区分对象与数据。</p><pre><code>#!bash
+chakra!Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;
+    |-chakra!Js::JavascriptFunction::CallFunction&lt;1&gt;
+        |-jit code
+</code></pre><p>调用jit函数时的调用栈如上所示，这就是chakra引擎调用jit函数的方法。</p><h3>3.DOM接口函数</h3><p>最后为了完整性，还有一类函数需要简单介绍一下，就是DOM接口函数，由其它引擎如渲染引擎提供的函数（理论上可以为任何其它引擎）。</p><pre><code>#!js
+document.createElement("button");
+</code></pre><p>执行上面脚本则会通过下面的函数调用流程，最后调用到提供接口函数的引擎中。</p><pre><code>#!bash
+chakra!Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;
+    |-chakra!Js::JavascriptFunction::CallFunction&lt;1&gt;
+        |-chakra!Js::JavascriptExternalFunction::ExternalFunctionThunk //调用dom接口函数
+            |-dom_interface_function    //EDGEHTML!CFastDOM::CDocument::Trampoline_createElement
+</code></pre><p>当调用dom接口函数时，<code>Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;</code>函数及后续的处理流程中所使用的Function对象与前面不同，使用的是<code>Js::JavascriptExternalFunction</code>对象。然后与前面的函数调用类似，也是通过解析对象内的函数指针，并对其进行调用，最终进入到想要调用的DOM接口函数中。</p><pre><code>#!bash
+0:010&gt; u poi(06f2cea0)
+chakra!Js::JavascriptExternalFunction::`vftable':
+
+0:010&gt; dd 06f2cea0 
+06f2cea0  5f696c4c 06e6f7a0 00000000 00000000
+
+0:010&gt; dd poi(06f2cea0+4)
+06e6f7a0  00000012 00000000 06e76c00 06f040a0
+06e6f7b0  5f8c6130 00000000 5fb0b454 00000101
+
+0:010&gt; u poi(poi(06f2cea0+4)+0x10)
+chakra!Js::JavascriptExternalFunction::ExternalFunctionThunk:
+</code></pre><p>这就是chakra引擎对不同类型函数的不同调用的方式。</p><h1>0x02 漏洞与利用</h1><hr><p>经过前面对chakra引擎各种调用函数方法的介绍，我们再来看一下本文的重点绕过cfg的漏洞。前面提到的在第一次调用脚本创建的函数时与后续调用此函数会有不同的流程。这里我们再看一下此处的逻辑，调用栈如下。</p><pre><code>#!bash
+//第一次调用
+chakra!Js::InterpreterStackFrame::OP_CallCommon&lt;Js::OpLayoutDynamicProfile&lt;Js::OpLayoutT_CallI&lt;Js::LayoutSizePolicy&lt;0&gt; &gt; &gt; &gt;
+    |-chakra!Js::JavascriptFunction::CallFunction&lt;1&gt;
+        |-chakra!Js::JavascriptFunction::DeferredParsingThunk
+            |-chakra!Js::JavascriptFunction::DeferredParse    //获取NativeCodeGenerator::CheckCodeGenThunk函数
+            |-chakra!NativeCodeGenerator::CheckCodeGenThunk
+                |-chakra!Js::InterpreterStackFrame::DelayDynamicInterpreterThunk
+                    |-jmp_code  
+                        |-chakra!Js::InterpreterStackFrame::InterpreterThunk
+</code></pre><p>在前面没有提到的是，上面调用流程中的<code>Js::JavascriptFunction::DeferredParse</code>函数。此函数内部会进行函数解析相关的工作，并且返回<code>NativeCodeGenerator::CheckCodeGenThunk</code>函数的指针，然后在返回<code>Js::JavascriptFunction::DeferredParsingThunk</code>函数后对其进行调用。<code>NativeCodeGenerator::CheckCodeGenThunk</code>函数的指针也是通过解析<code>Js::JavascriptFunction</code>对象获得的。代码如下。</p><pre><code>#!js
+int __cdecl Js::JavascriptFunction::DeferredParsingThunk(struct Js::ScriptFunction *p_script_function)
+{
+    NativeCodeGenerator_CheckCodeGenThunk = Js::JavascriptFunction::DeferredParse(&amp;p_script_function);
+    return NativeCodeGenerator_CheckCodeGenThunk();
+}
+
+
+.text:002AB3F0 push    ebp
+.text:002AB3F1 mov     ebp, esp
+.text:002AB3F3 lea     eax, [esp+p_script_function]
+.text:002AB3F7 push    eax             ; struct Js::ScriptFunction **
+.text:002AB3F8 call    Js::JavascriptFunction::DeferredParse
+.text:002AB3FD pop     ebp
+.text:002AB3FE jmp     eax
+</code></pre><p>在这个跳转位置上并没有对eax中的函数指针进行CFG检查。所以可以利用其进行eip劫持。不过还首先还要知道<code>Js::JavascriptFunction::DeferredParse</code>函数返回的<code>NativeCodeGenerator::CheckCodeGenThunk</code>函数指针是如何通过<code>Js::ScriptFunction</code>对象何解析出来的。解析过程如下。</p><pre><code>#!bash
+0:010&gt; u poi(070af050)
+chakra!Js::ScriptFunction::`vftable':
+
+0:010&gt; dd 070af050 + 14
+070af064  076690e0 5fb11ef4 00000000 00000000
+
+0:010&gt; dd 076690e0 + 10
+076690f0  076690e0 04186628 07065f90 00000000
+
+0:010&gt; dd 076690e0 + 28
+07669108  07010dc0 000001a8 00000035 00000000
+
+0:010&gt; dd 07010dc0 
+07010dc0  5f696000 05a452b8 00000000 5f8db9e0
+
+0:010&gt; u 5f8db9e0
+chakra!NativeCodeGenerator::CheckCodeGenThunk:
+</code></pre><p>如上所述，<code>Js::JavascriptFunction::DeferredParse</code>通过解析<code>Js::ScriptFunction</code>对象获取<code>NativeCodeGenerator::CheckCodeGenThunk</code>函数指针，解析方法简写为<code>[[[Js::ScriptFunction+14]+10]+28]+0c</code>。所以只要伪造此处内存中的数据，即可通过调用函数来间接触发<code>Js::JavascriptFunction::DeferredParse</code>函数的调用，进而劫持eip，具体如下。</p><pre><code>#!bash
+0:010&gt; g
+Breakpoint 0 hit
+eax=603ba064 ebx=063fba10 ecx=063fba40 edx=063fba40 esi=00000001 edi=058fc6b0
+eip=603ba064 esp=058fc414 ebp=058fc454 iopl=0         nv up ei ng nz na po cy
+cs=001b  ss=0023  ds=0023  es=0023  fs=003b  gs=0000             efl=00000283
+chakra!`dynamic initializer for 'DOMFastPathInfo::getterTable''+0x734:
+603ba064 94              xchg    eax,esp
+603ba065 c3              ret
+</code></pre><p>这样就绕过了cfg，成功劫持了eip。这种方法简单稳定，在获得了内存读写能力时使用是很方便的。此漏洞已于2015年7月25日报告微软。</p><h1>0x03 修补方案</h1><hr><p>本文所述的漏洞微软已经修补，修补方案也比较简单就是对此处跳转增加cfg检查。</p><pre><code>#!bash
+.text:002AB460 push    ebp
+.text:002AB461 mov     ebp, esp
+.text:002AB463 lea     eax, [esp+arg_0]
+.text:002AB467 push    eax
+.text:002AB468 call    Js::JavascriptFunction::DeferredParse
+.text:002AB46D mov     ecx, eax        ; this
+.text:002AB46F call    ds:___guard_check_icall_fptr  //增加cfg检查
+.text:002AB475 mov     eax, ecx
+.text:002AB477 pop     ebp
+.text:002AB478 jmp     eax
+.text:00
+</code></pre><h1>0x04 参考</h1><hr><ul><li><a href="http://xlab.tencent.com/cn/2015/12/09/bypass-dep-and-cfg-using-jit-compiler-in-chakra-engine">利用Chakra JIT绕过DEP和CFG</a></li><li><a href="https://github.com/exp-sky/HitCon-2015-spartan-0day-exploit/blob/master/Spartan%200day%20&amp;%20Exploit-m.pdf">spartan 0day &amp; exploit</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/11171" rel="bookmark" id="re1">利用 Chakra JIT Spray 绕过 DEP 和 CFG</a></li><li><a href="http://drops.wooyun.org/papers/7049" rel="bookmark" id="re2">Hacking Team攻击代码分析Part 4: Flash 0day漏洞 CVE-2015-5122</a></li><li><a href="http://drops.wooyun.org/papers/6968" rel="bookmark" id="re3">Hacking Team攻击代码分析</a></li><li><a href="http://drops.wooyun.org/papers/9276" rel="bookmark" id="re4">CVE-2015-2546：从补丁比对到Exploit</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2015-12-25 10:35:04</span></div><p></p><p>牛逼</p><p></p></div></div></div></div></div></main>

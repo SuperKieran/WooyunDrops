@@ -1,0 +1,195 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">《iOS应用安全攻防实战》第六章：无法销毁的文件</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          博文视点安全技术大系</a>
+        <span class="bull">·</span>
+        <time title="2015/08/21 14:08" ui-time="" datetime="2015/08/21 14:08" class="published ng-binding ng-isolate-scope">2015/08/21 14:08</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p>将一个普通的文件系统想象为一个大的笔记本。当一个文件被删除时，许多人以为这一页是被用“三福”牌记号笔完全涂黑了，就像关于51 区的机密文档那样。但事实上，在这个操作背后所发生的一切更像是用一支很细的红色笔在这一页上面画了一个巨大的X。文件被标记为已删除，但内容实际上还存在于笔记本上。所有想知道其看起来是什么样的人还是可以轻松地读出它的内容，而不管有一个红色的X 将它标记为已删除。这就是庭审律师（不论是美剧<code>Boston Legal</code> 中的还是真实生活中的律师）如何从嫌疑犯的电脑里还原出大量已删除的文件。苹果公司也知道这一点，因此，在<code>iOS 4</code> 中开始使用一些特殊的精心设计的文件系统加密方法来防止已删除文件被还原出来。然而，这种技巧并不完美，有时候文件依然可能被盗。</p>
+
+<p>在前面我们已经看到，<code>iOS 4</code> 和<code>iOS 5</code> 使用了加密的文件系统，在这个文件系统中的所有文件都使用了一个唯一的密钥进行加密。在文件系统中，这个密钥被保存在名为<code>cprotect</code>的属性中，并且它实际上也是被所谓的<code>AES-Wrap</code> 方式加密的，加密它的密钥或者是存放在<code>NAND</code> 可擦除区域的<code>Dkey</code>，或者是保护等级密钥中的一个。当删除一个文件时，该文件的<code>cprotect</code> 属性会随之被丢掉。而拿不到这个属性中的加密密钥，文件就无法被揭秘，那么将其还原出来也就没有意义。</p>
+
+<p>想象一下，无论你走到哪里都有一个秘书跟着，我们把这个秘书叫作<code>Iris</code>。现在想象一下<code>Iris</code>会帮你记住过去一两个月所做的每一件事情，记住的方法则是记录下所有你说过的话，当然，这么做是你同意的。好，这么做确实很有帮助，因为你有时候容易忘事，尤其是你喝了太多的咖啡并且经常性地情绪崩溃的情况下。你可以告诉<code>Iris</code>在哪一天要和哪一个特定的客户说些什么，这样她会在到时候复述给你听。</p>
+
+<!--more-->
+
+<p>但是<code>Iris</code>（除了在你晨浴时总是带来尴尬以外）有一个缺点，因为她会记住你所说过的所有内容，所以一不留意就会就记录下你要交给客户用来访问你网站上一些文件的密码。你采用了非常严格的安全机制来保证你的密码不会被泄露。但是<code>Iris</code>始终和你在一起，如果有人能够拿下她，那就能够拿到你的客户的所有文件。</p>
+
+<p>苹果公司的<code>HFS</code>日志就是<code>iOS</code> 的电子版<code>Iris</code>。<code>HSF</code>日志记录了所有文件系统的写入、更改和删除操作，这样文件系统不会在设备毁坏或者电源无效后丢失数据。<code>HFS</code>日志使用EMF 密钥加密，前面我们已经了解到，该密钥存储在<code>NAND</code>的可擦除存储区域中。<code>EMF</code>密钥并没有使用需要的密码来加密，所以任何人知道该怎么做就都能够轻易解密<code>HFS</code>日志，而不需要用户的密码。在第5 章中介绍的<code>Sogeti</code>暴力破解工具除了可以从设备中抽取所有其他的加密密钥外，还具有这个额外的功能。当一个文件的加密密钥被写入磁盘的<code>cprotect</code>属性中时，<code>HFS</code> 日志会自动将它的一份副本记录到磁盘中。</p>
+
+<p>如果一个文件已经被删除，写入到磁盘的加密密钥会被抹掉，但是写入到<code>HFS</code>日志中的那份副本并不会。这可能是因为HFS日志功能早于HFS+加密卷出现，因此，其运行是独立于加密功能以及文件系统的其他附加功能的。除非苹果公司从日志中定位并且清除一个已删除文件的加密密钥，否则可以窃取到这个密钥副本并还原出原始文件。</p>
+
+<h1>0x00 刮取HFS 日志</h1>
+
+<hr>
+
+<p>在第5章中已经介绍了<code>Sogeti</code> 的免费数据保护工具套件，它包含一组用于解密<code>iOS</code> 文件和钥匙链数据的工具。这个套件中的另一个名为<code>emf_undelete</code>的工具用于刮取出<code>HFS</code> 日志中包含了文件加密密钥的<code>cprotect</code>属性。这个工具会尝试着使用这些密钥来解密磁盘中残留的文件。就像Iris一样，HFS日志只会存储有限的一段时间里的信息，直到这些信息成为更旧的数据被轮换出去。这段时间的长度取决于设备的活跃程度，可能短到只有一天，也可能长达数周。设备使用得越频繁，<code>HFS</code> 日志轮换出老旧数据就越快。</p>
+
+<p>为了获得日志的内容，我们进入<code>Sogeti</code>工具集的<code>python_scripts</code>目录下，执行其中的<code>emf_undelete.py</code>脚本，并输入用<code>RawTheft</code> 载荷获取到的原始磁盘镜像。此外，还需要用第4 章中的<code>KeyTheft</code> 载荷获取一份设备的加密密钥。</p>
+
+<pre><code>$ python emf_undelete.py rdisk0s1s2.dmg
+Keybag: SIGN check OK
+Keybag unlocked with passcode key
+cprotect version : 2
+Found deleted file record 109296 lto2.dat
+Found deleted file record 111607 NetworkInterfaces.plist
+Found deleted file record 111939 com.apple.AutoWake.plist
+Found deleted file record 111571 com.apple.PowerManagement.plist
+Found deleted file record 109294 com.apple.network.identification.plist
+Found deleted file record 111874 com.apple.wifi.plist
+Found deleted file record 111871 preferences.plist
+...
+</code></pre>
+
+<p>当脚本运行时，会去扫描日志中已删除的文件和加密密钥，然后，它会执行第二遍扫描，将数据抽取到两个名为<code>junk</code> 和<code>undelete</code> 的目录中。其中，<code>undelete</code> 目录包含脚本可以验证已经成功解密的文件；<code>junk</code> 目录则包含它无法验证的那些，但也许仍然是有效的。</p>
+
+<p>这个EMF 反删除脚本中预先写入了一些基本的文件头部（称为<code>magic</code> 值），它使用这些头部来判断文件是否有效。检查一下<code>hfs/journal.py</code> 文件的<code>isDecryptedCorrectly</code> 函数，就会看到它们。</p>
+
+<pre><code>magics=["SQLite", "bplist", "&lt;?xml", "\xFF\xD8\xFF", "\xCE\xFA\xED\xFE"]
+"""
+HAX: should do something better like compute entropy or something
+"""
+def isDecryptedCorrectly(data):
+for m in magics:
+if data.startswith(m):
+return True
+return False
+</code></pre>
+
+<p>事实上，我们应该对它做些改进以取得更好的效果。上面的实现方法限制了反删除脚本可以验证的文件类型。要改进这个功能，并减少被移到<code>junk</code> 文件夹的有效文件数量，可以将这个函数用下列代码替换：</p>
+
+<pre><code>def isDecryptedCorrectly(data, filekey):
+filename = "/tmp/%s.bin" % (filekey.encode("hex")[:8])
+write_file(filename,data)
+filetype = commands.getoutput("/usr/bin/file -b %s" % filename)
+os.unlink(filename)
+print "file type for %s: %s" %(filename, filetype)
+if filetype == "data":
+return False
+return True
+</code></pre>
+
+<p>上述代码会调用一个名为<code>file</code> 的外部程序。该程序是一个包含在<code>Mac OS X</code> 系统中的<code>UNIX</code> 工具，用于判断文件类型。它可以识别出非常多的有效文件，判断一个成功解密后的文件是否有效、可读，并且给出更精确的结果。当file 工具无法判断正在查看的这个文件是哪种类型时，会简单返回一个通用的<code>data</code> 类型。</p>
+
+<p>虽然<code>file</code> 工具更加精确，但是它也无法识别专有版权类型的文件。如果你的应用软件在一些特定文件中使用了自定义的格式，由于反删除工具无法识别它们，你可能得去<code>junk</code> 文件夹中查找。</p>
+
+<h1>0x01 还原闲置空间</h1>
+
+<hr>
+
+<p>彻底扫描未分配的空间，这是试图恢复已删除数据的最后方法。在反删除工具中默认禁用该功能，因为要刮取未分配的内存需要相当长的时间，而且效果通常也并不太好。</p>
+
+<p>可以通过编辑<code>hfs/journal.py</code> 脚本来激活这个功能。在该文件的最底部附近，有一个对<code>carveEMFemptySpace</code> 的调用，但是被一条<code>if False</code> 语句禁用了：</p>
+
+<pre><code>if False:
+fks = set(reduce(lambda x,y: x+y, filekeys.values()))
+print "%d file keys left, try carving empty space (slow) ? CTRL-C to
+exit" % len(fks)
+raw_input()
+carveEMFemptySpace(volume, fks, carveokdir)
+</code></pre>
+
+<p>将这条语句改为<code>if True</code>，然后保存这一修改。这样，在原来的日志操作完成后，就会看到开始还原的提示。</p>
+
+<h1>0x02 常被还原出来的数据</h1>
+
+<hr>
+
+<p>通过刮取<code>HFS</code> 日志可以还原出许多不同的文件来。事实上，任何曾经存在于文件系统上的东西都可能被还原，尤其是像属性列表、图像等较小的文件。由于<code>HFS</code> 日志的大小有限，因此，小文件被还原出来的概率更大。</p>
+
+<h3>应用软件屏幕截图</h3>
+
+<p>当一个应用软件挂起到后台时，会有一个屏幕截图被捕获并写入磁盘中。这是为了当用户下次返回到应用软件时可以产生出窗口缩放回到屏幕的效果，就好像应用软件立即就从后台加载起来一样。事实上，应用软件需要花一些时间加载回来重新变为活跃状态，而这个动画效果则给了软件一些时间。</p>
+
+<p>每一次应用软件挂起时，应用软件的截屏都会重复来一次，晚些时候再将截屏文件删除或者覆盖。当一通电话进来时，或者其他可能导致应用软件挂起的事件发生时，也会有截屏发生。从HFS 日志中经常可以找到这些已删除的应用软件截屏，从而泄露你的应用</p>
+
+<p>软件中哪怕是最安全的加密数据的内容（见图6-1）。</p>
+
+<p><img alt="enter image description here" img-src="69d42a8873c92cad37d539d5e5e16d14ee4f9b20.jpg"></p>
+
+<p>图6-1．恢复出来的用户邮件截屏，邮件软件是取证中非常有用的工具</p>
+
+<p>除了应用软件截屏泄露，安全的网站也会面临这一问题。不管是Google（见图6-2），还是你在企业VPN 内部看到的机密邮件，截屏泄露都会导致保护得最好的数据变得不安全。</p>
+
+<p><img alt="enter image description here" img-src="9f7d468cfffda13dbd1c821ed227bb79c484ec0e.jpg"></p>
+
+<p>图6-2．从一个Safari浏览会话中恢复出来的截屏</p>
+
+<h3>已删除的属性列表</h3>
+
+<p>从日志中还经常能恢复出旧的属性列表以及其他配置文件。如果这些文件中存储了网站的机密数据、加密密钥或者其他敏感数据，然后又被删除了，这些数据还是有可能被恢复。一些应用软件会先写好一个明文的属性列表，然后使用加密函数来对其中的数据进行加密。即便明文副本已被删除，依然可以被恢复出来，这样其中最初的明文内容就泄露了。</p>
+
+<p>在一个这样的案例里，一个安全邮件客户端将它当前正在处理的邮件副本存储到一个临时的<code>SQLite</code> 数据库。这个数据库文件用于该应用不同组件之间来回复制数据，而操作完成后，会被删除。虽然该应用软件将邮件安全地存储到它的主数据库中，任何在其中曾经被选中并且处理过的邮件都在这个临时数据库中临时存储过。因此，就会轻易泄露给攻击者。</p>
+
+<h3>已删除的语音邮件和录音</h3>
+
+<p>语音邮件会直接推送到与可视化语音邮箱相连的<code>iPhone</code> 中，从而可以根据用户的意愿随机访问和离线收听，甚至在用户收听信息之前，这些文件就已经被推送下来了，因此，在设备上甚至都能找到未读的语音邮件。语音邮件文件使用<code>AMR</code> 编码格式，这是一种专门为声音录音设计的音频编码方法。 录音文件也使用了相同的音频格式。已删除的录音也可能从设备上找到。</p>
+
+<h3>已删除的键盘缓存</h3>
+
+<p>在第4 章中已介绍过，键盘缓存中包含了在应用软件的任何地方通过键盘输入的数据的缓存，除非这个软件的这个文本框被专门禁用了自动纠错功能或者被设置为安全密码框。从<code>HFS</code> 日志中可以找到已删除的键盘缓存文件副本，其中甚至包含非常早之前通过键盘输入的缓存数据副本。</p>
+
+<h3>照片和其他个人信息</h3>
+
+<p>类似地，从<code>HFS</code> 日志中可以还原出已删除的照片以及已删除文件中存储的其他个人信息。例如，一个网银类应用软件存储了通过设备自带相机拍下的支票照片，当这张支票照片被清除时，事实上，它是被删除了，而不是被彻底抹掉，这样攻击者就可能拿到残留的数据。</p>
+
+<h1>0x03 总结</h1>
+
+<hr>
+
+<p>任何刚刚被删除的文件都可能存在于日志中。千万不要依赖于设备会在文件删除后安全地抹除它们这一假设，而最好是认为文件系统在底层压根就没有加密保护能力。如果数据中包含了你不希望攻击者能还原出来的敏感信息，那就不要将这段数据的明文副本写入磁盘中。在第11 章中，你会学到一系列的反取证技巧。通过这些技巧，可以使删除文件时会安全地清除数据，并且使你的应用软件在挂起时不会保存屏幕截图。</p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/596" rel="bookmark" id="re1">WordPress < 3.6.1 PHP 对象注入漏洞</a></li>
+			<li><a href="http://drops.wooyun.org/papers/11243" rel="bookmark" id="re2">一条Python命令引发的漏洞思考</a></li>
+			<li><a href="http://drops.wooyun.org/tips/12673" rel="bookmark" id="re3">Elasticsearch集群的备份与恢复</a></li>
+			<li><a href="http://drops.wooyun.org/papers/1957" rel="bookmark" id="re4">代码审计之逻辑上传漏洞挖掘</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

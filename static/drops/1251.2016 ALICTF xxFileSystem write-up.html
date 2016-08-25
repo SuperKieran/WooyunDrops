@@ -1,0 +1,231 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">2016 ALICTF xxFileSystem write-up</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Bird101</a> <span class="bull">·</span> <time title="2016/06/15 11:59" ui-time="" datetime="2016/06/15 11:59" class="published ng-binding ng-isolate-scope">2016/06/15 11:59</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 介绍</h1><hr><p>这是关于文件系统的一个题，给了程序和数据，比赛时是分成了两部分，第一部分是需要我们恢复删除的文件，第二部分是需要解密加了密的文件。比赛完时有挺多队把第一部分解出，但第二部分只有PPP解出，我赛后在队友wxy前期的分析和出题人的帮助下才解了出来，这里仅做一个分享，各位大大忽喷。</p><h1>0x01 恢复文件</h1><hr><p>第一部分的题是恢复删除的文件，删除文件的函数为0x4018FC</p><pre><code>#!cpp
+__int64 __fastcall rm_func(MemStruct *system, char *arg)
+{
+  char dir_flag; // [sp+13h] [bp-1Dh]@1
+  signed int mask; // [sp+14h] [bp-1Ch]@9
+  char *filename; // [sp+18h] [bp-18h]@4
+  inodeSt *filenode; // [sp+20h] [bp-10h]@9
+  __int64 v7; // [sp+28h] [bp-8h]@1
+
+  v7 = *MK_FP(__FS__, 40LL);
+  dir_flag = 0;
+  if ( *(arg + 1) &amp;&amp; !strcmp(**(arg + 1), "-r") )
+    dir_flag = 1;
+  filename = *arg;
+  if ( arg_filter(filename, off_6082C0) ^ 1 )
+  {
+    puts(" error");
+  }
+  else if ( !strcmp(filename, ".") || !strcmp(filename, "..") )
+  {
+    puts(" error");
+  }
+  else
+  {
+    filenode = find_filenode(system, *&amp;system-&gt;pwd_node, filename, &amp;mask);
+    if ( filenode )
+    {
+      if ( filenode-&gt;is_dir &amp;&amp; dir_flag != 1 )
+      {
+        puts(" error (add -r please)");
+      }
+      else if ( rm_filenode(system, filenode) )
+      {
+        *(*&amp;system-&gt;pwd_node + 0x60LL) &amp;= ~(1 &lt;&lt; mask);
+        --*(*&amp;system-&gt;pwd_node + 0x64LL);
+      }
+    }
+    else
+    {
+      puts(" error");
+    }
+  }
+  return *MK_FP(__FS__, 40LL) ^ v7;
+}
+</code></pre><p>这个函数主要的操作是根据文件名找到对应的文件节点，然后调用真正的删除函数0x40168F</p><pre><code>#!cpp
+signed __int64 __fastcall rm_filenode(MemStruct *system, inodeSt *filenode)
+{
+  signed int i; // [sp+10h] [bp-20h]@4
+  signed int dir_mask; // [sp+14h] [bp-1Ch]@4
+  signed int j; // [sp+18h] [bp-18h]@12
+  signed int file_mask; // [sp+1Ch] [bp-14h]@12
+
+  if ( check_password(system, filenode) ^ 1 )
+    return 0LL;
+  if ( filenode-&gt;is_dir )
+  {
+    dir_mask = *&amp;filenode-&gt;mask &gt;&gt; 2;
+    for ( i = 2; i &lt;= 23; ++i )
+    {
+      if ( dir_mask &amp; 1 )
+      {
+        if ( rm_filenode(system, (system-&gt;disk + (*(&amp;filenode-&gt;id + i) &lt;&lt; 9))) ^ 1 )
+          return 0LL;
+        *&amp;filenode-&gt;mask &amp;= ~(1 &lt;&lt; i);
+        --*&amp;filenode-&gt;size;
+      }
+      dir_mask &gt;&gt;= 1;
+    }
+    used_table[*&amp;filenode-&gt;id] = 0;
+    adjust_used_table(system, *&amp;filenode-&gt;id);
+  }
+  else
+  {
+    file_mask = *&amp;filenode-&gt;mask &gt;&gt; 2;
+    for ( j = 2; j &lt;= 23; ++j )
+    {
+      if ( file_mask &amp; 1 )
+      {
+        used_table[*(&amp;filenode-&gt;id + j)] = 0;
+        *&amp;filenode-&gt;mask &amp;= ~(1 &lt;&lt; j);
+        *&amp;filenode-&gt;size -= 0x200LL;
+        used_table[*(&amp;filenode-&gt;id + j)] = 0;
+        adjust_used_table(system, *(&amp;filenode-&gt;id + j));
+        if ( *&amp;filenode-&gt;size &lt; 0 )
+          *&amp;filenode-&gt;size = 0LL;
+        if ( !*&amp;filenode-&gt;size )
+          break;
+      }
+      file_mask &gt;&gt;= 1;
+    }
+    if ( *&amp;filenode-&gt;size &gt; 0LL &amp;&amp; rm_filenode(system, (system-&gt;disk + (*&amp;filenode-&gt;parent_filenode_id &lt;&lt; 9))) ^ 1 )
+      return 0LL;
+    used_table[*&amp;filenode-&gt;id] = 0;
+    adjust_used_table(system, *&amp;filenode-&gt;id);
+  }
+  return 1LL;
+}
+</code></pre><p>这个函数首先会判断这个文件节点是否为目录，如果是目录就循环删除目录中的文件，如果是文件则循环删除文件块，通过分析可以知道文件头的格式</p><table><thead><tr><th align="center">偏移</th><th align="center">目录</th><th align="center">文件</th></tr></thead><tbody><tr><td align="center">0x0-0x3</td><td align="center">当前节点的id</td><td align="center">同目录</td></tr><tr><td align="center">0x4-0x7</td><td align="center">上级目录的id</td><td align="center">0xFFFFFFFF</td></tr><tr><td align="center">0x8-0x5F</td><td align="center">包含文件的id(每4个字节)</td><td align="center">包含文件块的id(每4个字节)</td></tr><tr><td align="center">0x60-0x63(mask)</td><td align="center">之前每4个字节的id是否有效(0x8开始)</td><td align="center">同目录</td></tr><tr><td align="center">0x64-0x67(size)</td><td align="center">包含文件的个数</td><td align="center">文件大小(每个块512字节)</td></tr><tr><td align="center">0x68-0x6B</td><td align="center">00000000</td><td align="center">同目录</td></tr><tr><td align="center">0x6C-～</td><td align="center">目录名</td><td align="center">文件名</td></tr><tr><td align="center">0x16C</td><td align="center">0x01</td><td align="center">0x00</td></tr><tr><td align="center">0x16D-0x170(type)</td><td align="center">第0位置1表示隐藏，第3位置1表示加密</td><td align="center">同目录</td></tr><tr><td align="center">0x171-0x172</td><td align="center">password的md5值的前2个字节</td><td align="center">同目录</td></tr></tbody></table><p>从删除文件可以看出，它只是把used_table中id对应的值置0，并把size和mask中的有效位清0，通过这些分析可以得出被删除文件的一些特征：</p><ul><li>当前节点的id在used_table中的值为0</li><li>mask为0x03</li><li>size为0</li></ul><p>由于文件的0x4-0x7为0xFFFFFFFF，再加上之前的一些特征就可以搜索出被删除文件的文件名，代码如下</p><pre><code>#!python
+from pwn import *
+
+file = open('xxdisk.bin', 'rb')
+data = file.read()
+used_table = data[0:0x4e20]
+str_data = ''.join(data[0x5024:])
+index = 0
+filenames = []
+while True:
+    if index != -1:
+        index = str_data.find('\xff\xff\xff\xff', index + 1)
+        used_table_index = u32(str_data[index-4:index])
+        if used_table_index &lt; 0x4e20 and used_table[used_table_index] == '\x00':
+            filename = ''
+            filename_index = index - 4 + 0x6c
+            while str_data[filename_index] != '\x00':
+                filename += str_data[filename_index]
+                filename_index += 1
+            filenames.append(filename)
+    else:
+        break
+
+print filenames
+</code></pre><p>搜索出的结果如下图</p><p><img alt="search_result" img-src="58e73df19ee2023c61a63e214fb766d4fe8e34c9.jpg"></p><p>发现了一个奇怪的名为555的文件，根据它的文件块id提取出这个文件</p><pre><code>#!python
+file = open('xxdisk.bin', 'rb')
+data = file.read()
+out = open('extract', 'wb')
+ids = [0x333, 0x32c, 0x32d, 0x324, 0x326, 0x325]
+
+for file_id in ids:
+    out.write(data[0x5024+(file_id&lt;&lt;9):0x5024+(file_id&lt;&lt;9)+512])
+
+out.close()
+</code></pre><p>提取出来是一个tar包，解压后得到一个名为555的文件，cat一下在最后得到flag</p><p><img alt="get_flag1" img-src="f970b0548d449d0538ea48b0dfca738d166ffbf0.jpg"></p><h1>0x02 解密文件</h1><hr><p>第二部分的题是解密加了密的文件，首先搜索xxdisk.bin可以发现有一个flag.file的加密文件，通过查看type可以知道是一个加密的文件，因此需要分析加密函数0x402B04</p><pre><code>#!cpp
+__int64 __fastcall crypt_func(MemStruct *system, const char **filename_arg)
+{
+  unsigned int pass_len; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="31545049710001">[email&#160;protected]</a>
+  const char *filename; // [sp+10h] [bp-130h]@1
+  inodeSt *filenode; // [sp+18h] [bp-128h]@4
+  char input_password_md5; // [sp+20h] [bp-120h]@10
+  char password; // [sp+30h] [bp-110h]@8
+  __int64 v8; // [sp+138h] [bp-8h]@1
+
+  v8 = *MK_FP(__FS__, 40LL);
+  filename = *filename_arg;
+  if ( !strcmp(*filename_arg, ".") || !strcmp(filename, "..") )
+  {
+    puts(" error");
+  }
+  else
+  {
+    filenode = find_file(system, *&amp;system-&gt;pwd_node, filename);
+    if ( filenode )
+    {
+      if ( *&amp;filenode-&gt;filetype &amp; 8 )
+      {
+        puts(" error");
+      }
+      else
+      {
+        printf("password:", filename_arg);
+        fflush(0LL);
+        readln(&amp;password, 256, '\n');
+        if ( strlen(&amp;password) &gt; 5 )
+        {
+          pass_len = strlen(&amp;password);
+          md5(&amp;password, pass_len, &amp;input_password_md5);
+          *&amp;filenode-&gt;pass_md5 = *&amp;input_password_md5;// 前两个字节
+          *&amp;filenode-&gt;filetype |= 8u;
+          do_crypt(system, filenode, &amp;password, *(*&amp;system-&gt;pwd_node + 4LL));
+        }
+        else
+        {
+          puts(" error");
+        }
+      }
+    }
+    else
+    {
+      puts(" error");
+    }
+  }
+  return *MK_FP(__FS__, 40LL) ^ v8;
+}
+</code></pre><p>它会计算password的md5值，然后把前两个字节存储到0x171-0x172，在把0x16D-0x170的值或8，然后进行加密操作0x4027AF</p><pre><code>#!cpp
+__int64 __fastcall do_crypt(MemStruct *system, inodeSt *filenode, char *pass_arg, unsigned __int16 parent_filenode_id_arg)
+{
+  char *password; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="aefdfa9f96f196ee9f">[email&#160;protected]</a>
+  unsigned __int16 parent_filenode_id; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="9ac9ceabaec5a8daab">[email&#160;protected]</a>
+  char key; // [sp+20h] [bp-20h]@1
+  __int64 v8; // [sp+38h] [bp-8h]@1
+
+  password = pass_arg;
+  parent_filenode_id = parent_filenode_id_arg;
+  v8 = *MK_FP(__FS__, 40LL);
+  memset(&amp;key, 0, 10uLL);
+  sprintf(
+    &amp;key,
+    "%c%c%c%c%04x",
+    *password,
+    password[1],
+    password[2],
+    password[3],
+    *&amp;filenode-&gt;pass_md5 + parent_filenode_id);
+  des_key_init(&amp;key);
+  if ( filenode-&gt;is_dir )
+    crypt_head(filenode);
+  else
+    crypt_all(system, filenode);
+  return *MK_FP(__FS__, 40LL) ^ v8;
+}
+</code></pre><p>这个函数先是初始化key，<code>key=password[0:4]+(int(md5(password)[0:2])+parent_node_id)</code>，然后如果是文件夹就仅仅加密文件头0x00-0x68，如果是文件就加密文件内容和头部。</p><p>完整的加密步骤是：</p><ol><li>filenode[0x171-0x172] = md5(password)[0:2]</li><li>filenode[0x16D-0x170] |= 8</li><li>key = password[0:4] + (int(md5(password)[0:2]) + parent&#95;node&#95;id)</li><li>des&#95;key&#95;init(key)</li><li>如果是文件夹则加密filenode[0x00-0x68]，如果是文件则加密文件块内容和filenode[0x00-0x68]</li><li>每组8字节进行des加密</li></ol><blockquote><p>注意：这里的DES是非标准的</p></blockquote><p>因此我们要做的就是爆破password[0:4]和parent&#95;node&#95;id，我先尝试解开了flag-door，然后发现里面是三个加了密的文件夹，又解密了其中一个文件夹，发现里面又是三个加了密的文件夹，于是猜测flag.file是位于这些加了密的文件夹里的，所以parent&#95;node&#95;id就是这些加了密的文件夹的id，后来又发现有些加了密的文件夹是空的（很容易判断。。。），可以剔除掉这些，下面进行搜索</p><pre><code>#!python
+file = open('xxdisk.bin', 'rb')
+data = file.read()
+indexes = []
+
+for i in xrange(len(data)):
+    if data[i] == '\x01' and data[i+1] == '\x08':
+        start = i - 0x16c
+        offset1 = start + 8
+        offset2 = offset1 + 0x10
+        offset7 = offset2 + 0x50
+        if data[offset1] != data[offset2] and data[offset7] == '\x00':
+            indexes.append((start - 0x5024) / 512)
+
+print indexes
+</code></pre><p>搜索结果如下图</p><p><img alt="search_ids" img-src="b71ace1eb58aa7c8c8fda0a7ea224a5a3451803e.jpg"></p><p>接下来就是爆破出加密flag.file的key，由于不是标准的DES，我抽取的代码也有问题，所以我直接patch程序，把main函数改为了下面这样</p><p><img alt="patched_main" img-src="e700ac5b3364eefcb7718f48caf0120bddacf932.jpg"></p><p>print&#95;char&#95;table是数字+字母+下划线，indexes是上面搜索出的id，这里可以把第一个for循环分块处理，这样可以比较快地跑出key</p><pre><code>#!python
+./xxFileSystem_patch_1 `echo -n '\x82\xA7\x1D\xDE\x4D\xB6\x74\xB6'` `echo -n '\xd4\x02\x00\x00\xff\xff\xff\xff'`
+Wh4tfab0
+Wh4vfab0
+Wh4Tfab0
+Wh4Vfab0
+</code></pre><p>这样就知道了flag.file的parent&#95;node&#95;id为0x210，接下来就是解密这个文件，有4个key，随便取一个就行，解密时可以把flag.file挂载到根目录，就是把根目录的parent&#95;node&#95;id改为0x210，把0x2d4(flag.file的id)加到目录的文件id中，并把mask的有效位和size都设置正确，然后动态调试下断点解密，你们懂的，解密出来之后cat，在最后得到下一部分的文件名</p><p><img alt="cat_flag.file" img-src="3e544674f01258f67572a1b8f17c393e97f5eada.jpg"></p><p>查看xx&#95;0.0&#95;xx的type发现它是一个隐藏了的加密文件，用之前的方法爆破出key为<code>B4d_a8bc</code>，然后把type改为0x8，挂载到根目录，相同的方法解密出xx&#95;0.0&#95;xx是一个tar包，解压得到一个aes.cc的文件，cat一下得到flag</p><p><img alt="get_flag2" img-src="97a0d3cc5188b7814717c923f42299741871a62d.jpg"></p><h1>0x03 总结</h1><hr><p>收获挺多的，增强了我patch的能力，但是还有很长的路要走。。。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

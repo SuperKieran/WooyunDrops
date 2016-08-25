@@ -1,0 +1,221 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">远程入侵原装乘用车（上）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">唐朝实验室</a> <span class="bull">·</span> <time title="2015/11/25 15:34" ui-time="" datetime="2015/11/25 15:34" class="published ng-binding ng-isolate-scope">2015/11/25 15:34</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author: Dr. Charlie Miller (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="81e2ece8edede4f3c1eef1e4eff3e2e4afeef3e6">[email&#160;protected]</a>) Chris Valasek (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dcbfaabdb0bdafb9b79cbbb1bdb5b0f2bfb3b1">[email&#160;protected]</a>)</strong></p><p><strong>唐朝实验室翻译组:朱于涛 刘家志</strong></p><h1>0x00 简介&amp;背景</h1><hr><p>汽车安全研究一直是大众消费者非常感兴趣的一个话题，因为汽车已经走入了寻常百姓家，而且我们也明白一旦攻击者可以任意的操控我们的汽车，那么我们的行车安全就会受到极大的威胁。很大程度上，汽车安全研究是从2010年开始的。当时，华盛顿大学和加州大学圣地亚哥分校的研究人员称，如果他们能够将某些信息注入到车辆的CAN总线中，他们就可以操控车辆的一些物理状态（推测的测试车型是2009年的雪佛兰迈锐宝），比如控制仪表盘上的显示速度，关闭引擎或影响刹车性能。虽然这次研究很有意思，但是也遭到了大众的广泛批评，因为他们认为攻击者在无法近距离接触到车辆的情况下，是没有办法向汽车中注入此类信息的，不过，如果攻击者能近距离接触到目标车辆，他们可以直接切断某条线路，或执行其他的一些物理攻击就足够了。</p><p>第二年，这个研究小组证明了自己在2010年时提出的论断，实现了这种远程攻击方案。他们演示了三种不同的途径来说明如何在汽车上执行代码，分别是通过收音机的mp3解析器，蓝牙栈和卫星通讯系统。一旦代码能在汽车上运行了，他们接下来就可以注入CAN信息，从而影响车辆的物理系统。此次远程攻击研究颇具开创性，因为这一研究证明了，不只是当地的汽车，而是全国范围内的汽车都存在安全漏洞。不过，在这两次的研究报告中都没有具体地列出这些攻击方法是如何实现的，也没有记录测试车辆的型号。</p><p>不久之后，DARPA授权我们研发一个能协助汽车研究进行的工具库，降低新研究员进入这一领域的门槛。随后，我们发布了这些工具并演示了几种针对两款老车型的物理攻击方法，测试的车辆分别是2010年的福特翼虎和2010年的丰田普锐斯。现在，这一套工具已经成为了众多研究人员的优选，甚至美国国家公路交通安全管理局也在使用这套工具来进行车辆测试。</p><p>在我们2012年的研究中，考虑到学术研究者先前发布的一些材料，我们假定远程入侵是可行的。所以，我们假设可以通过一种可靠的方式将CAN息注入到汽车总线中。除了公布这些工具，我们还放出了在攻击中使用的CAN信息，借此来鼓励更多的研究人员参与到汽车研究中。另外，我们的主要贡献还包括证明了如何通过CAN信息来控制方向盘的转向。这种控制能实现的原因在于汽车功能的发展，从首次研究至今，现在的汽车已经具备了一些类似自动平行泊车和车道维持辅助系统的功能，而这些功能的实现都是通过接收CAN总线发出的ECU操作命令完成的。所以，由此证明了，随着汽车上新技术的引入，新型的攻击方式也在成为可能。</p><p>汽车产业对此回应称，因为我们能接触到目标车辆，向车辆的总线中注入CAN信息，所以才能实现这些攻击。例如，丰田就发表声明称“整个汽车产业以及我们的工作焦点就是防止车辆以外的无线设备实现远程入侵。我们认为我们的系统是强大且安全的。”</p><p>2013年，DARPA再次授权我们研发一个平台来帮助研究员在不需要购买测试车辆的前提下进行汽车安全研究。这次的重点还是在于降低汽车研究的成本和难度，尤其对于那些有传统计算机安全背景的研究人员。</p><p>2014年，为了更具普适性，而不是仅限于当时的3种车型（2009年雪佛兰迈锐宝，2010年福特翼虎，2010年丰田普锐斯），我们收集了大量关于汽车结构的数据，尝试从更高层级上判断哪些车辆会给攻击者造成最大的障碍。我们首先评估了攻击平面，从获取CAN信息，到获取关键的安全性ECU，最后通过ECU来采取一些物理操作。最终，我们发现2014年的吉普切诺和另外两款车综合了这两种攻击途径，并且车辆的结构简单，具备大量的高级物理功能，所以这几款车非常适合我们进行研究。</p><p>我们采购了一台2014年的吉普切诺来进行研究，因为像学术研究者一样，我们很想证明先前在福特和丰田汽车上应用的攻击方法也可以远程实现。因为汽车制造商在我们发布了研究报告后还是那么的自信，所以我们想要证明在原装车上，远程攻击仍然是可行的，以此来鼓励所有人都重视这一威胁。在本文中，我们远程攻击了一台原装的2014年款吉普切诺和类似的车辆来获取对车辆的物理控制。我们要通过这次研究，将详细的研究信息传递给安全研究员、汽车制造商、供应商和消费者，希望将来生产的汽车能更安全。</p><h1>0x01 目标-2014款吉普切诺</h1><hr><p>我们选择2014款吉普切诺是因为这款车给我们提供了最佳的机会来证明，一旦远程入侵成功，攻击者就可以通过发送信息，侵入驾驶员的隐私，代替攻击者执行一些物理操作。正如我们在先前研究中就指出的，对于攻击者来说，这款车的攻击障碍更少。但是，这并不代表其他制造商生产的汽车就是无法入侵的或是更安全的，只是说，我们认为这款车是适合我们的研究对象。更重要是，在我们的预算限制中，只有这款车能提供我们想要的技术功能。</p><p><img alt="" img-src="n3ocq0aljnai5zudtvoujg?s=2sdkadyvrlzm"></p><h2>网络架构</h2><p>这台2014款吉普切诺的架构非常吸引我们，因为这款车的头单元（无线电广播）连接到了车辆上实现的两条CAN总线。</p><p><img alt="" img-src="jvnju0kkly7ttzro-gdxzw?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的结构图</p><p>我们猜测，如果能入侵汽车上的无线电模块，我们就能访问CAN-IHS和CAN-C网络上的ECU，也就是说，我们可以把信息发送到所有的ECU上，而这些ECU控制着车辆的各种物理特性。在后面你会看到，我们在入侵了头单元后，并没能直接访问到CAN总线，所以，还需要接下来的漏洞利用阶段（Exploitation Stage）。有这样的说法，CAN总线中不存在架构限制，比如，控制转向的是独立的总线。如果我们可以从头单元中发送信息，那么信息就能传递到CAN总线上的每一个ECU。</p><h3>CAN C总线</h3><ol><li>ABS 模块 - 防抱死制动系统</li><li>AHLM 模块 - 大灯高度调整</li><li>ACC 模块 - 自适应巡航控制</li><li>BCM 模块 - 车体控制</li><li>CCB 连接器 - 星型 CAN C 主体</li><li>CCIP 连接器 - 星型 CAN C IP</li><li>DLC 自我诊断接头</li><li>DTCM 模块 - 动力控制</li><li>EPB 模块 - 电子驻车制动器</li><li>EPS 模块 - 电子助力转向系统</li><li>ESM 模块 - 电子变速</li><li>FFCM 摄像头 - 前置摄像头</li><li>IPC 集群</li><li>OCM 模块 - 乘客分类模块</li><li>ORC 模块 - 乘客约束控制器</li><li>PAM 模块 - 泊车辅助</li><li>PCM 模块 - 动力系统控制 (2.4L)</li><li>无线电模块 - 无线电广播</li><li>RFH 模块 - 射频中心</li><li>SCM 模块 - 转向控制</li><li>SCLM 模块 - 转向柱锁</li><li>TCM 模块 - 传动控制</li></ol><h3>CAN IHS总线</h3><ol><li>AMP 放大器 - 无线电广播</li><li>BCM 模块 - 车体控制</li><li>CCB 连接器 - 星型 CAN IHS 主体</li><li>CCIP 连接器 - 星型 CAN IHS IP</li><li>DDM 模块 - 司机门锁</li><li>DLC 自我诊断接头</li><li>EDM 模块 -外部 DISC</li><li>HSM 模块 - 加热座椅</li><li>HVAC 模块 - A/C 加热器</li><li>ICS 模块 - 集成中心栈开关</li><li>IPC 模块 - 集群</li><li>LBSS 传感器 - 盲点左后方</li><li>MSM 模块 - 记忆座椅驱动</li><li>PDM 模块 - 乘客门</li><li>PLGM 模块 - 电动尾门</li><li>无线电模块 - 无线电广播（非桥接）</li><li>RBSS 传感器 - 盲点右后方</li></ol><h1>0x02 网络物理特性</h1><p>在这一部分中，我们介绍了2014款吉普切诺使用的驾驶协助系统。我们对这些技术非常感兴趣，因为在此前的攻击中，我们就是利用了类似的系统才获取了对车辆的物理控制。虽然，我们也相信这些技术进步保证了驾驶员和乘客的安全，但是，不可否认的是，攻击者也会利用这些系统作为控制车辆的途径。</p><h2>自适应巡航控制（ACC）</h2><p>2014年款的吉普切诺配备了自适应巡航控制系统（ACC），这项技术能够协助驾驶员与前车保持合适的距离。实际上，如果启用了巡航控制，当前车减速时，车辆就会适当的刹车以避免与前车发生碰撞，当道路上的障碍移除或进入安全距离后，车辆就会恢复到正常的巡航控制速度。如果前车停止前行，ACC模块也可以控制驾驶车辆停止前行。</p><h2>前向碰撞警告系统+（FCW+）</h2><p>与ACC类似，前向碰撞警告系统+（FCW+）会防止车辆与前方物体发生碰撞。但是，不同于ACC，除非特意关闭，FCW+是一直开启的，在遇到突发情况时，系统会协助驾驶员刹车。例如，如果驾驶员正在看手机，而没有注意前方的道路，并且前方车辆突然刹车了，FCW+就会发出声音警报，并代替驾驶员刹车。</p><p><img alt="" img-src="-jxh1jsg2_j6yym1thefug?s=2sdkadyvrlzm"></p><p>图-FCW+</p><h2>车道偏离警告系统（LDW+）</h2><p>车道偏离警告系统（LDW+）这项功能是为了保证驾驶员在高速公路上的驾驶安全。LDW+在启用时会检查行车线路（道路上的油漆线），判断车辆是否乱线，从而避免碰撞或更严重的事故。如果系统检测到车辆正在偏离当前的线路，系统就会调整方向盘以保持在当前线路上形式。</p><p><img alt="" img-src="08bxjfiakybo-mnxoxhbuw?s=2sdkadyvrlzm"></p><p>图-LDW+</p><h2>泊车辅助系统（PAM）</h2><p>近期，最新的泊车辅助功能（PAM）也加入到了普通车辆上。泊车辅助系统（PAM）能帮助驾驶员完成停车操作，在多数情况下不需要驾驶员出力，比如平行停车，倒车停车等。我们认为以此为切入点，是控制车辆方向盘的最简单方法，并且我们已经证明了利用这项技术，只需要通过CAN信息就能控制车辆在高速行驶中的转向。在后面你会发现，PAM技术和模块在我们的研究中发挥了关键作用。</p><p><img alt="" img-src="yeco4capwhncvmdljbgyva?s=2sdkadyvrlzm"></p><p>图-使用中的PAM系统显示</p><h1>0x03 远程攻击途径</h1><hr><p>在下表中，我们列出了攻击者可能选择的一些切入点。很多人在看到这些项目时想到的都是各种技术术语，但是对于攻击者来说，每项与外界交互的技术都是一个潜在的攻击切入点。</p><p><img alt="" img-src="1wdffyjjfwnwdbq3bxfdha?s=2sdkadyvrlzm"></p><h2>被动防盗系统（PATS）</h2><p>现在，在很多汽车的点火钥匙中都植入了一个小芯片，与车辆上的传感器通讯。对于吉普切诺这款车来说，其传感器直接通过线路连接到了射频中心模块上（RFHM）。当按下点火开关时，板载计算机就会发出一个射频（RF）信号，钥匙中的射频器就可以接受这个信号。然后钥匙中的射频器会返回一个唯一的射频信号到车上的计算机，计算机在确定信号后，就会启动并运行汽车，整个过程不超过1秒。如果板载计算机没有接收到正确的识别代码，某些组件，比如油泵，启动器就不会运行。</p><p>从远程攻击的角度看，这个攻击平面太窄了。唯一的数据传输（并且是由IC上的软件处理）就是识别码和射频信号。很难想象这个识别代码中会存在可利用的漏洞，即使是有，你也必须要接近传感器，因为传感器在设计上就只能接收附近的信号。</p><p><img alt="" img-src="kqfr4kevkg6_pxl_b1halg?s=2sdkadyvrlzm"></p><p>图-显示没有检测到钥匙</p><h2>胎压监测系统（TPMS）</h2><p>在汽车上，每个轮胎都有一个胎压传感器，会时刻测量胎压并把实时数据传输给ECU。在吉普切诺上，接收传感器通过线路连接到了RFHM上。这里使用的无线电信号是专利性的，但是，已经有人对TPMS系统进行了研究并调查了这个系统的安全性。</p><p>几乎可以确定的是，通过采取一些操作是可以攻击TPMS系统的，比如让车辆误以为轮胎或TPMS系统出现了问题。另外，研究人员还证明了在有些情况下，是可以造成相关的ECU崩溃或变砖。考虑到代码执行的可能性，这个攻击平面也很窄。但是，既然ECU能远程变砖，这还是说明其数据处理方式不够安全，所以这类攻击还是可行的。</p><p><img alt="" img-src="rqb3gs1fxzk-0r-m5pev4a?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的TPMS系统显示界面</p><h2>遥控门锁（RKE）</h2><p>电子钥匙，也就是遥控门锁中有一个短距离的无线电传输装置，可以与车辆上的ECU通讯。这个无线电传输器会发送包含有身份信息的数据，然后ECU会判断这个秘钥是不是有效的，从而决定随后的上锁、解锁和启动引擎等指令。在吉普基诺这款车中，负责接收这个信息的还是RFHM。</p><p>鉴于远程代码执行，这种攻击平面很窄。因为，RHFM中一定有专门的固件来负责处理射频信号，加密/解密代码和识别电子钥匙数据的逻辑以及编程备用电子钥匙的逻辑。虽然这是一种可能的攻击途径，但是要想在RKE中找到漏洞来实现远程代码执行似乎是不可能的。</p><p><img alt="" img-src="ib9vmf4boyrxwxfvr5iaxq?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的电子钥匙</p><h2>蓝牙</h2><p>大多数汽车都能够通过蓝牙来同步设备。也就是说ECU有处理复杂远程信号的能力。在吉普切诺上，蓝牙是通过无线电广播（头单元）接收和处理的。这样汽车就可以访问手机上的通讯录，通过手机打电话，听音乐，发信息以及其他功能。</p><p>不同于现有的其他信号，蓝牙栈很庞大，同时也存在着大量的攻击漏洞，所以攻击平面很大。一般来说，涉及到蓝牙栈的攻击方案有两种。第一种是利用未配对的设备。这种攻击的危险程度是最高的，因为攻击者可以获取到设备的代码。第二种利用方法是在配对完成后，因为涉及到了用户交互，所以威胁性没有那么大。曾经就有研究人员演示了如何利用蓝牙接口来入侵一辆汽车。Codenomicon的研究人员还发现，汽车中常用的蓝牙接收器有很多崩溃的情况。</p><p><img alt="" img-src="dyr6nprtjlx4o_gb-ipmyg?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的蓝牙面板</p><h2>无线电数据系统</h2><p>无线电广播不仅仅可以接收声音信号，也可以接收数据。在吉普切诺上，无线电广播可以接收多种远程输入，比如GPS，AM/FM广播和卫星电台。在多数情况下，这些信号都会简单的转换成音频输出，数据解析的数量也不大，这就说明其中不太可能有可以利用的漏洞。但是，例外就是无线电数据系统中用于发送数据和FM模拟信号（或卫星电台）的数据。用户可以感知到包括当电台播报的电台名称和正在播放的歌曲名称，在这时，数据必须要经过解析和显示，这样就为安全漏洞创造了空间。</p><p><img alt="" img-src="ixsxvkscpjouwczv_gfk-w?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的无线电广播数据面板</p><h2>Wi-Fi</h2><p>有些汽车还提供了蜂窝数据上网功能，实际上，这些汽车是通过Wi-Fi热点的方式来为乘客提供网络连接。在吉普切诺上，这是一个根据使用情况购买的功能，比如按天或按月购买。我们观察到即使是不了解汽车系统的人也可以访问这个Wi-Fi系统。虽然Wi-Fi安全评估方法已经存在了好多年，但是近年来，数据点入侵攻击还是经常发生。</p><p><img alt="" img-src="dy6jd4neg8rrxeoimnvgca?s=2sdkadyvrlzm"></p><p>图-2014年款吉普切诺的Wi-Fi面板</p><h2>车载通讯系统/互联网/Apps</h2><p>如今的许多汽车都配备了蜂窝广播功能，一般是叫做车载通讯系统，用于将车辆连接到数据网络，例如，通用汽车使用的昂斯达系统。蜂窝技术也可以用于接收数据，比如交通或天气信息。</p><p>这一功能就像是汽车攻击业的圣杯，因为，只要目标汽车上有蜂窝通讯，那么可以攻击的范围实在是太广了。即使车载通讯单元不直接驻存到CAN总线上，这个通讯单元仍然可以通过麦克风向其他位置远程传输数据/声音。有的研究人员此前就远程利用过汽车上的通讯单元，并且还没有涉及用户交互。在吉普切诺上，所有的这些功能都是由无线电控制的，而这个无线电广播又驻存在了CAN-IHS总线和CAN-C总线这两者之上。</p><p>在2014年的吉普切诺上，其通讯系统、网络、无线电广播和Apps都在出厂时绑定到了哈曼Uconnect 系统上。接下来我们会详细地介绍这个Uconnect系统，但是我们想要指出，所有与“信息娱乐”系统相关的功能都是物理集成在一个单元上。</p><p><img alt="" img-src="nt7vyzm5ojbaasrauqtczg?s=2sdkadyvrlzm"></p><h1>0x04 Uconnect系统</h1><hr><p>2014年款的吉普雷诺使用了由哈曼卡顿生产的Uconnect 8.4AN/RA4 无线电广播系统，并且哈曼卡顿是吉普汽车的唯一供应商，负责提供信息娱乐系统、Wi-Fi连接、导航、app和蜂窝通讯。大多数的功能都是集成在一块德州仪器芯片上的OMAP-DM3730系统中，这是汽车上经常使用的一个系统。菲亚特克莱斯勒汽车的很多不同车型也都使用了哈曼Uconnect系统，包括克莱斯勒、道奇、吉普和Ram。当然，其他品牌的汽车也有的使用了Uconnect系统。</p><p>Uconnect头单元中同样包含有微控制器和软件，允许通过控制器局域网-高速（CAN-IHS）数据总线与车辆上的其他电子模块通讯。在配备了Uconnect Access系统的汽车上，系统还会通过CAN-C数据总线，使用电子信息与汽车上的其他电子模块通讯。</p><p>不仅仅是吉普切诺这款车配备了哈曼Ucoonect系统，这个系统在克莱斯勒-菲亚特系列的汽车上也很常见，甚至还出现在了法拉利加利福尼亚这款车上。这就意味着，虽然我们是以2014年款的吉普切诺为例，但是，只要是安装了Uconnect系统的汽车，这里提到的漏洞和信息都是适用的。所以说，在道路上，有漏洞的汽车数量相当庞大。</p><h2>QNX环境</h2><p>2014年款吉普切诺上使用的Ucoonect系统运行的是QNX操作系统，使用了一个32位ARM架构的处理器。这基本上就是汽车信息娱乐系统的标配。如果Uconnect系统不可用的话，大部分的测试和检查都可以在QNX虚拟机上完成，但是，系统很显然配备了一个工作单元能帮助到我们的应用研究。</p><pre><code># pidin info
+CPU:ARM Release:6.5.0 FreeMem:91Mb/512Mb BootTime:Jul 30 21:45:38 2014 
+Processes: 107, Threads: 739
+Processor1: 1094697090 Cortex A8 800MHz FPU
+</code></pre><p>除了虚拟的QNX系统，用于更新和重装操作系统的ISO数据包也可以很容易地从网上下载到。在获取了这个ISO文件后，我们调查了其目录结构和文件系统。我们研究发现，有很多研究方法都可以在没有测试车辆，没有Ucoonect系统或QNX虚拟机的前提下完成，比如，逆向二进制文件。</p><h2>文件系统和服务</h2><p>我们的Uconnect单元使用了NAND flash，这个flash中包含有几个不同的文件系统，各自发挥着不同的作用。下面列出的是我们感兴趣的一些文件系统和需要额外研究的部分。在接下来，我们还会讨论这些部分。要想获取更多关于QNX镜像的信息，请参考他们的说明文档。</p><ul><li><strong>IPL</strong>：初始程序加载器（IPL）中包含着用于加载Uconnect系统的引导程序。虽然很有意思，但是我们并没有深入地检查这个引导程序。因为我们的目标是物理控制目标车辆，所以头单元中的其他部分更具相关性。</li><li><strong>IFS</strong>：IFS中包含了QNX文件系统镜像，在启动时会加载到RAM中。这个文件系统中包括了所有与操作系统相关的二进制和配置文件。IFS是只读的。所以，虽然这里有大量的二进制看似可以覆盖和替换，但是攻击者的能力会受到限制。话虽如此，IFS是可以在更新过程中篡改的，我们随后会讨论。</li><li><strong>ETFS</strong>： 嵌入式事物文件系统（ETFS)是一个支持读写的文件系统，这个系统是可以修改的。ETFS是为了配合嵌入式固态存储设备的使用。ETFS实现了一个高度可靠的文件系统，供嵌入式固态存储设备使用，尤其是NAND flash。这个文件系统能完整支持POSIX语法中的分层目录结构。</li><li><strong>MMC</strong>：多媒体扩展卡（MMC）安装在/fs/mmc0/，用于储存系统数据。在Uconnect系统中，只有这一大片区域是可写的，在接下来漏洞利用过程中，我们会使用这个位置来储存文件。</li></ul><h3>IFS</h3><p>如上所述，IFS用于放置系统二进制，以及在Uconnect头单元上运行QNX操作系统所需要的配置文件。我们从克莱斯勒汽车上获取了一个ISO文件，通过观察其文件系统来判断哪些文件会在更新过程中受到影响。例如，在解压了ISO后，我们检查了主目录中的’<code>manifest</code>’，发现了IFS位于一个‘<code>ifs-cmc.bin</code>’文件中。</p><pre><code>ifs =
+{
+name        = "ifs installer.",
+installer   = "ifs",
+data        = "ifs-cmc.bin",
+},
+</code></pre><p>如果我们想要在没有Ucoonect系统的情况下查看IFS，‘<code>swdl.bin</code>’需要挂载到QNX虚拟机中，因为这不是一个标准的IFS镜像。这里面包括了更新需要的所有系统可执行文件。‘<code>swdl.bin</code>’文件可以在‘<code>swdl/usr/share</code>’ 目录中找到。</p><p>例如，如果要转储QNX上（在我们的例子中，是QNX虚拟机）的IFS，你可以运行下面的命令：</p><pre><code>memifs2 -q -d /fs/usb0/usr/share/swdl.bin /
+</code></pre><p>运行结果是检查一个挂载为只读的根目录（“/”）。通过发出‘<code>dumpifs</code>’命令，这个文件系统可以完全迭代。我们从ISO更新文件中转储了IFS，下面就是输出结果。</p><pre><code>     Offset         Size     Name
+          0            8     *.boot
+          8          100     Startup-header flags1=0x9 flags2=0 paddr_bias=0
+        108        22008     startup.*
+      22110           5c     Image-header mountpoint=/
+      2216c          cdc     Image-directory
+       ----         ----     Root-dirent
+      23000        8a000     proc/boot/procnto-instr
+      ad000         325c     proc/boot/.script
+       ----            3     bin/sh -&gt; ksh
+       ----            9     dev/console -&gt; /dev/ser3
+       ----            a     tmp -&gt; /dev/shmem
+       ----           10     usr/var -&gt; /fs/etfs/usr/var
+       ----           16     HBpersistence -&gt; /fs/etfs/usr/var/trace
+       ----            a     var/run -&gt; /dev/shmem
+       ----            a     var/lock -&gt; /dev/shmem
+       ----            a     var/log/ppp -&gt; /dev/shmem
+       ----           15     opt/sys/bin/pppd -&gt; /fs/mmc0/app/bin/pppd
+       ----           15     opt/sys/bin/chat -&gt; /fs/mmc0/app/bin/chat
+       ----           18     bin/netstat -&gt; /fs/mmc0/app/bin/netstat
+       ----           16     etc/resolv.conf -&gt; /dev/shmem/resolv.conf
+       ----           16     etc/ppp/resolv.conf -&gt; /dev/shmem/resolv.conf
+       ----           18     etc/tuner -&gt; /fs/mmc0/app/share/tuner
+       ----            8     var/override -&gt; /fs/etfs
+       ----            c     usr/local -&gt; /fs/mmc0/app
+       ----            b     usr/share/eq -&gt; /fs/mmc0/eq
+      b1000         12af     etc/system/config/fram.conf
+      b3000          38c     etc/system/config/nand_partition.txt
+      b4000          56b     etc/system/config/gpio.conf
+      b5000         247b     bin/cat
+      b8000         1fed     bin/io
+      ba000         2545     bin/nice
+      bd000         1fed     bin/io
+      c0000        38e0f     bin/ksh
+      f9000         41bb     bin/slogger
+      fe000         60a1     bin/waitfor
+     105000         531b     bin/pipe
+     10b000         5e02     bin/dev-gpio
+     120000        1270b     bin/dev-ipc
+     140000        1f675     bin/io-usb
+     160000         29eb     bin/resource_seed
+     163000         3888     bin/spi-master
+     167000         48a0     bin/dev-memory
+     16c000         9eab     bin/dev-mmap
+     176000         602c     bin/i2c-omap35xx
+     17d000         da08     bin/devb-mmcsd-omap3730teb 18b000 dd3 bin/dev-ipc.sh
+     18c000         2198     bin/mmc.sh
+     190000        1208f     bin/devc-seromap
+     1a3000         323d     bin/rm
+     1a7000         ffa2     bin/devc-pty
+     1b7000          4eb     bin/startSplashApp
+     1b8000          692     bin/startBackLightApp
+     1b9000         1019     bin/mmc_chk
+     1bb000         42fe     usr/bin/adjustImageState
+     1c0000        12c81     usr/bin/memifs2
+     1d3000          284     usr/bin/loadsecondaryifs.sh 
+     1e0000        77000     lib/libc.so.3
+       ----            9     lib/libc.so -&gt; libc.so.3 
+     260000         b0e4     lib/dll/devu-omap3530-mg.so 
+     26c000         9d17     lib/dll/devu-ehci-omap3.so 
+     276000         4705     lib/dll/spi-omap3530.so 
+     280000        14700     lib/dll/fs-qnx6.so
+     295000         36e6     lib/dll/cam-disk.so
+     2a0000        2b7ba     lib/dll/io-blk.so
+     2d0000        5594f     lib/dll/charset.so
+     330000        1243c     lib/dll/libcam.so.2
+       ----            b     lib/dll/libcam.so -&gt; libcam.so.2
+     350000         3886     lib/dll/fram-i2c.so 
+  Checksums:        image=0x702592f4 startup=0xc11b20c0
+</code></pre><p>虽然，‘<code>dumpifs</code>’ 命令不能获取到与完整操作系统相关的所有信息，比如，‘<code>/etc/shadow</code>’，我们在二进制上运行了grep，其结果说明这种文件是最可能显示的。例如，如果你搜索’root’，你会找到几个字符串，其中最有意思的两个分别是：</p><pre><code>root:x:0:a
+root:ug6HiWQAm947Y:::9b
+</code></pre><p>在通过远程入侵劫持了工作头单元后，我们就可以更全面地在工作的头单元上检查IFS。接下来，我们会讨论如何劫持头单元。</p><h3>ETFS</h3><p>ETFS实现了一个高度可靠的文件系统，供嵌入式固态存储设备使用，尤其是NAND闪存。很显然，ISO中并没有出现ETFS，但是在一个活动的Uconnect系统上能检查到。在我们看来，在ETFS上并没有多少有趣的数据，所以我们就不深入了。</p><pre><code> 例如：/fs/etfs/usr/var/sdars/channelart/I00549T00.png
+</code></pre><h3>MMC</h3><p>在调查ISO和Uconnect系统时，我们发现MMC文件系统中的一些项目是最有意思的。最让我们好奇的是这个文件系统可以挂载为读-写属性，也就是说，如果这个文件系统上有我们感兴趣的东西，比如启动脚本或网络服务，我们就可以启用或修改其内容。比如，我们就发现了’sshd’，‘boot.sh’和 ‘runafterupdate.sh’这样的项目。</p><p>安装脚本-’mmc.lua’会把ISO中的‘<code>/usr/share/MMC_IFS_EXTENSION</code>’复制到‘<code>/fs/mmc0/app</code>’。</p><h3>PPS</h3><p>QNX系统中运行着许多有意思的服务，但是解释所有的这些服务并不在本文的范围中。其中一个很重要的服务是发布/订阅服务（PPS）。在这个服务中有几个文件是我们感兴趣的，下面列出的是最突出的几个：</p><pre><code>/pps/can/vehctl
+/pps/can/tester
+/pps/can/can_c
+/pps/can/send
+/pps/can/comfortctl
+</code></pre><p>这些文件从本质上说，是数据写入的位置，这样就可以将其用作其他进程的输入。我们可以把这些文件想象成具备数据处理能力的UNIX管道，用于协助数据结构的解析。这里有一个定义好的API会与PPS文件交互。假设下面的数据就储存在一个PPS文件中：</p><pre><code>@gps
+city::Ottawa
+speed:n:65.412 position:json:{"latitude":45.6512,"longitude":-75.9041}
+</code></pre><p>为了提取这些数据，你可以使用下面的代码：</p><pre><code>const char *city;
+double lat, lon, speed;
+pps_decoder_t decoder;
+pps_decoder_initialize(&amp;decoder, NULL); pps_decoder_parse_pps_str(&amp;decoder, buffer); pps_decoder_push(&amp;decoder, NULL); pps_decoder_get_double(&amp;decoder, "speed", &amp;speed); pps_decoder_get_string(&amp;decoder, "city", &amp;city);
+pps_decoder_push(&amp;decoder, "position"); pps_decoder_get_double(&amp;decoder, "latitude", &amp;lat); pps_decoder_get_double(&amp;decoder, "longitude", &amp;lon); pps_decoder_pop(&amp;decoder);
+pps_decoder_pop(&amp;decoder);
+if ( pps_decoder_status(&amp;decoder, false) == PPS_DECODER_OK ) { ...
+}
+pps_decoder_cleanup(&amp;decoder);
+</code></pre><p>下面这个真实案例是取自一个活动中的Uconnect系统：</p><pre><code># cat send
+[n]@send
+DR_MM_Lat::1528099482
+DR_MM_Long::1073751823
+GPS_Lat::1528099482
+GPS_Long::1073751823
+HU_CMP::0
+NAVPrsnt::1
+RADIO_W_GYRO::1
+</code></pre><p>虽然，PPS文件位于一个叫做‘can_c’ 的子目录中，但是在写入这些文件时，并没有创建我们用嗅探器观察到的CAN信息。换句话说，这些PPS文件只是能看到进程之间是如何通讯的，并没有直接与CAN总线通讯的权限。</p><p>一开始，我们还希望能利用这些PPS文件来发送任意的CAN信息，但是，在证明了这种方法的生存能力不够强后，我们又把努力方向转向到了其他地方。这不是说，我们无法利用这些文件和PPS子系统来发送任意的CAN信息，只是我们想找到一种更好的办法来实现我们想要的结果。</p><h2>Wi-Fi</h2><p>2014年款的吉普切诺可以选配车载Wi-Fi，其本质就是一个Wi-Fi热点，只有在web上或通过Uconnect系统购买了这项服务，上网功能才能实现。接下来，我们会讨论Wi-Fi热点中存在的一个漏洞，但是要记住，只有当车主启用并购买了这项功能后，这个漏洞才可以利用。</p><h3>加密</h3><p>默认的Wi-Fi加密方法是WPA2，使用的密码是随机生成的，字母数字不少于8位。考虑到目前WPA2的强度和可能的密码数量，这是一种非常安全的设置，所以问题是：攻击者怎样才能入侵这样的网络呢？</p><p>一种相对简单，但是不太可行的方法就是用户选用了WEP加密方法，或直接没有使用加密，这两种都是可行的选择。无论是哪种情况，攻击者都能够通过破解WEP密码或直接加入访问点来入侵这种无线访问点。</p><p>如果攻击者已经入侵了连接到车载Wi-Fi热点的设备，比如，笔记本电脑或手机，那么还存在另外一种攻击方案。既然车主购买了这个功能，也就是说他的手机或其他设备会连接到车上的无线网络。在这种情况下，如果攻击者可以入侵这些设备，他们就能连接到车上的无线网络。但是，我们认为这种方案需要太多的前提条件了，l33t!（黑客常用的聊天语言，主要表示 what!和yeah!的意思）</p><p>但是，接下来我们会看到，即使用户使用了默认的WPA2设置，攻击者还是可以入侵车上的网络，而且方法很简单。通过反汇编OMAP芯片上的‘WifiSvc’二进制（通过转储活动的QNX中的二进制可以获得），攻击者就可以确定用于创建随机密码的算法。这个算法会出现在函数<code>WiFi.E:generateRandomAsciiKey()</code>中。通过反编译，我们发现这个算法包含下面的部分：</p><pre><code>int convert_byte_to_ascii_letter(signed int c_val)
+{
+  char v3; // <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b6c482f684">[email&#160;protected]</a>
+  if ( c_val &gt; 9 )
+  {
+    if ( c_val &gt; 35 )
+      v3 = c_val + 61;
+    else
+      v3 = c_val + 55;
+}
+else
+  {
+    v3 = c_val + 48;
+}
+return v3; }
+char *get_password(){
+         int c_max = 12;
+int c_min = 8;
+unsigned int t = time(NULL);
+srand (t);
+unsigned int len = (rand() % (c_max - c_min + 1)) + c_min; char *password = malloc(len);
+int v9 = 0;
+do{
+unsigned int v10 = rand();
+int v11 = convert_byte_to_ascii_letter(v10 % 62); password[v9] = v11;
+v9++;
+    } while (len &gt; v9);
+return password;
+</code></pre><p>看起来，随机密码是完全是一个时间（几秒钟）的函数，我们很难去调查这个密码是在什么时间生成的，但是下面的信息能表明头单元的首次启动时间。</p><p>所以，通过生成一个密码表来暴力破解无线访问点的WPA2加密是可行的。根据汽车的生成年份，攻击者可以尝试猜测汽车的首次启动时间，并尝试合适的密码。</p><p>仅供参考，如果我们可以猜测出某辆汽车是在几月份首次启动的，我们只需要尝试大约1500万个密码。如果你认为首次启动时间不会是在半夜，那么需要尝试的密码数量又可以减半。我们并不是这方面的专家，但是有资料表明，在使用离线破解技术时，你每秒可以尝试133,000次密码。也就是说，猜测一个月中的所有密码只需要2分钟，猜测整年的密码也用不了半个小时。在多数情况下，虽然我们估计的过于乐观了，但是这种方法还是可行的。</p><p>不过，由于一个复杂的时间漏洞的存在，似乎还有另外一种更简单的密码破解方法，但是，请注意，我们只用这种方法攻击了我们的头单元，我们不能确定这种攻击是不是有普适性。</p><p>当头单元首次启动时，头单元也不知道具体的时间。头单元还需要从GPS或蜂窝连接中接收信号。文件‘clock.lua’负责的就是设置系统时间。我们在函数‘<code>start()</code>’ 中发现了下面的代码：</p><pre><code>local rtcTime = getV850RealtimeClock()
+local rtcValid = false
+if rtcTime == nil or rtcTime.year == 65535 or rtcTime.month == 255 or rtcTime.day == 255 or rtcTime.hour == 255 or rtcTime.mi n == 255 or
+rtcTime.sec == 255 then
+dbg.print("Clock: start -- V850 time not received or is set to factory defaults")
+...
+if rtcValid == false then
+dbg.print("Clock: start -- Unable to create the UTC time from V850") setProperty("timeFormat24", false)
+setProperty("enableClock", true)
+setProperty("gpsTime", true)
+    setProperty("manualUtcOffset", 0)
+    defTime = {}
+defTime.year = 2013
+defTime.month = 1
+defTime.day = 1
+defTime.hour = 0
+defTime.min = 0
+defTime.sec = 0
+defTime.isdst = false setSystemUTCTime(os.time(defTime)) 
+timeFormatOverride = false 
+enableClockOverride = false
+end
+</code></pre><p>根据上面的代码，似乎当头单元无法获取到时间时，就会把时间设置到2013年1月1日 00:00:00 GMT。问题是，当‘WifiSvc’在首次启动并设置WPA2密码的时候，正确的时间是不是已经设置了。仅仅是根据我们的数据来看，答案是还没有。如果你获取到吉普切诺上的WPA2密码“<strong>TtYMxfPhZxkp</strong>”并暴力破解所有可能的时间来判断生成密码的是哪个时间，你所得到的结果会是吉普切诺上的密码是在Epioch 时间0x50e22720上生成的。这个时间对应的是2013年1月1日 00:00:32 GMT。这就说明，从‘clock.lua’设置好时间到‘WifiSvc’生成密码，我们的头单元用了32s，而且我们的头单元并没有在这32s中找到正确的时间。所以，在这种情况下，实际只需要尝试十几个可能的密码，而且只有几个的可能性较大。换句话说，几乎瞬间就能破解出密码。</p><h3>开放端口</h3><p>一种常见的Wi-Fi热点评估方法是端口扫描默认的网关，并检查是不是打开了任何端口。出乎我们意料的是，开放端口远远的数量超过了3个。下面是根据网络状态（netstat）列出的监听端口：</p><pre><code># netstat -n | grep LISTEN
+tcp        0      0  *.6010                 *.*                   LISTEN
+tcp        0      0  *.2011                 *.*                   LISTEN
+tcp        0      0  *.6020                 *.*                   LISTEN
+tcp        0      0  *.2021                 *.*                   LISTEN
+tcp        0      0  127.0.0.1.3128         *.*                   LISTEN
+tcp        0      0  *.51500                *.*                   LISTEN
+tcp        0      0  *.65200                *.*                   LISTEN
+tcp        0      0  *.4400                 *.*                   LISTEN
+tcp        0      0  *.6667                 *.*                   LISTEN
+</code></pre><p>下面是通过端口扫描发现的服务简介：</p><ul><li>2011: NATP</li><li>2021: MontiorService。这个服务提供通过运行系统进入文件或通过TCP/IP的调试/追踪信息；提供通过TCP/IP向SCP系统另外发送GCF信息的可能性。</li><li>3128: 3proxy。这是一个代理服务。</li><li>4400: HmiGateway</li><li>6010: Wicome</li><li>6020: SASService。这个服务实现了基于Speech API架构的客户端-服务端中的服务器部分。</li><li>6667: D-BUS 会话总线</li><li>51500: 3proxy admin web 服务器</li><li>65200**: **dev-mv2trace</li></ul><p>在所有这些服务中，有很多都是专利性质的，很有可能在某个服务中就存在漏洞，能允许远程漏洞利用。</p><p>经过简单的研究，我们发现最有意思的开放端口是6667，这个端口一般是给IRC保留的。很显然，这个Wi-Fi热点无法运行一个IRC服务器，对吧？在使用远程登陆系统的客户端连接到6667端口并返回几次后，我们意识到这并不是一个IRC服务器，但是，D-Bus到IP，实际上是一个跨进程通讯（TPC），也是进程之间在通讯时使用的一个远程过程调用机制。</p><pre><code>$ telnet 192.168.5.1 6667
+Trying 192.168.5.1...
+Connected to 192.168.5.1.
+Escape character is '^]'.
+a
+ERROR "Unknown command"
+</code></pre><h2>D-Bus服务</h2><p>Uconnect系统上的D-Bus信息守护进程绑定到了端口6667，并且如上所述，用于跨进程通讯。进程之间的交互如下：</p><p><img alt="" img-src="ftiwp8b1w4wfxiyf-tpora?s=2sdkadyvrlzm"></p><p>图-<code>http://dbus.freedesktop.org/doc/diagram.png</code></p><h2>综述</h2><p>这里只有两个总线值得一提：系统总线，守护进程和系统服务主要都注册到这个总线；会话总线，为用户应用保留的一个总线。</p><p>D-Bus可以获取认证。在吉普切诺的头单元上，认证是开放给匿名操作的，如下：</p><pre><code>telnet 192.168.5.1 6667
+Trying 192.168.5.1...
+Connected to 192.168.5.1.
+Escape character is '^]'.
+AUTH ANONYMOUS
+OK 4943a53752f52f82a9ea4e6e00000001 
+BEGIN
+</code></pre><p>我们使用Python的D-Bus库写了几个脚本来与D-Bus系统交互，但是在调查期间，我们感觉最实用的工具还是Dfeet，这个工具提供了非常易用的GUI来调试D-Bus服务。</p><p>用户可以使用DFeet工具与吉普切诺上的D-Bus服务交互。在下面的截图中，我们看到的是‘<code>com.harman.service.SoftwareUpdate</code>’ 服务的方法。</p><p><img alt="" img-src="qbatob9ryfrfiwd9tve5rg?s=2sdkadyvrlzm"></p><p>图-<code>com.harman.service.SoftwareUpdat</code> 服务在DFeet中的输出</p><p>DFeet能够连接并列出多个服务（叫做总线名称）。例如：</p><pre><code>com.alcas.xlet.manager.AMS
+com.harman.service.AppManager
+com.harman.service.AudioCtrlSvc
+...
+</code></pre><p>每个服务都有一个对象路径。比如’<code>com.harman.service.onOff</code>’的对象路径就是‘<code>/com/harman/service/onOff</code>’。另外，每个服务都包括两个接口：‘<code>com.harman.Serviceipc</code>’ 和 ‘<code>org.freedesktop.DBus.Introspectable</code>’。Serviceipc接口只有一种获取参数和返回字符串的方法，表示的是通用D-Bus接口。</p><p>在DFeet中就可以调用这些服务。比如，你可以单击’<code>com.harman.service.Control</code>’，然后是‘<code>/com/harman/service/Control</code>’，接着是‘ ‘Serviceipc’下的Invoke’，最后执行下面的参数：“getServices”, “”</p><p><img alt="" img-src="ej87wpm-sa8ctm0hmdw-va?s=2sdkadyvrlzm"></p><p>图-通过DFeet调用</p><p>返回的值可以在输出窗口（上图）中看到，但是我们还列出了下面的信息：</p><pre><code>{"com.harman.service.platform.launcher":
+{"name":"com.harman.service.platform.launcher",
+                                     "methods":{"launch":"launch"}},
+"com.harman.service.Control":
+{"name":"com.harman.service.Control",
+                                     "methods":{"stop":"stop","getModules":"getModules
+","start":"start","getServices":"getServices","setDebug":"setDebug","shutdown":"shutdo
+wn"}},
+"com.harman.service.PersonalConfig":{
+"name":"com.harman.service.PersonalConfig",
+                                     "methods":{"getProperties":"getProperties","getAl
+lProperties":"getAllProperties","setProperties":"setProperties"}},
+</code></pre><p>检查并分类所有的D-Bus服务和通过TCP的方法调用，这是我们留给您的阅读实践。但是，我们已经发现了几种方法，能允许直接与头单元交互，比如调整电台音量，访问PPS数据以及能提供低级权限的其他方法。</p><h2>蜂窝</h2><p>2014款吉普切诺的哈曼Uconnect系统还能够通过Sprint蜂窝网络进行通讯。大多数人都把这种通讯方法称作车载通讯系统。这个通讯系统是车载Wi-Fi、实时流量更新和其他远程连接的支柱。</p><p>蜂窝连接可能是通过Sierra Wireless AirPrime AR5550无线模块实现的，如下。</p><p><img alt="" img-src="0_5KQGs1A11-SCz1rHidRg?s=2SDKADyVrLzM"></p><p>图-哈曼Uconnect系统上的Sierra Wireless AirPrime AR5550无线模块</p><p>你可以根据这个无线模块上的标志判断出这个芯片使用了高通的3G基带，并使用了Sprint作为运营商。用户也可以使用Sierra Wireless 的软件开发工具来开发和调试这些系统。</p><h2>CAN连接性</h2><p>我们先前提到过，Uconnect系统既可以通过Wi-Fi、蜂窝和蓝牙与外界通讯，也可以通过CAN总线与外界通讯。虽然在德州仪器OMAP-DM3730系统上运行的ARM处理器并无法直接访问CAN总线，但是另一个板载数据包却可以。</p><p>负责与内部高速CAN（CAN-IHS）交互的处理器和主要的CAN-C总线是一个Renesas V850处理器，如下。</p><p><img alt="" img-src="4n7vLxMtoVzqyfKyqXO7cw?s=2SDKADyVrLzM"></p><p>图-Renesas V850 FJ3</p><p>通过上面的标志我们能确定这个芯片是Renesas V850 FJ3。另外，结合所有的指示信息和经验，这也是汽车头单元中的典型配置。V850芯片的功耗低而且能持续监控CAN流量数据。在有必要时，这个芯片会唤醒（高功耗的）OMAP芯片。</p><p>不过我们很幸运，IDA Pro中已经包括了一个这种架构的处理器，所以我们不需要自己写了。详细的固件逆向过程请阅读下面的V850章节。</p><h1>0x05 劫持Uconnect</h1><hr><p>接下来你会发现，要想劫持Uconnect设备，并不需要远程入侵这辆吉普，但是，要想弄清楚如何探索头单元和其他部分，劫持是很有必要的。我们在这里提供了一些具体的信息来帮助那些热衷于访问头单元文件的用户。很显然，本地安全是整个汽车安全中很重要的一个部分。因为任何漏洞作者都会告诉你说，只有搞明白了目标系统中错综复杂的关系，你才能创建一个能完全发挥作用的漏洞。</p><p>总的来说，劫持Uconnect设备的方法有两种，第一种适用于所有的版本，也很简单；第二种只适用于特定的操作系统版本，但是可以视为一种合法的入侵。</p><h2>任意版本</h2><p>你可以把一个有效的ISO文件放到一个U盘上，再把这个U盘插入到Uconnect系统的USB端口。头单元就会识别这个包含有更新文件的U盘并开始更新过程，如下。</p><p><img alt="" img-src="crfr_fwy3lseaak8ejdl2q?s=2sdkadyvrlzm"></p><p>图-Uconnect的更新界面</p><p>如果你尝试在U盘验证后，但是重启前，移除U盘，系统就会放弃更新并重启进入常规（非更新）模式。</p><p>但是，在验证了U盘后，系统就会重启头单元。如果，你这时候关机并拔出U盘，系统就会简单地要求你插入U盘。</p><p><img alt="" img-src="qy0q2kbnnc8t03sqyrdy9q?s=2sdkadyvrlzm"></p><p>图-要求插入U盘的界面</p><p>此时，你可以插入一个新的U盘。我们不清楚系统会如何检查新的U盘，但是一定和原来的检查方法很 “接近”或者就根本不检查。然而，U盘上可以包含修改后的文件。比如，通过修改原始ISO文件的十六进制值来更改根密码是可以成功的。更新是从ISO文件上运行的，包括用于验证ISO有效性的代码。所以，如果你愿意的话，也可以阻止代码运行完整性检查。</p><h2>版本14&#95;05&#95;03</h2><p>版本14&#95;05&#95;03中存在一个bug，能允许绕过系统的ISO验证过程。不过，这个ISO文件中的某些属性还是要保持不变的，至于原因我们也不是完全清楚（如上）。至少，我们知道不能更改的属性包括文件中的一些哈希和签名。通过手动编辑ISO就可以绕过完整性检查。</p><p>系统中的bug：</p><pre><code>/usr/share/scripts/update/installer/system_module_check.lua 91 local fname= string.format("%s/swdl.iso", os.getenv("USB_STICK") or "/fs/usb0")
+ 92    local FLAGPOS=128
+ 93
+ 94    local f = io.open(fname, "rb")
+95 96 97 98 99
+100 101
+if f then
+   local r, e = f:seek("set", FLAGPOS)
+   if r and (r == FLAGPOS) then
+      local x = f:read(1)
+      if x then
+if x == "S" then
+print("system_module_check: skip ISO integrity check")
+</code></pre><p>绕过ISO有效性检查很简单，只需要在一个十六进制编辑器中手动编辑文件并把偏移128 (0x80) 上的值修改为‘S’ (0x53)。</p><p><img alt="" img-src="lh9guxrrlca83aasx9sfqq?s=2sdkadyvrlzm"></p><p>图-修改后的完整性检查字节</p><h2>更新模式</h2><p>如果想在更新过程中运行代码，比如，要想绕过除了ISO完整性检查之外的其他检查，你可以更改’system&#95;module&#95;check.lua’。要想绕过某些过程的最有效办法就是修改ISO，让系统检测ISO是不是正在绕过完整性检查，如果是，就放弃更新过程。这样，你就可以在不完成Uconnect系统更新过程的情况下，运行代码了，而完整更新过程可能需要30分钟。仅仅通过修改‘cmds.sh’ 的内容，就可以放弃整个更新过程。</p><p>上面提到的这种在更新过程中运行代码的方法存在弊端，主要是头单元会处于 “更新模式”（更多细节请参阅‘bootmode.sh’ ），也就是说并不是所有的文件系统都会挂载，并且类似网络连接这样的功能也不会启用。但是，头单元在安装更新的过程zhong是可以修改的，而且这种更改是不会因为汽车重启而移除的。</p><h2>常规模式</h2><p>用另外一种不同的方式来修改ISO就可以让代码在 “常规”模式运行，这样就能访问所有的文件系统和网络连接了。为了在常规模式下更新代码。用户必须修改 ‘boot.sh’ 文件来运行一些代码。下面就是劫持ISO时，boot.sh文件的差别：</p><pre><code>&lt; sh /fs/usb0/cmds.sh &amp;
+&lt; ######rently started with high verbosity
+---
+&gt; # Start Image Rot Fixer, currently started with high verbosity
+</code></pre><p>在做出了更改后，Uconnect系统在启动时，就会执行U盘上‘cmds.sh’文件中的任何命令。例如，你可以更改根目录并启动SSH守护进程，这样就可以获取SSH远程权限了（给你访问Uconnect设备的根权限）。</p><p>首先，你必须修改ISO中的根密码，然后，在‘cmds.sh’文件中添加下面的命令。这样在开机时SSH就能启动：‘<code>/fs/mmc0/app/bin/sshd</code>’</p><p>如下是通过SSH登录哈曼Uconnect系统：</p><pre><code>ssh <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="53213c3c2713626a617d62656b7d667d62">[email&#160;protected]</a>
+******************************** CMC ******************************** Warning - You are knowingly accessing a secured system. That means you are liable for any mischeif you do. *********************************************************************
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="295b46465d6918101b07181f11071c0718">[email&#160;protected]</a>'s password:
+</code></pre><p>注意：其中有个词拼错了。</p><p>在很多时候，你可能想要在Uconnect系统中放入文件。要想实现这一点，你必须要能写入一个文件系统，就像运行挂载命令一样简单：</p><pre><code>mount -uw /fs/mmc0/
+</code></pre><p>很明显，通过发出另一个挂载命令就可以逆向这个过程：</p><pre><code>mount -ur /fs/mmc0/
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/9975" rel="bookmark" id="re1">远程入侵原装乘用车（中）</a></li><li><a href="http://drops.wooyun.org/papers/9976" rel="bookmark" id="re2">远程入侵原装乘用车（下）</a></li><li><a href="http://drops.wooyun.org/papers/64" rel="bookmark" id="re3">DNS域传送信息泄露</a></li><li><a href="http://drops.wooyun.org/papers/5042" rel="bookmark" id="re4">Fireeye Mandiant 2014 安全报告 Part1</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">watiger</span> <span class="reply-time">2015-12-03 10:45:03</span></div><p></p><p>halo,nice</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">thevita</span> <span class="reply-time">2015-11-25 18:56:35</span></div><p></p><p>&quot;CAN信息&quot; -&gt; &quot;CAN消息&quot;</p><p></p></div></div></div></div></div></main>

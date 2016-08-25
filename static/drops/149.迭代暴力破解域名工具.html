@@ -1,0 +1,105 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">迭代暴力破解域名工具</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">心伤的胖子</a> <span class="bull">·</span> <time title="2014/02/20 21:32" ui-time="" datetime="2014/02/20 21:32" class="published ng-binding ng-isolate-scope">2014/02/20 21:32</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>原文：<a href="http://www.room362.com/blog/2014/02/19/iterative-dns-brute-forcing/">http://www.room362.com/blog/2014/02/19/iterative-dns-brute-forcing/</a></p><p>翻译原则：没有原则，只是还原了文章的大概意思。</p><p>对于域名的暴力破解你肯定有一个包含多个主机名的文件。在我之前的文章中提到过一些方法是用 XARGS 或者 PARALLEL（译者注：需要的自己翻作者的 Blog）。但是众所周知的是即使是字典也不太可能 “All in one”（译者注：作者这么说是瞧不起天朝的黑客们了么？），但是近些年我在做 DNS 记录收集的时候注意到一个事情，就是大多数的域名都有大量比较短的主机名，因为很容易被记住，通常是四个字符或者更少。</p><p>我肯定你已经知道我即将做什么了，我想破解最多四个字符中所有可能的主机名（译者注：其实有这样的工具，比如 dnsmap、dnsenum 等）。【这段不翻译了，没意思，主要是作者没有写出想要的代码】。最后我偶然在 gist 上发现一个脚本：<a href="https://gist.github.com/petehamilton/4755855">https://gist.github.com/petehamilton/4755855</a> 完美解决了我的需求。</p><p>为了解决我实际的需求我修改了这个脚本（仅仅是使用了 yield 方法）并且最后也是这么做的（记住 DNS 记录没有大小写之分）。</p><p>注意：除非你按 CTRL-C，否则脚本不会停止运行，它会查找更长的主机名。</p><pre><code>#!ruby
+#!/usr/bin/env ruby
+
+#
+## Brute code stolen form: https://gist.github.com/petehamilton/4755855
+#
+
+@domain = 'microsoft.com'
+
+def result?(sub)
+  results = %x(dig +noall <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4360383036213e6d603803272c2e222a2d">[email&#160;protected]</a>} +answer)
+  if results != ""
+      puts "============================"
+      puts "FOUND: \t#{sub}"
+      puts "============================"
+      puts "#{results}"
+      puts "============================"
+  end
+  1 == 2
+end
+
+def crack_yielding(chars)
+  crack_yield(chars){ |p|
+      return p if result?(p)
+  }
+end
+
+
+def crack_yield(chars)
+  chars.each { |c| yield c }
+
+  crack_yield(chars) { |c|
+      chars.each do |x|
+          yield c + x
+      end
+  }
+end
+
+chars = ('a'..'z').to_a
+(0..9).each {|x| chars &lt;&lt; x.to_s} 
+
+crack_yielding(chars)
+</code></pre><p>上面的脚本能够工作，但是很慢，我通过下面的方法加快了执行速度。</p><pre><code>#!ruby
+#!/usr/bin/env ruby
+
+#
+## Brute code stolen form: https://gist.github.com/petehamilton/4755855
+#
+
+def result?(sub)
+  puts sub    
+  1 == 2
+end
+
+def crack_yielding(chars)
+  crack_yield(chars){ |p|
+      return p if result?(p)
+  }
+end
+
+
+def crack_yield(chars)
+  chars.each { |c| yield c }
+
+  crack_yield(chars) { |c|
+      chars.each do |x|
+          yield c + x
+      end
+  }
+end
+
+chars = ('a'..'z').to_a
+(0..9).each {|x| chars &lt;&lt; x.to_s} 
+
+crack_yielding(chars)
+</code></pre><p>它仅仅是打印所有的可能</p><pre><code>a
+b
+c
+d
+e
+f
+...
+</code></pre><p>然后通过管道输送给 parallel 和 dig</p><pre><code>ruby brutelist.rb | parallel -j100 dig +noall {}.microsoft.com +answer
+</code></pre><p>译者注：parallel 是 Linux 下并发执行的程序</p><p>最后得到下面的结果：</p><pre><code>c.microsoft.com. 2   IN  CNAME   c.microsoft.akadns.net.
+c.microsoft.akadns.net.   499 IN  A   65.55.58.184
+e.microsoft.com.  3599    IN  A   191.234.1.50
+g.microsoft.com.  2798    IN  CNAME   g.msn.com.
+g.msn.com.        99  IN  CNAME   g.msn.com.nsatc.net.
+g.msn.com.nsatc.net.  148 IN  A   131.253.34.154
+i.microsoft.com.  779 IN  CNAME   i.toggle.www.ms.akadns.net.
+i.toggle.www.ms.akadns.net. 44    IN  CNAME   i.g.www.ms.akadns.net.
+i.g.www.ms.akadns.net.    225 IN  CNAME   i.microsoft.com.edgesuite.net.
+i.microsoft.com.edgesuite.net. 116 IN CNAME   a1475.g.akamai.net.
+a1475.g.akamai.net.   16  IN  A   23.45.65.26
+a1475.g.akamai.net.   16  IN  A   23.45.65.33
+m.microsoft.com.  3599    IN  CNAME   origin.mobile.ms.akadns.net.
+origin.mobile.ms.akadns.net. 299 IN   A   65.55.186.235
+s.microsoft.com.  3599    IN  CNAME   reroute.microsoft.com.
+reroute.microsoft.com.    3599    IN  A   65.55.58.201
+reroute.microsoft.com.    3599    IN  A   64.4.11.37
+cs.microsoft.com. 81  IN  CNAME   wedcs.trafficmanager.net.
+wedcs.trafficmanager.net. 7   IN  CNAME   wedcseus.cloudapp.net.
+wedcseus.cloudapp.net.    8   IN  A   137.116.48.250
+...
+</code></pre><p>破解愉快（愉快个蛋），你可以在我的 gists 页面找到上面的两个脚本：</p><blockquote><p>Domain version: https://gist.github.com/mubix/9107284</p><p>Parallel version: https://gist.github.com/mubix/9107276</p></blockquote><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2460" rel="bookmark" id="re1">用Burpsuite 来处理csrf token</a></li><li><a href="http://drops.wooyun.org/papers/2185" rel="bookmark" id="re2">Openssl多个安全补丁简易分析危害及修复方案</a></li><li><a href="http://drops.wooyun.org/tips/85" rel="bookmark" id="re3">给CISCO设备中后门的方法--TCL 以及路由安全</a></li><li><a href="http://drops.wooyun.org/tips/8701" rel="bookmark" id="re4">利用白名单绕过360实例</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">咖啡</span> <span class="reply-time">2015-04-15 20:03:28</span></div><p></p><p>感觉这种方式效率很低</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">心伤的胖子</span> <span class="reply-time">2014-02-21 11:20:32</span></div><p></p><p>（译者注：其实有这样的工具，比如 dnsmap、dnsenum 等）<br>这里专门说了下。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云</span> <span class="reply-time">2014-02-21 10:46:21</span></div><p></p><p>记得bt3下有这种工具，纯列举。不过有常见缩写和单词的那种效率更高。</p><p></p></div></div></div></div></div></main>

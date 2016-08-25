@@ -1,0 +1,123 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">第三方接口 黑客怎么爱你都不嫌多</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小飞</a> <span class="bull">·</span> <time title="2014/08/14 11:29" ui-time="" datetime="2014/08/14 11:29" class="published ng-binding ng-isolate-scope">2014/08/14 11:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x01 写在前面</h2><hr><p>本文总结了乌云主站最近提交的 由于第三方接口程序导致的高危漏洞 本文实例都是使用率高，且在近期爆出漏洞的API，具有一定现实意义</p><p>在程序中嵌入第三方程序，可以追溯到discuz！。后来的各种SNS程序，CMS，BBS都纷纷效仿，他们或由官方 或由站长自己添加了各种插件和api，一方面 这些脚本增加了用户体验，然而在黑客眼中，实则是增大了入侵几率。</p><p>各种接口的添加，一般是在整站程序开发周期之后，那么开发全局观的不同步是显而易见的后果，简而言之，前期种种过滤和安全防护，可能由于后期开发对第三方插件盲目的信任，被彻底绕过，导致漏洞形成。</p><h2>0x02  实例分析</h2><hr><h3>看看那些厂商都是怎么被出卖的</h3><p><strong>第一弹 Alipay支付插件那碎一地的节操</strong></p><pre><code>影响程序：Ecshop，Dedecms，Cmseasy ...  
+lib\plugins\pay\alipay.php 
+</code></pre><p>我们看看cmseasy怎么被自己人干掉的吧 在alipay.php中 自己定义的数据库函数在rec_update中</p><pre><code>#!php
+public function rec_update($row , $where){ ... 省略无关代码 ...
+            $sql="UPDATE `".$this-&gt;tablename."` SET ".$sqlud." WHERE ".$where; //漏洞出在这里 一只裸体的$where
+            return $this-&gt;simpledb-&gt;execute($sql);
+        }
+</code></pre><p>可以看到 where 是没有单引号的，我们看看where从哪里能传进来。</p><pre><code>#!php
+public static function changeorders($id,$orderlog) {
+        //file_put_contents('logs.txt', $id);
+        $where=array();
+        $where['id']=$id;
+        $where['status']=4;
+        //$where['orderlog']=serialize($orderlog);
+        $update=orders::getInstance()-&gt;rec_update($where,$id);
+        if($update&lt;1) {
+            exit('改变订单状态出错，请联系管理员');
+        }
+    }
+</code></pre><p>继续追踪changeorders</p><pre><code>#!php
+function respond() {
+        if (!empty($_POST)) {
+            foreach($_POST as $key =&gt;$data) {
+                $_GET[$key] = $data;
+            }
+        }
+        $payment  = pay::get_payment($_GET['code']);
+        $seller_email = rawurldecode($_GET['seller_email']);
+        $order_sn = str_replace($_GET['subject'],'',$_GET['out_trade_no']);
+        $order_sn = trim($order_sn);
+                         ....省略....
+            pay::changeorders($order_sn,$_GET);
+</code></pre><p>看到没$order_sn 没有过滤 注入于是产生了 由于没有显示点 延时注入即可。</p><p><strong>第二弹 Tenpay支付插件也疯狂</strong></p><pre><code>lib\plugins\pay\tenpay.php 
+</code></pre><p>阿里巴巴那么疯狂，BAT的三弟腾讯怎么能示弱？  组队坑厂商什么的最有爱了~ 由于Cmseasy最信任插件了。。所以又是他受伤。。。</p><pre><code>#!php
+class tenpay {
+......
+    function respond() {
+        require_once ("tenpay/PayResponseHandler.class.php");
+        $resHandler = new PayResponseHandler();
+        $sp_billno = $resHandler-&gt;getParameter("sp_billno"); //腾讯的函数,类似于$_GET['sp_billno']或者$_POST['sp_billno']
+
+
+//上面谈到GET不受过滤影响，本地问价内包含POST，GET提交都可，但是注入的话必须提交POST，因为GET是URL码.
+//sp_lillno=sp_billno=-1-1-../../../demo 包含根目录的demo.php
+
+        preg_match_all("/-(.*)-(.*)-(.*)/isu",$sp_billno,$oidout);
+        $paytype = $where['pay_code'] = $oidout[3][0];
+        include_once ROOT.'/lib/plugins/pay/'.$paytype.'.php';//匹配上面正则就行，包含之，触发，但是实在找不到能截断的PHP文件了,所以鸡肋了。
+        $pay = pay::getInstance()-&gt;getrows($where); //SQL注入，跟进0x02
+    ......
+
+}
+</code></pre><p>看到where没？ 难道又是一只裸体动物？ 答案是NO 这次是Cmseasy本身代码和API共同狼狈为奸 看getrows</p><pre><code>#!php
+function getrow($condition,$order='1 desc',$cols='*') {
+        $this-&gt;condition($condition); //OMG跟进,又是这个函数
+        return $this-&gt;rec_select_one($condition,'*',$order);
+    }
+
+function condition(&amp;$condition) {
+        if (isset($condition) &amp;amp;&amp;amp;is_array($condition)) {
+            $_condition=array();
+            foreach ($condition as $key=&gt;$value) {
+                $value=str_replace("'","\'",$value);//问题函数在这里 MARK
+                $_condition[]="`$key`='$value'";
+            }
+            $condition=implode(' and ',$_condition);
+        }
+        ......
+    }
+</code></pre><p>试想一下，当我们POST提交<code>'evalsql</code> 由于gpc作用 会变成 <code>\'evalsql</code> 经过刚刚mark的那一行代码 就变成了 <code>\\'evalsql</code> 单引号被解救了 - -</p><p>所以卖队友成功</p><p><img alt="2014081318305040309.jpg" img-src="66536f8eebbcbc739118117094297579c1191c88.jpg"></p><p><strong>第三弹 腾讯连弹 换个姿势咱们继续卖队友</strong></p><p>微信sdk接口（weixin.php） 影响程序：数不清，这个太多了点，从大到小</p><p>挑个超级典型的对象 PHPYUN<br>/<em>phpyun的全局过滤堪称典范 所有特殊字符入库一律被替换成&amp;acute 再加上360wscan 铜墙铁壁的防御<br>那么壮士yun是不是革命成功？ 错！ 汪精卫weixin笑而不语。。。</em>/<br>这里引入一个古老而又粗暴的漏洞 XML实体注入，也许下一篇drop文就是这个的科普</p><pre><code>#!php
+//weixin/model/index.class.php  
+private function responseMsg()
+    {
+        $postStr = $GLOBALS["HTTP_RAW_POST_DATA"];
+        if (!empty($postStr)){
+                $postObj = simplexml_load_string($postStr, 'SimpleXMLElement', LIBXML_NOCDATA);
+                $fromUsername = $postObj-&gt;FromUserName;
+                $toUsername = $postObj-&gt;ToUserName;
+                $keyword = trim($postObj-&gt;Content);
+                $time = time();
+                $textTpl = "&lt;xml&gt;
+                            &lt;ToUserName&gt;&lt;![CDATA[%s]]&gt;&lt;/ToUserName&gt;
+                            &lt;FromUserName&gt;&lt;![CDATA[%s]]&gt;&lt;/FromUserName&gt;
+                            &lt;CreateTime&gt;%s&lt;/CreateTime&gt;
+                            &lt;MsgType&gt;&lt;![CDATA[%s]]&gt;&lt;/MsgType&gt;
+                            &lt;Content&gt;&lt;![CDATA[%s]]&gt;&lt;/Content&gt;
+                            &lt;FuncFlag&gt;0&lt;/FuncFlag&gt;
+                            &lt;/xml&gt;";
+
+                if(!empty( $keyword ))
+                {
+                    $msgType = "text";
+                    $contentStr = "Welcome to wechat world!";
+                    $resultStr = sprintf($textTpl, $fromUsername, $toUsername, $time, $msgType, $contentStr);
+                    echo $resultStr;
+                }else{
+                    echo "Input something...";
+                }
+        }else {
+            echo "";
+            exit;
+        }
+    }
+</code></pre><p>首先介绍下</p><p><code>$GLOBALS["HTTP_RAW_POST_DATA"]</code>这个变量是讲POST提交来的数据原封不动的接收 比如POST a=1</p><p><code>$GLOBALS["HTTP_RAW_POST_DATA"]</code> 就是“a=1” 不受gpc 360wscan的影响 然后接收到$postStr之后 又没有处理 于是乎...</p><pre><code>#!php
+if($MsgType=='event')
+              {
+                $MsgEvent = $postObj-&gt;Event;
+                if ($MsgEvent=='subscribe')
+                {
+                    $centerStr = "&lt;Content&gt;&lt;![CDATA[欢迎您关注".iconv('gbk','utf-8',$this-&gt;config['sy_webname'])."！\n 1：您可以直接回复关键字如【销售】、【南京 销售】、【南京 销售 XX公司】查找您想要的职位\n绑定您的账户体验更多精彩功能\n感谢您的关注！]]&gt;&lt;/Content&gt;";
+                    $this-&gt;MsgType = 'text';
+                }elseif ($MsgEvent=='CLICK')
+                {
+                    $EventKey = $postObj-&gt;EventKey;
+                    if($EventKey=='我的帐号'){
+                        $centerStr = $this-&gt;bindUser($fromUsername);
+</code></pre><p>传进bindUser之后 最终到达</p><pre><code>#!php
+isBind private function isBind($wxid='')
+    {
+        if($wxid)
+        {
+            $User = $this-&gt;obj-&gt;DB_select_once("member","`wxid`='".$wxid."'","`uid`,`username`");
+</code></pre><p>wxid就是一开始POST来的数据里面的参数 注入赤果果的产生</p><p><img alt="2014081318470353538.jpg" img-src="611ee8ab2f77435db3038f40b960a6289995d457.jpg"></p><p>微信团队开发这个API的时候，其实是验证了来源的<br>验证了signature（签名）<br>验证的条件是 检查signature是否非空 非空 非空...</p><h2>0x03 卷尾语</h2><hr><p>这样的第三方插件 应该成为程序员或者白帽子重点检查对象，原因如上0x02 这货们如同后门一般有魅力...<br>一般来讲 造成此类漏洞的原因有两种<br>一，双方相互信任 (你不打单引号，咱不过滤，好基友一起死)<br>二，签名未设置或者验证<br>为各位客官提供点思路</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re1">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re2">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/4484" rel="bookmark" id="re3">4A安全性分析</a></li><li><a href="http://drops.wooyun.org/tips/150" rel="bookmark" id="re4">Browser Security-css、javascript</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2015-12-04 14:56:15</span></div><p></p><p>看错了。。说的是cmseasy</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">D＆G</span> <span class="reply-time">2015-12-04 14:55:35</span></div><p></p><p>ecshop这个早就修了吧。http://bbs.ecshop.com/viewthread.php?tid=1125380&amp;extra=page=1&amp;orderby=replies&amp;filter=172800 而且加了签名后来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-08-30 23:25:38</span></div><p></p><p>hackbar</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑衫老妖</span> <span class="reply-time">2014-08-22 16:41:36</span></div><p></p><p>话说楼主用的是什么插件，能够执行sql呢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2014-08-19 14:29:13</span></div><p></p><p>从getParameter这个方法目测这是个写惯了java的程序员。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-08-17 09:03:26</span></div><p></p><p>res update参数确实混乱，但是程序员就是这么编写的，，将就看吧。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浅兮</span> <span class="reply-time">2014-08-16 12:33:00</span></div><p></p><p>小苹果唱多了吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2014-08-15 18:56:10</span></div><p></p><p>我php没学好，你不要骗我啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xser233</span> <span class="reply-time">2014-08-15 09:43:44</span></div><p></p><p>文章有几个地方错别漏字？<br>1. 第一弹 rec_update 的参数怎么对不上？<br>2. 第二弹 是getrows还是getrow？<br>3. 第二弹 第二个代码片段 第七行 &amp;&amp; 被转义？</p><p>我php没学好，你不要骗我啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-08-14 18:58:38</span></div><p></p><p>@瞌睡龙 说好的10wb奖励呢～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-08-14 18:25:31</span></div><p></p><p>已修改，感谢 :)`</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2014-08-14 17:56:30</span></div><p></p><p>啊 疏忽了 谢谢指出</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2014-08-14 13:25:06</span></div><p></p><p>试想一下，当我们POST提交'evalsql 由于gpc作用 会变成 \'evalsql 经过刚刚mark的那一行代码 就变成了 \'evalsql 单引号被解救了 - -<br>少了个斜杠</p><p></p></div></div></div></div></div></main>

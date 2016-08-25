@@ -1,0 +1,363 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">SQLMAP源码分析Part1:流程篇</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">3xpl0it</a> <span class="bull">·</span> <time title="2015/07/23 10:16" ui-time="" datetime="2015/07/23 10:16" class="published ng-binding ng-isolate-scope">2015/07/23 10:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 概述</h1><hr><p>1.drops之前的文档 <a href="http://drops.wooyun.org/tips/5254">SQLMAP进阶使用</a>介绍过SQLMAP的高级使用方法，网上也有几篇介绍过SQLMAP源码的文章<a href="http://www.cnblogs.com/hongfei/category/372087.html">曾是土木人</a>,都写的非常好，建议大家都看一下。<br>2.我准备分几篇文章详细的介绍下SQLMAP的源码，让想了解的朋友们熟悉一下SQLMAP的原理和一些手工注入的语句，今天先开始第一篇：流程篇。<br>3.之前最好了解SQMAP各个选项的意思，可以参考<a href="http://drops.wooyun.org/tips/143">sqlmap用户手册</a>和SQLMAP目录doc/README.pdf<br>4.内容中如有错误或者没有写清楚的地方，欢迎指正交流。有部分内容是参考上面介绍的几篇文章的，在此一并说明，感谢他们。</p><h1>0x01 流程图</h1><p><img alt="enter image description here" img-src="633282f29a309bdd23eed56248fc943a6f97aaa5.jpg"></p><h1>0x02 调试方法</h1><hr><p>1.我用的IDE是PyCharm。<br>2.在菜单栏Run->Edit Configurations。点击左侧的“+”，选择Python，Script中选择sqlmap.py的路径，Script parameters中填入注入时的命令，如下图。 <img alt="enter image description here" img-src="3a6f75634e540bac3b22b45e6ec8516b898c0f2a.jpg"></p><p>3.打开sqlmap.py，开始函数是main函数,在main函数处下断点。 <img alt="enter image description here" img-src="df65eef29d9d9e0e2c711871a5e21bfe9c8e7929.jpg"></p><p>4.右键Debug 'sqlmap',然后程序就自动跳到我们下断点的main()函数处，后面可以继续添加断点进行调试。如下图，左边红色的代表跳转到下一个断点处，上面红色的表示跳到下一句代码处</p><p><img alt="enter image description here" img-src="d3d3e9495c317879853f085182608f63dcbfc943.jpg"></p><p>5.另外，如果要在代码中加中文注释，需要在开始处添加以下语句：#coding:utf-8。</p><h1>0x03 流程</h1><hr><h2>3.1 初始化</h2><p>我这里用的版本是：1.0-dev-nongit-20150614<br>miin()函数开始73行：</p><pre><code>#!python
+paths.SQLMAP_ROOT_PATH = modulePath()
+setPaths()
+</code></pre><p>进入common.py中的setPaths()函数后，就可以看到这个函数是定义SQLMAP路径和文件的，类似于：</p><pre><code>#!python
+paths.SQLMAP_EXTRAS_PATH = os.path.join(paths.SQLMAP_ROOT_PATH, "extra")
+paths.SQLMAP_PROCS_PATH = os.path.join(paths.SQLMAP_ROOT_PATH, "procs")
+paths.SQLMAP_SHELL_PATH = os.path.join(paths.SQLMAP_ROOT_PATH, "shell")
+paths.SQLMAP_TAMPER_PATH = os.path.join(paths.SQLMAP_ROOT_PATH, "tamper")
+paths.SQLMAP_WAF_PATH = os.path.join(paths.SQLMAP_ROOT_PATH, "waf")
+</code></pre><p>接下来的78行函数initOptions(cmdLineOptions),包含了三个函数，作用如流程图所示，设置conf,KB,参数. conf会保存用户输入的一些参数，比如url，端口<br>kb会保存注入时的一些参数，其中有两个是比较特殊的kb.chars.start和kb.chars.stop，这两个是随机字符串，后面会有介绍。</p><pre><code>#!python
+_setConfAttributes()
+_setKnowledgeBaseAttributes()
+_mergeOptions(inputOptions, overrideOptions)
+</code></pre><h2>3.2 start</h2><p>102行的start函数，算是检测开始的地方.start()函数位于controller.py中。</p><pre><code>#!python
+if conf.direct:        
+    initTargetEnv()
+    setupTargetEnv()
+    action()
+    return True
+</code></pre><p>首先这四句，意思是，如果你使用-d选项，那么sqlmap就会直接进入action()函数，连接数据库，语句类似为：</p><pre><code>#!python
+python sqlmap.py -d "mysql://admin:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1a7b7e7773745a2b2328342b2c2234282b342b2d">[email&#160;protected]</a>:3306/testdb" -f --banner --dbs --user
+
+
+#!python
+if conf.url and not any((conf.forms, conf.crawlDepth)):
+    kb.targets.add((conf.url, conf.method, conf.data, conf.cookie, None))
+</code></pre><p>上面代码会把url,methos,data,cookie加入到kb.targets，这些参数就是我们输入的</p><p><img alt="enter image description here" img-src="c4cff7429cc23c0dd13b9d3e76db58dfed08f16f.jpg"></p><p>接下来从274行的for循环中，可以进入检测环节</p><pre><code>#!python
+for targetUrl, targetMethod, targetData, targetCookie, targetHeaders in kb.targets:
+</code></pre><p>此循环先初始化一些一些变量，然后判断之前是否注入过，如果没有注入过，testSqlInj=True,否则testSqlInj=false。后面会进行判断是否检测过。</p><pre><code>#!python
+def setupTargetEnv():
+    _createTargetDirs()
+    _setRequestParams()
+    _setHashDB()
+    _resumeHashDBValues()
+    _setResultsFile()
+    _setAuthCred()
+</code></pre><p>372行setupTargetEnv()函数中包含了5个函数，这些函数作用是</p><p>1.创建输出结果目录</p><p>2.解析请求参数</p><p>3.设置session信息，就是session.sqlite。</p><p>4.恢复session的数据，继续扫描。</p><p>5.存储扫描结果。</p><p>6.添加认证信息</p><p>其中比较重要的就是session.sqlite，这个文件在sqlmap的输出目录中，测试的结果都会保存在这个文件里。</p><h3>3.2.1 checkWaf</h3><pre><code>#!python
+checkWaf()
+if conf.identifyWaf:
+    identifyWaf()
+</code></pre><p>377行checkWaf()是检测是否有WAF,检测方法是NMAP的http-waf-detect.nse，比如页面为index.php?id=1，那现在添加一个随机变量index.php?id=1&amp;aaa=2，设置paoyload类似为<code>AND 1=1 UNION ALL SELECT 1,2,3,table_name FROM information_schema.tables WHERE 2&gt;1-- ../../../etc/passwd</code>，如果没有WAF，页面不会变化，如果有WAF，因为payload中有很多敏感字符，大多数时候页面都会发生改变。<br>接下来的conf.identifyWaf代表sqlmap的参数--identify-waf,如果指定了此参数，就会进入identifyWaf()函数，主要检测的waf都在sqlmap的waf目录下。</p><p><img alt="enter image description here" img-src="229961a0fe670fb59a06c47039f0663637072c58.jpg"></p><p>当然检测的方法都比较简单，都是查看返回的数据库包种是否包含了某些特征字符。如：</p><pre><code>#!python
+__product__ = "360 Web Application Firewall (360)"
+
+def detect(get_page):
+    retval = False
+
+    for vector in WAF_ATTACK_VECTORS:
+        page, headers, code = get_page(get=vector)
+        retval = re.search(r"wangzhan\.360\.cn", headers.get("X-Powered-By-360wzb", ""), re.I) is not None
+        if retval:
+            break
+
+    return retval
+
+
+
+if (len(kb.injections) == 0 or (len(kb.injections) == 1 and kb.injections[0].place is None)) \
+                and (kb.injection.place is None or kb.injection.parameter is None):
+</code></pre><p>回到start函数，385行会判断是否注入过，如果还没有测试过参数是否可以注入，则进入if语句中。如果之前测试过，则不会进入此语句。</p><pre><code>#!python
+for place in parameters:
+    # Test User-Agent and Referer headers only if
+    # --level &gt;= 3
+    skip = (place == PLACE.USER_AGENT and conf.level &lt; 
+    skip |= (place == PLACE.REFERER and conf.level &lt; 3)
+    # Test Host header only if
+    # --level &gt;= 5
+    skip |= (place == PLACE.HOST and conf.level &lt; 5)
+    # Test Cookie header only if --level &gt;= 2
+    skip |= (place == PLACE.COOKIE and conf.level &lt; 2)
+</code></pre><p>这中间sqlmap给了我们一些注释，可以看到，level>=3时，会测试user-agent,referer，level>=5时，会测试HOST，level>=2时，会测试cookie。当然最终的测试判断还要在相应的xml中指定，后面会介绍。</p><pre><code>#!python
+check = checkDynParam(place, parameter, value)
+</code></pre><p>480行的checkDynParam()函数会判断参数是否是动态的，比如index.php?id=1，通过更改id的值，如果参数是动态的，页面会不同。</p><h3>3.2.2 heuristicCheckSqlInjection</h3><pre><code>#!python
+check = heuristicCheckSqlInjection(place, parameter)
+</code></pre><p>502行有个heuristicCheckSqlInjection()函数，翻译过来是启发性sql注入测试，其实就是先进行一个简单的测试，设置一个payload，然后解析请求结果。<br>heuristicCheckSqlInjection()在checks.py中,821行开始如下:</p><pre><code>#!python
+if conf.prefix or conf.suffix:
+        if conf.prefix:
+            prefix = conf.prefix
+
+        if conf.suffix:
+            suffix = conf.suffix
+
+    randStr = ""
+
+    while '\'' not in randStr:
+        randStr = randomStr(length=10, alphabet=HEURISTIC_CHECK_ALPHABET)   
+
+    kb.heuristicMode = True
+
+    payload = "%s%s%s" % (prefix, randStr, suffix)
+    payload = agent.payload(place, parameter, newValue=payload)
+    page, _ = Request.queryPage(payload, place, content=True, raise404=False)
+
+    kb.heuristicMode = False
+
+    parseFilePaths(page)
+    result = wasLastResponseDBMSError()
+</code></pre><p>首先conf.prefix和conf.suffix代表用户指定的前缀和后缀；在<code>while '\'' not in randStr</code>中，随机选择'"', '\'', ')', '(', ',', '.'中的字符，选10个，并且单引号要在。接下来生成一个payload，类似u'name=<strong>PAYLOAD&#95;DELIMITER&#92;_&#95;1)."."."\'."&#95;&#95;PAYLOAD&#95;DELIMITER</strong>'。其中<strong>PAYLOAD&#95;DELIMITER&#92;_&#95;1和&#95;&#95;PAYLOAD&#95;DELIMITER</strong>是随机字符串。请求网页后，调用parseFilePaths进行解析，查看是否爆出绝对路径，而wasLastResponseDBMSError是判断response中是否包含了数据库的报错信息。</p><pre><code>#!python
+value = "%s%s%s" % (randomStr(), DUMMY_XSS_CHECK_APPENDIX, randomStr())
+payload = "%s%s%s" % (prefix, "'%s" % value, suffix)
+payload = agent.payload(place, parameter, newValue=payload)
+page, _ = Request.queryPage(payload, place, content=True, raise404=False)
+
+paramType = conf.method if conf.method not in (None, HTTPMETHOD.GET, HTTPMETHOD.POST) else place
+
+if value in (page or ""):       
+    infoMsg = "heuristic (XSS) test shows that %s parameter " % paramType
+    infoMsg += "'%s' might be vulnerable to XSS attacks" % parameter
+    logger.info(infoMsg)
+
+kb.heuristicMode = False
+</code></pre><p>上面的代码是从888行开始，DUMMY&#95;XSS&#95;CHECK_APPENDIX = "&lt;'\">"，如果输入的字符串在页面中返回了，会提示可能存在XSS漏洞。</p><p><img alt="enter image description here" img-src="969bd0a001b2caa420d73b6e827565afbdcb5a1d.jpg"></p><p>接下来，我们回到start函数中，继续看下面的代码。</p><pre><code>#!python
+if testSqlInj:
+    ......
+    injection = checkSqlInjection(place, parameter, value)
+</code></pre><p>在502行判断testSqlInj,如果为true，就代表之前没有检测过，然后就会到checkSqlInjection，checkSqlInjection()才是真正开始测试的函数，传入的参数是注入方法如GET，参数名，参数值。我们跟进。</p><h3>3.2.3 checkSqlInjection</h3><p>checkSqlInjection()在checks.py中,91行开始</p><pre><code>#!python
+paramType = conf.method if conf.method not in (None, HTTPMETHOD.GET, HTTPMETHOD.POST) else place
+tests = getSortedInjectionTests()
+</code></pre><p>paramType是注入的类型,如GET。tests是要测试的列表，如下图所示，包含了每个测试项的名称，这些数据都是和/sqlmap/xml/payloads/目录下每个xml相对应的。</p><p><img alt="enter image description here" img-src="b595d77f76c8c4a65004ea06e9ff804d7a6a4340.jpg"></p><pre><code>#!python
+if conf.dbms is None:
+    if not injection.dbms and PAYLOAD.TECHNIQUE.BOOLEAN in injection.data:
+        if not Backend.getIdentifiedDbms() and kb.heuristicDbms is False:
+            kb.heuristicDbms = heuristicCheckDbms(injection)
+    if kb.reduceTests is None and not conf.testFilter and (intersect(Backend.getErrorParsedDBMSes(), \
+       SUPPORTED_DBMS, True) or kb.heuristicDbms or injection.dbms):
+        msg = "it looks like the back-end DBMS is '%s'. " % (Format.getErrorParsedDBMSes() or kb.heuristicDbms or injection.dbms)
+        msg += "Do you want to skip test payloads specific for other DBMSes? [Y/n]"
+        kb.reduceTests = (Backend.getErrorParsedDBMSes() or [kb.heuristicDbms]) if readInput(msg, default='Y').upper() == 'Y' else []
+if kb.extendTests is None and not conf.testFilter and (conf.level &lt; 5 or conf.risk &lt; 3) \
+   and (intersect(Backend.getErrorParsedDBMSes(), SUPPORTED_DBMS, True) or \
+   kb.heuristicDbms or injection.dbms):
+    msg = "for the remaining tests, do you want to include all tests "
+    msg += "for '%s' extending provided " % (Format.getErrorParsedDBMSes() or kb.heuristicDbms or injection.dbms)
+    msg += "level (%d)" % conf.level if conf.level &lt; 5 else ""
+    msg += " and " if conf.level &lt; 5 and conf.risk &lt; 3 else ""
+    msg += "risk (%d)" % conf.risk if conf.risk &lt; 3 else ""
+    msg += " values? [Y/n]" if conf.level &lt; 5 and conf.risk &lt; 3 else " value? [Y/n]"
+    kb.extendTests = (Backend.getErrorParsedDBMSes() or [kb.heuristicDbms]) if readInput(msg, default='Y').upper() == 'Y' else []
+</code></pre><p>101行开始，这段代码主要是判断DBMS类型，首先，如果用户没有手工指定dbms，则会根据页面报错或者bool类型的测试，找出DBMS类型，找出后，会提示是否跳过测试其他的DBMS。然后，对于测试出来的DBMS，是否用所有的payload来测试。</p><p><img alt="enter image description here" img-src="40717c23017969d55097a2458c7759bfff70fe2c.jpg"></p><p>140行if stype == PAYLOAD.TECHNIQUE.UNION:会判断是不是union注入，这个stype就是payload文件夹下面xml文件中的stype，如果是union，就会进入，然后配置列的数量等，今天先介绍流程，union注入以后会介绍。</p><pre><code>#!python
+if conf.tech and isinstance(conf.tech, list) and stype not in conf.tech:
+                debugMsg = "skipping test '%s' because the user " % title
+                debugMsg += "specified to test only for "
+                debugMsg += "%s techniques" % " &amp; ".join(map(lambda x: PAYLOAD.SQLINJECTION[x], conf.tech))
+                logger.debug(debugMsg)
+                continue
+</code></pre><p>177行，就是用户提供的--technique，共有六个选项BEUSTQ,但是现在很多文档，包括SQLMAP的官方文档都只给了BEUST的解释说明，少个inline_query，相当于查询语句中再加入一个查询语句。</p><pre><code>B: Boolean-based blind SQL injection（布尔型注入）
+E: Error-based SQL injection（报错型注入）
+U: UNION query SQL injection（可联合查询注入）
+S: Stacked queries SQL injection（可多语句查询注入）
+T: Time-based blind SQL injection（基于时间延迟注入）
+Q: inline_query(内联查询)
+</code></pre><p>接下来，就是生成payload的过程。288行：</p><pre><code>#!python
+fstPayload = agent.cleanupPayload(test.request.payload, origValue=value if place not in (PLACE.URI, PLACE.CUSTOM_POST, PLACE.CUSTOM_HEADER) else None)
+</code></pre><p>test.request.payload为'AND [RANDNUM]=[RANDNUM]'(相应payload.xml中的request值)。根据此代码，生成一个随机字符串，如fstPayload=u'AND 2876=2876'。<br>302行：</p><pre><code>#!python
+for boundary in boundaries:
+     injectable = False
+     if boundary.level &gt; conf.level and not (kb.extendTests and intersect(payloadDbms, kb.extendTests, True)):
+                    continue
+</code></pre><p>循环遍历boundaries.xml中的boundary节点，如果boundary的level大于用户提供的level，则跳过，不检测。<br>307行：</p><pre><code>#!python
+clauseMatch = False
+for clauseTest in test.clause:     
+     if clauseTest in boundary.clause:   
+         clauseMatch = True
+         break
+if test.clause != [0] and boundary.clause != [0] and not clauseMatch:
+     continue
+whereMatch = False
+for where in test.where:
+     if where in boundary.where:
+         whereMatch = True
+         break
+if not whereMatch:
+     continue
+</code></pre><p>首先，循环遍历test.clause(payload中的clause值)，如果clauseTest在boundary的clause中，则设置clauseMatch = True，代表此条boundary可以使用。 接下来循环匹配where(payload中的where值)，如果存在这样的where，设置whereMatch = True。如果clause和where中的一个没有匹配成功，都会结束循环，进入下一个payload的测试。</p><pre><code>#!python
+prefix = boundary.prefix if boundary.prefix else ""
+suffix = boundary.suffix if boundary.suffix else ""
+ptype = boundary.ptype
+prefix = conf.prefix if conf.prefix is not None else prefix
+suffix = conf.suffix if conf.suffix is not None else suffix
+comment = None if conf.suffix is not None else comment
+</code></pre><p>上面是设置payload的前缀和后缀，如果用户设置了，则使用用户设置的，如果没有，则使用boundary中的。<br>352行：</p><pre><code>#!python
+for where in test.where:
+    if where == PAYLOAD.WHERE.ORIGINAL or conf.prefix:
+        ......
+    elif where == PAYLOAD.WHERE.NEGATIVE:
+        ......
+    elif where == PAYLOAD.WHERE.REPLACE:
+        ......
+</code></pre><p>这里的where是payload中的where值，共有三个值，where字段我理解的意思是，以什么样的方式将我们的payload添加进去。</p><p>1：表示将我们的payload直接添加在值得后面[此处指的应该是检测的参数的值] 如我们写的参数是id=1，设置<where>值为1的话，会出现1后面跟payload</where></p><p>2：表示将检测的参数的值更换为一个整数，然后将payload添加在这个整数的后面。 如我们写的参数是id=1，设置<where>值为2的话，会出现[数字]后面跟payload</where></p><p>3：表示将检测的参数的值直接更换成我们的payload。 如我们写的参数是id=1，设置<where>值为3的话，会出现值1直接被替换成了我们的payload。<br>最终在389行：</where></p><pre><code>#!python
+boundPayload = agent.prefixQuery(fstPayload, prefix, where, clause)
+boundPayload = agent.suffixQuery(boundPayload, comment, suffix, where)
+reqPayload = agent.payload(place, parameter, newValue=boundPayload, where=where)
+</code></pre><p>组合前缀、后缀、payload等，生成请求的reqPayload。<br>这其中有个cleanupPayload()函数，其实就是将一些值进行随机化。如下图，例如kb.chars.start,kb.chars.stop，这两个变量是在基于错误的注入时，随机产生的字符串。</p><p><img alt="enter image description here" img-src="886387d3fd6d4f84a188a9a0c95fdf895de37514.jpg"></p><p>在398行：</p><pre><code>#!python
+for method, check in test.response.items():
+    check = agent.cleanupPayload(check, origValue=value if place not in (PLACE.
+URI, PLACE.CUSTOM_POST, PLACE.CUSTOM_HEADER) else None)      
+    if method == PAYLOAD.METHOD.COMPARISON:     
+        def genCmpPayload():
+            sndPayload = agent.cleanupPayload(test.response.comparison, 
+origValue=value if place not in (PLACE.URI, PLACE.CUSTOM_POST, 
+PLACE.CUSTOM_HEADER) else None)
+            boundPayload = agent.prefixQuery(sndPayload, prefix, where, clause)
+            boundPayload = agent.suffixQuery(boundPayload, comment, suffix, 
+where)
+            cmpPayload = agent.payload(place, parameter, 
+newValue=boundPayload, where=where)
+            return cmpPayload
+        kb.matchRatio = None
+        kb.negativeLogic = (where == PAYLOAD.WHERE.NEGATIVE)
+        Request.queryPage(genCmpPayload(), place, raise404=False)
+        falsePage = threadData.lastComparisonPage or ""     
+        trueResult = Request.queryPage(reqPayload, place, raise404=False)
+        truePage = threadData.lastComparisonPage or ""      
+        if trueResult:
+            falseResult = Request.queryPage(genCmpPayload(), place, 
+raise404=False)
+            if not falseResult:
+                infoMsg = "%s parameter '%s' seems to be '%s' injectable " % (
+paramType, parameter, title)
+                logger.info(infoMsg)
+                injectable = True
+        if not injectable and not any((conf.string, conf.notString, conf.
+regexp)) and kb.pageStable:
+            trueSet = set(extractTextTagContent(truePage))
+            falseSet = set(extractTextTagContent(falsePage))
+            candidates = filter(None, (_.strip() if _.strip() in (kb.
+pageTemplate or "") and _.strip() not in falsePage and _.strip() 
+not in threadData.lastComparisonHeaders else None for _ in (
+trueSet - falseSet)))
+            if candidates:
+                conf.string = candidates[0]
+                infoMsg = "%s parameter '%s' seems to be '%s' injectable (with 
+--string=\"%s\")" % (paramType, parameter, title, repr(conf.
+string).lstrip('u').strip("'"))
+                logger.info(infoMsg)
+                injectable = True
+    elif method == PAYLOAD.METHOD.GREP:
+        try:
+            page, headers = Request.queryPage(reqPayload, place, content=True, 
+raise404=False)
+            output = extractRegexResult(check, page, re.DOTALL | re.
+IGNORECASE) \
+                    or extractRegexResult(check, listToStrValue( \
+                    [headers[key] for key in headers.keys() if key.lower() != 
+URI_HTTP_HEADER.lower()] \
+                    if headers else None), re.DOTALL | re.IGNORECASE) \
+                    or extractRegexResult(check, threadData.lastRedirectMsg[1] 
+\
+                    if threadData.lastRedirectMsg and threadData.
+lastRedirectMsg[0] == \
+                    threadData.lastRequestUID else None, re.DOTALL | re.
+IGNORECASE)
+            if output:
+                result = output == "1"
+                if result:
+                    infoMsg = "%s parameter '%s' is '%s' injectable " % (
+paramType, parameter, title)
+                    logger.info(infoMsg)
+                    injectable = True
+        except SqlmapConnectionException, msg:
+            debugMsg = "problem occurred most likely because the "
+            debugMsg += "server hasn't recovered as expected from the "
+            debugMsg += "error-based payload used ('%s')" % msg
+            logger.debug(debugMsg)
+    elif method == PAYLOAD.METHOD.TIME:
+        trueResult = Request.queryPage(reqPayload, place, 
+timeBasedCompare=True, raise404=False)
+        if trueResult:
+            # Confirm test's results
+            trueResult = Request.queryPage(reqPayload, place, 
+timeBasedCompare=True, raise404=False)
+            if trueResult:
+                infoMsg = "%s parameter '%s' seems to be '%s' injectable " % (
+paramType, parameter, title)
+                logger.info(infoMsg)
+                injectable = True
+    elif method == PAYLOAD.METHOD.UNION:
+        configUnion(test.request.char, test.request.columns)
+        if not Backend.getIdentifiedDbms():
+            if kb.heuristicDbms is None:
+                warnMsg = "using unescaped version of the test "
+                warnMsg += "because of zero knowledge of the "
+                warnMsg += "back-end DBMS. You can try to "
+                warnMsg += "explicitly set it using option '--dbms'"
+                singleTimeWarnMessage(warnMsg)
+            else:
+                Backend.forceDbms(kb.heuristicDbms)
+        if unionExtended:
+            infoMsg = "automatically extending ranges for UNION "
+            infoMsg += "query injection technique tests as "
+            infoMsg += "there is at least one other (potential) "
+            infoMsg += "technique found"
+            singleTimeLogMessage(infoMsg)
+        reqPayload, vector = unionTest(comment, place, parameter, value, 
+prefix, suffix)
+        if isinstance(reqPayload, basestring):
+            infoMsg = "%s parameter '%s' is '%s' injectable" % (paramType, 
+parameter, title)
+            logger.info(infoMsg)
+            injectable = True
+            # Overwrite 'where' because it can be set
+            # by unionTest() directly
+            where = vector[6]
+    kb.previousMethod = method
+</code></pre><p>上面这部分代码非常多，通过for循环遍历payload中的<response>标签，遍历的结果类似于</response></p><p><img alt="enter image description here" img-src="36907ab8ccdf0a8f481f769ee32869ba6587a2f1.jpg"></p><p>所以，上面的代码可以分为：</p><p>1.method为PAYLOAD.METHOD.COMPARISON：bool类型盲注 2.method为PAYLOAD.METHOD.GREP：基于错误的sql注入 3.mehtod为PAYLOAD.METHOD.TIME：基于时间的盲注 4.method为PAYLOAD.METHOD.UNION：union联合查询</p><p>请注意，上面这四种方法，和之前说的六种注入方法不是一个概念，这里的是payload中的response代码，而注入用的是request代码。通过比较request的结果和response的结果，确定是否可以注入。以后的文章会介绍怎么比较的。。<br>checkSqlInjectiond的关键部分就到这里了，后面就是把注入的数据保存起来。马上会介绍读取的时候。</p><h3>3.2.4 Payload生成条件</h3><p>前面具体介绍了Payload的生成方法，这里再总结一下条件：</p><p>1.sqlmap会实现读取payloads文件夹下xml文件中的每个test元素，然后循环遍历。</p><p>2.此时还会遍历boundaries.xml文件。</p><p>3.当且仅当某个boundary元素的where节点的值包含test元素where节点的值，clause节点的值包含test元素的clause节点的值，该boundary才能和当前的test匹配，从而进一步生成payload。</p><p>4.where字段有三个值1：表示将我们的payload直接添加在值得后面[此处指的应该是检测的参数的值] 如我们写的参数是id=1，设置<where>值为1的话，会出现1后面跟payload 2：表示将检测的参数的值更换为一个整数，然后将payload添加在这个整数的后面。 如我们写的参数是id=1，设置<where>值为2的话，会出现[数字]后面跟payload 3：表示将检测的参数的值直接更换成我们的payload。 如我们写的参数是id=1，设置<where>值为3的话，会出现值1直接被替换成了我们的payload</where></where></where></p><p>5.最终的payload = url参数 + boundary.prefix+test.payload+boundary.suffix</p><h3>3.2.5 Action</h3><p>在start()的617行是action()函数，位于Action.py中，此函数是判断用户提供的参数，然后提供相应的函数。</p><pre><code>#!python
+if conf.getDbs:
+    conf.dumper.dbs(conf.dbmsHandler.getDbs())
+if conf.getTables:
+    conf.dumper.dbTables(conf.dbmsHandler.getTables())
+if conf.commonTables:
+    conf.dumper.dbTables(tableExists(paths.COMMON_TABLES))
+</code></pre><h3>3.2.6 HashDB</h3><p>sqlmap注入的结果会保存在输出目录的session.sqlite文件汇总，此文件是sqlite数据库，可以使用SQLiteManager打开。<br>回到controller.py中的start函数。第602行</p><pre><code>#!python
+_saveToResultsFile()
+_saveToHashDB()     
+_showInjections()   
+_selectInjection()  
+</code></pre><p>这四个函数的作用就是保存结果保存结果、保存session、显示注入结果，包括类型，payload等。<br>前面介绍过会判断testSqlInj的值，如果为True，代表没有测试过，会进入checkSqlInjection()函数，如果测试过，那么testSqlInj为false，就会跳过checkSqlInjection()。<br>比如我们选择--current-db时，通过action()进入到conf.dumper.currentDb(conf.dbmsHandler.getCurrentDb())。进入到databases.py的getCurrentDb中。</p><pre><code>#!python
+query = queries[Backend.getIdentifiedDbms()].current_db.query
+</code></pre><p>这是获取相应的命令，比如mysql的命令是database().一直跟踪函数到use.py的346行</p><pre><code>#!python
+if not value and not abortedFlag:
+    output = _oneShotUnionUse(expression, unpack)
+    value = parseUnionPage(output)
+</code></pre><p>_onehotUninoUse就是读取session文件，获取已经注入过的数据，如果session中没有，代表没有请求过，则重新请求获取数据。output此时是获取的网页的源码。</p><pre><code>#!python
+retVal = hashDBRetrieve("%s%s" % (conf.hexConvert, expression), checkConf=True)
+</code></pre><p>_onehotUninoUse的第一行，就是从session中获取数据，跟踪进hashdb.py的regrieve函数</p><pre><code>#!python
+def hashKey(key):
+    key = key.encode(UNICODE_ENCODING) if isinstance(key, unicode) else repr(key)
+    retVal = int(hashlib.md5(key).hexdigest()[:12], 16)     #注释：hash的算法，对应数据库中的id。md5后，转换为10进制，就是session中的id
+    return retVal
+def retrieve(self, key, unserialize=False):
+    retVal = None
+    if key and (self._write_cache or os.path.isfile(self.filepath)):
+        hash_ = HashDB.hashKey(key)
+        retVal = self._write_cache.get(hash_)
+        if not retVal:      
+            while True:
+                try:
+                    for row in self.cursor.execute("SELECT value FROM storage WHERE id=?", (hash_,)):
+                        retVal = row[0]
+                except sqlite3.OperationalError, ex:
+                    if not "locked" in ex.message:
+                        raise
+                except sqlite3.DatabaseError, ex:
+                    errMsg = "error occurred while accessing session file '%s' ('%s'). " % (self.filepath, ex)
+                    errMsg += "If the problem persists please rerun with `--flush-session`"
+                    raise SqlmapDataException, errMsg
+                else:
+                    break
+    return retVal if not unserialize else unserializeObject(retVal)
+</code></pre><p>通过HashDB.hashKey()计算id，然后到session.sqlite中找记录，那么key是怎么生成的呢？<br>在common.py中有个hashDBRetrieve(),</p><pre><code>#!python
+def hashDBRetrieve(key, unserialize=False, checkConf=False):
+    _ = "%s%s%s" % (conf.url or "%s%s" % (conf.hostname, conf.port), key, HASHDB_MILESTONE_VALUE)
+    retVal = conf.hashDB.retrieve(_, unserialize) if kb.resumeValues and not (checkConf and any((conf.flushSession, conf.freshQueries))) else None
+    if not kb.inferenceMode and not kb.fileReadMode and any(_ in (retVal or "") for _ in (PARTIAL_VALUE_MARKER, PARTIAL_HEX_VALUE_MARKER)):
+        retVal = None
+    return retVal
+</code></pre><p>此函数用于生成hash的key，生成方法为url+'None'+命令+HASHDB&#95;MILESTONE&#95;VALUE,比如u'http://127.0.0.1:80/biweb/archives/detail.phpNoneDATABASE()JHjrBugdDA'。此key经过int(hashlib.md5(key).hexdigest()[:12], 16)，就是对应session中的id</p><p><img alt="enter image description here" img-src="1465ad68e9ff9b8d51ae1754ed32af9a98973672.jpg"></p><p>最终在session.sqlite中根据id，就能够找到记录。</p><p><img alt="enter image description here" img-src="cb972c04bccb1c411762c86347f9d8678bc8cb27.jpg"></p><p>如上图，获取到的记录其实就是一个网页的源代码，另外可以看到current-db的前后有几个字符串，这个字符串就是kb.chars.start和kb.chars.stop<br>回到_oneShotUnionUse中，如果session中没有记录，则会重新进行请求，获取数据</p><pre><code>#!python
+vector = kb.injection.data[PAYLOAD.TECHNIQUE.UNION].vector
+        kb.unionDuplicates = vector[7]
+        kb.forcePartialUnion = vector[8]
+        query = agent.forgeUnionQuery(injExpression, vector[0], vector[1], vector[2], vector[3], vector[4], vector[5], vector[6], None, limited)    
+        where = PAYLOAD.WHERE.NEGATIVE if conf.limitStart or conf.limitStop else vector[6]
+        payload = agent.payload(newValue=query, where=where)
+</code></pre><p>最终的值通过解析session中的记录value = parseUnionPage(output)，找到kb.chars.start和kb.chars.stop中间的值，就是结果。</p><h1>0x04 结束</h1><hr><p>还有很多东西没有写出来，希望后面的几篇文章能够写好。花了好久的时间，调试、码字，不知道又没有人能看到最后。。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20150107172146edd65afb73e065c3e76027124bf31aca.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/10652" rel="bookmark" id="re1">SQLMAP的前世今生Part2 数据库指纹识别</a></li><li><a href="http://drops.wooyun.org/tips/8614" rel="bookmark" id="re2">SQLMap的前世今生（Part1）</a></li><li><a href="http://drops.wooyun.org/tips/4605" rel="bookmark" id="re3">SQL Injection via DNS</a></li><li><a href="http://drops.wooyun.org/tips/401" rel="bookmark" id="re4">sqlmap用户手册[续]</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">吖吖</span> <span class="reply-time">2016-04-20 14:37:03</span></div><p></p><p>可以的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Grani</span> <span class="reply-time">2016-01-21 11:11:22</span></div><p></p><p>还会有Part2吗大牛？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rainism</span> <span class="reply-time">2015-10-26 03:41:48</span></div><p></p><p>调试学习，赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">老黑</span> <span class="reply-time">2015-09-13 18:51:06</span></div><p></p><p>SQLMAP源码分析Part2 什么时候出来啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">2mi</span> <span class="reply-time">2015-08-04 11:49:49</span></div><p></p><p>有python基础 但是看到复杂的东西 总是蛋疼。。感谢楼主 的文章。我要坚持看下去</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Martes</span> <span class="reply-time">2015-07-29 21:22:11</span></div><p></p><p>不错 这几天刚好正在看</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Breaker</span> <span class="reply-time">2015-07-29 15:12:36</span></div><p></p><p>之前也想通读sqlmap源代码 因为木有python功底放弃了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">無名老人</span> <span class="reply-time">2015-07-28 10:27:27</span></div><p></p><p>哈哈，我也是看的 曾是土木人的文章， 楼主继续</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Demon</span> <span class="reply-time">2015-07-27 16:32:17</span></div><p></p><p>良心paper， 赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">f4ckbaidu</span> <span class="reply-time">2015-07-23 17:27:19</span></div><p></p><p>膜拜大牛</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-07-23 16:13:21</span></div><p></p><p>@CplusHua 多交流</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-07-23 16:12:57</span></div><p></p><p>@大大灰狼 多交流</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CplusHua</span> <span class="reply-time">2015-07-23 15:44:51</span></div><p></p><p>感谢分享,我也刚看完一遍,楼主就写出了分析,真棒.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大大灰狼</span> <span class="reply-time">2015-07-23 14:53:53</span></div><p></p><p>最近也在看源码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-07-23 13:54:18</span></div><p></p><p>@瘦蛟舞 求带，magic</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2015-07-23 13:32:22</span></div><p></p><p>好东西呀,赶紧写剩下的~么么哒</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-07-23 11:51:49</span></div><p></p><p>@君莫笑 私信，一起学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-07-23 11:51:26</span></div><p></p><p>@有人， 看到你，我也是醉了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2015-07-23 11:27:11</span></div><p></p><p>调试法学习不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">君莫笑</span> <span class="reply-time">2015-07-23 11:21:32</span></div><p></p><p>这几天正好也有分析sqlmap的想法,,,,,</p><p></p></div></div></div></div></div></main>

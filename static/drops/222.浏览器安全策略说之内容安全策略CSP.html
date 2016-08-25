@@ -1,0 +1,115 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">浏览器安全策略说之内容安全策略CSP</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">天融信阿尔法实验室</a> <span class="bull">·</span> <time title="2014/04/17 14:50" ui-time="" datetime="2014/04/17 14:50" class="published ng-binding ng-isolate-scope">2014/04/17 14:50</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>目录</p><pre><code>0x00         前言
+0x01         CSP概念
+0x02         CSP发展时间轴
+0x03         CSP语法
+0x04         CSP默认特性
+0x05         CSP例子
+0x06         CSP的错误使用
+0x07         CSP分析报告
+0x08         CSP的使用率统计
+0x09         CSP Bypass
+0x0a         CSP总结
+0x0b         参考
+</code></pre><h2>0x00 前言</h2><hr><p>一直说要去写个浏览器安全策略系列，10篇安全策略的内容虽早已成竹在胸，但写出来却要花费好多时间。CSP这篇已于一个月前写出来，而后筹备Blog上线用了一段时间，不容易。FirstBlood，第一篇文章就献给阿尔法实验室和浏览器中一个伟大而又被忽略的安全策略CSP吧。好酒值得细细去品，好的安全策略也一样。废话少说，下面正式进入文章主题。</p><p>2013年11月Veracode给出的报告指出，全球前1000000网站中仅有269个网站使用了W3C规范的CSP策略头Content-Security-Policy。而在2014年2月ZoomEye给出的测试报告中，国内排名前7000的域名没有使用CSP，国内1千万的域名（含子域名）中仅发现7个使用了CSP策略，其中还有3个网站CSP语法使用错误。</p><p>如果说CSP是一个伟大的安全策略，为何全球范围内网站使用率如此之低？是CSP自身的设计存在问题，还是网站管理员们没有去充分了解和利用它。CSP到底是一个什么样的安全策略，是像人们普遍说的它是XSS攻击的终结者吗？</p><p>带着以上的疑问，本文将从CSP的概念、发展时间轴、语法使用、如何正确部署CSP、CSP的自有特性、如何利用CSP产生攻击报告、CSP当前使用率、Bypass CSP等众多方面，来给大家全面介绍CSP这个伟大而又被忽视的安全策略。</p><h2>0x01 CSP概念</h2><hr><p>内容安全策略（Content Security Policy，简称CSP）是一种以可信白名单作机制，来限制网站中是否可以包含某来源内容。默认配置下不允许执行内联代码（<code>&lt;script&gt;</code>块内容，内联事件，内联样式），以及禁止执行eval() , newFunction() , setTimeout([string], …) 和setInterval([string], …) 。</p><h2>0x02 CSP发展时间轴</h2><hr><p>毋容置疑CSP是一个伟大的策略，但CSP从最初设计到被W3C认可制定成通用标准，却经历了一个漫长而曲折的过程。</p><h3>CSP模型首次被提出</h3><p>这要从2007年说起，当时XSS攻击已经在OWASP TOP10攻击中排名第一位，CSP的最初的设想就在这一年被Mozilla项目组的Gervase Markham和WEB安全界大牛Robert Hansen ‘rsnake’两人共同提出的。</p><h3>浏览器首次使用CSP</h3><p>2011年3月Firefox 4.0发布，首次把CSP当作一种正式的安全策略规范使用到浏览器中。当时火狐使用的是自己定义的X-Content-Security-Policy头。单从CSP推广上来看，Firefox4.0的发布是划时代的，虽然此时的CSP只是Firefox自己定义的一个内部标准。但在此之后，CSP的概念被全球迅速推广。</p><h3>Chrome使用CSP</h3><p>随后在2011年9月，谷歌在Chrome浏览器14.0版本发布时加入CSP，而Chrome浏览器使用的也是自己的CSP标准，它使用X-Webkit-CSP头进行对CSP的解析，这个头从字面上更能看出来Chrome浏览器使用的是Webkit内核。此时世界主流的2大浏览器Chrome、Firefox都已经支持了CSP。</p><h3>W3C起草CSP标准</h3><p>作为标准发布的W3C组织顺其自然在2011年11月在官网上发布了CSP1.0草案。W3C的CSP1.0草案的语法和Firefox和Chrome中截然不同，随着时间的推移1年后，W3C的CSP1.0草案已经到了推选阶段，基本可以正式发布。</p><h3>全面支持W3C标准的CSP</h3><p>在2012年2月Chrome25版本发布时，宣布支持W3C标准的CSP1.0。2013年6月Firefox宣布在23版本中全面支持W3C的CSP1.0标准。同样是在2013年6月，W3C发布CSP1.1标准，里面又加入了不少语法，现在大多浏览器还都不支持。IE10中开始支持CSP中的’sandbox’语法，其他语法暂不支持。</p><p>目前CSP各个浏览器支持情况可以去<a href="http://caniuse.com/#feat=contentsecuritypolicy">http://caniuse.com/#feat=contentsecuritypolicy</a>查看</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="953" height="528" border="0" img-src="a1f120fc24a760eed3af5b3ab033ff8be3a350fe.jpg">cspuse<br></p><h2>0x03 CSP语法</h2><hr><h3>CSP1.0指令</h3><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="771" height="438" border="0" img-src="aa6ba014113fe1ed758d69c2415fd28e17962bfc.jpg"></p><h3>CSP1.1新增指令</h3><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="768" height="129" border="0" img-src="dbc17bdc6e40c6291ebd5d126928c6cd48bcfb00.jpg"></p><h3>CSP语法</h3><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="718" height="400" border="0" img-src="061144b872d348dc1e416c3e3dc72afe581946c2.jpg"></p><h2>0x04 CSP默认特性</h2><hr><h3>阻止内联代码执行</h3><p>CSP除了使用白名单机制外，默认配置下阻止内联代码执行是防止内容注入的最大安全保障。这里的内联代码包括：<code>&lt;script&gt;</code>块内容，内联事件，内联样式。</p><h3>(1) script代码，<code>&lt;script&gt;……&lt;scritp&gt;</code></h3><p>对于<code>&lt;script&gt;</code>块内容是完全不能执行的。例如：</p><pre><code>#!html
+&lt;script&gt;getyourcookie()&lt;/script&gt;
+</code></pre><h3>(2) 内联事件</h3><pre><code>#!html
+&lt;a href="" onclick="handleClick();"&gt;&lt;/a&gt;
+&lt;a href="javascript:handleClick();"&gt;&lt;/a&gt;
+</code></pre><h3>(3) 内联样式</h3><pre><code>#!html
+&lt;div style="display:none"&gt;&lt;/div&gt;
+</code></pre><p>虽然CSP中已经对script-src和style-src提供了使用”unsafe-inline”指令来开启执行内联代码，但为了安全起见还是慎用”unsafe-inline”。</p><h3>EVAL相关功能被禁用</h3><p>用户输入字符串，然后经过eval()等函数转义进而被当作脚本去执行。这样的攻击方式比较常见。于是乎CSP默认配置下，eval() , newFunction() , setTimeout([string], …) 和setInterval([string], …)都被禁止运行。</p><p>比如：</p><pre><code>#!js
+alert(eval("foo.bar.baz"));
+window.setTimeout("alert('hi')", 10);
+window.setInterval("alert('hi')", 10);
+new Function("return foo.bar.baz");
+</code></pre><p>如果想执行可以把字符串转换为内联函数去执行。</p><pre><code>#!html
+alert(foo &amp;&amp; foo.bar &amp;&amp; foo.bar.baz); 
+window.setTimeout(function() { alert('hi'); }, 10); 
+window.setInterval(function() { alert('hi'); }, 10); 
+function() { return foo &amp;&amp; foo.bar &amp;&amp; foo.bar.baz };
+</code></pre><p>同样CSP也提供了”unsafe-eval”去开启执行eval()等函数，但强烈不建议去使用”unsafe-eval”这个指令。</p><h2>0x05 CSP例子</h2><h3>例子1</h3><p>网站管理员想要所有的内容均来自网站自己的域，不包括子域。</p><pre><code>Content-Security-Policy: default-src 'self'
+</code></pre><h3>例子2</h3><p>网站管理员想要所有的内容来自网站自己的域，还有其他子域的内容。</p><pre><code>Content-Security-Policy: default-src 'self' *.mydomain.com
+</code></pre><h3>例子3</h3><p>网站管理员想要网站接受信任任意域的图像，指定域的音频视频和指定域的脚本。</p><pre><code>Content-Security-Policy: default-src 'self'; img-src *; media-src media1.com media2.com; script-src userscripts.example.com
+</code></pre><p>在这条策略中，默认情况下，网站只允许加载自己域的内容。但也有例外：</p><pre><code>img-src * 使用*通配符可以加载任意域的图片。
+media-src media1.com media2.com 视频音频只允许加载这两个域的
+script-src userscripts.example.com 脚本只能加载userscripts.example.com域的
+</code></pre><h3>例子4</h3><p>网站管理员确保在线银行所有内容都通过SSL加载，确保信息不会被截获。</p><pre><code>Content-Security-Policy: default-src https://onlinebanking.jumbobank.com
+</code></pre><h3>例子5</h3><p>看github.com的真实CSP例子。Github允许加载任何域的内容，但只能加载指定域的脚本，只能加载指定域的样式并可以执行内联样式，只能通过SSL加载指定域的flash插件。</p><pre><code>Content-Security-Policy:default-src *; script-src 'self' https://github.global.ssl.fastly.net  https://ssl.google-analytics.com https://collector-cdn.github.com  https://embed.github.com https://raw.github.com; style-src 'self' 'unsafe-inline' https://github.global.ssl.fastly.net; object-src https://github.global.ssl.fastly.net
+</code></pre><h3>在线CSP编写</h3><p>在线CSP编写，可以协助和帮助网站管理员编写出适合自己站点的CSP。http://cspisawesome.com/</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="1121" height="792" border="0" img-src="a93e8f2f53171298ff09e7cf7d181c684c1f891b.jpg"></p><h2>0x06 CSP的错误使用</h2><hr><p>CSP的语法和指令并不复杂，但如果没有充分了解网站业务和安全需求，错误的使用CSP则会适得其反。</p><p>（1）我在2013年底访问http://www.grosshandel-hahn.de/，发现CSP策略明显使用错误。</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="1169" height="716" border="0" img-src="82aeb9298a9fe3b44c3db8320518a7203a51f8d8.jpg"></p><p>可以看到使用X-Content-Security-Policy-Report-Only。此头的意思是让浏览器只汇报日志，不阻止任何内容。但这条策略里却没有给出接收信息日志的地址。</p><p>（2）Content-Security-Policy: default-src https:; frame-src test.com;。这个策略方案是有问题的，此头限制https以外的所有资源，但又允许iframe通过http进行加载。现实中，这样的场景应该很难出现。</p><h2>0x07 CSP分析报告</h2><hr><p>对于网站管理员来说CSP的一个强大功能是它可以产生试图攻击你网站的分析报告。你可以用report-uri指令使浏览器发送HTTP POST请求把攻击报告以JSON格式传送到你指定的地址。接下来给大家介绍你的站点如何配置来接收攻击报告。</p><h3>启用报告</h3><p>默认情况下，违规报告不会发送。为了能使用违规报告，你必须使用report-uri指令，并至少提供一个接收地址。</p><pre><code>Content-Security-Policy: default-src self; report-uri http://reportcollector.example.com/collector.cgi
+</code></pre><p>如果想让浏览器只汇报报告，不阻止任何内容，可以改用Content-Security-Policy-Report-Only头。</p><h3>违规报告语法</h3><p>该报告JSON对象包含以下数据：</p><pre><code>blocked-uri：被阻止的违规资源
+document-uri：拦截违规行为发生的页面
+original-policy：Content-Security-Policy头策略的所有内容
+referrer：页面的referrer
+status-code：HTTP响应状态
+violated-directive：违规的指令
+</code></pre><h3>违规报告例子</h3><p>http://example.com/signup.html 中CSP 规定只能加载cdn.example.com的CSS样式。</p><pre><code>Content-Security-Policy: default-src 'none'; style-src cdn.example.com; report-uri /test/csp-report.php
+</code></pre><p>signup.html中的代码类似与这样：</p><pre><code>#!html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+  &lt;head&gt;
+    &lt;title&gt;Sign Up&lt;/title&gt;
+    &lt;link rel="stylesheet" href="css/style.css"&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    ... Content ...
+  &lt;/body&gt;
+&lt;/html&gt;
+</code></pre><p>你能从上面的代码找出错误吗？策略是只允许加载cdn.example.com中的CSS样式。但signup.html试图加载自己域的style.css样式。这样违反了策略，浏览器会向http://example.com/test/csp-report.php 发送POST请求提交报告，发送格式为JSON格式。</p><pre><code>#!js
+{
+  "csp-report": {
+    "document-uri": "http://example.com/signup.html",
+    "referrer": "",
+    "blocked-uri": "http://example.com/css/style.css",
+    "violated-directive": "style-src cdn.example.com",
+    "original-policy": "default-src 'none'; style-src cdn.example.com; report-uri /_/csp-reports",
+  }
+}
+</code></pre><p>你从上面可以看到blocked-uri给出了详细的阻断地址http://example.com/css/style.css，但也并不是每次都是这样。比如试图从http://anothercdn.example.com/stylesheet.css 加载CSS样式时，浏览器将不会传送完整的路径，只会给出http://anothercdn.example.com/这个地址。这样做是为了防止泄漏跨域的敏感信息。</p><p>服务端csp-report.php代码可以这样写：</p><pre><code>#!php
+&lt;?php 
+$file = fopen('csp-report.txt', 'a');
+$json = file_get_contents('php://input');
+$csp = json_decode($json, true);
+foreach ($csp['csp-report'] as $key =&gt; $val) {
+    fwrite($file, $key . ': ' . $val . "
+");
+}
+fwrite($file, 'End of report.' . "
+");
+fclose($file);
+?&gt;
+</code></pre><h2>0x08 CSP的使用率统计</h2><hr><p>CSP的全球范围使用率非常低，而且增加的也非常缓慢。根据Veracode在2013年11月给出的报告指出，全球前1000000网站中仅有269个网站使用了W3C规范的CSP 策略头Content-Security-Policy。584个网站在使用X-Content-Security-Policy策略头和487个网站在使用X-Webkit-CSP策略头，这两个协议头已经被废弃，但还没有被禁用。</p><p>而使用Content-Security-Policy-Report-Only进行单独接收攻击报告的网站只有24个。而统计中也指出，发现大量网站使用unsafe-inline这个指令，分析其原因可能是由于开发人员很难在页面中彻底消除内联脚本，这很让人失望，所有只能要求制定的CSP策略更加严谨。</p><p><img style="display:block;margin-left:auto;margin-right:auto" title="NewImage.png" alt="NewImage" width="481" height="289" border="0" img-src="ec098870907d0a476e366a87b1b329b2ac7c1469.jpg"></p><p><a href="http://blog.veracode.com/2013/11/security-headers-on-the-top-1000000-websites-november-2013-report/">http://blog.veracode.com/2013/11/security-headers-on-the-top-1000000-websites-november-2013-report/</a></p><p>对于国内网站使用CSP的情况，我给余弦打了个招呼，ZoomEye对此进行了统计。2014年2月发来的统计结果在非常不乐观。根据ZoomEye的统计：国内排名前7000的域名没有使用CSP，国内1千万的域名（含子域名）中发现7个使用了CSP策略，其中还有3个网站CSP语法使用错误。7个网站中3个网站是知乎，知乎网站值得表扬。列表如下：</p><pre><code>www.zhihu.com
+www.zhi.hu
+zhimg.com
+www.applysquare.com
+www.pipapai.com CSP语法错误
+www.icyprus.cn  CSP语法错误
+www.uyitec.cn  CSP语法错误
+</code></pre><p>在网站安全防御方面，我们还要有很长的路要走。虽然CSP安全策略头只是网站安全整体防御中的一小部分，但合理的利用还是可以起到很好的防护作用。然而在我们分析的百万网站中，CSP的使用率是极其的低，从这一点来说CSP在国内就应该广泛的给网站管理员进行科普。</p><h2>0x09 CSP Bypass</h2><hr><p>一个安全策略从诞生开始将会时不时的有一个叫“Bypass”的小伙伴跟随左右。而从辩证角度来讲，多加载一种安全策略，就多了一种Bypass的维度。一旦Bypass出现，就意味着将有一种设计者没有考虑到的方法或技巧，将破坏策略的原有规则。</p><p>CSP也亦是如此，在一次次被绕过然后在一次次修复过程中，来完善自己的语法和指令。</p><h3>bypass AngularJS系列绕过</h3><p>AngularJS是为数不多的支持CSP模式的MVC框架，在早起版本中可以构造多种方式绕过CSP防御。</p><p>CSP Bypasses with AngularJS 1.0.8 and 1.1.5</p><p>例如：XSS via Click &amp; Hover (ng-click &amp; ng-mouseover attribute)</p><pre><code>#!php
+&lt;?php
+header('X-Content-Security-Policy: default-src \'self\' ajax.googleapis.com');
+header('Content-Security-Policy: default-src \'self\' ajax.googleapis.com');
+header('X-Webkit-CSP: default-src \'self\' ajax.googleapis.com');
+header('Set-Cookie: abc=123');
+?&gt;&lt;!doctype html&gt;
+&lt;html ng-app ng-csp&gt;
+&lt;head&gt;
+&lt;script src="http://ajax.googleapis.com/ajax/libs/angularjs/1.1.5/angular.min.js"&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body ng-click="$event.view.alert(1)"&gt;
+        Click me
+        &lt;h1 ng-mouseover="$event.target.ownerDocument.defaultView.alert(2)"&gt;Hover me&lt;/h1&gt;
+&lt;/body&gt;
+</code></pre><p>更多的可以看<a href="https://code.google.com/p/mustache-security/wiki/AngularJS">https://code.google.com/p/mustache-security/wiki/AngularJS</a></p><h3>策略优先级绕过</h3><p>在浏览器的保护策略中，有很多是重复的。比如A策略可以抵御C攻击，B策略也可以抵御C攻击。此处的抵御可以是阻断也可以是放行。于是当AB同时作用于C攻击上时，Bypass就可能发生。</p><p>（1）Iframe sandbox 和 CSP sandbox</p><p>当iframe sandbox允许执行JS，而CSP不允许执行JS，问题就发生了，CSP就被bypass了。</p><pre><code>#!php
+//evil.com
+&lt;iframe sandbox="allow-scripts" src="//victim.com/csp.html"&gt;
+//victim.com
+&lt;?php
+header('X-Content-Security-Policy: default-src \'self\'');
+header('Content-Security-Policy: default-src \'self\'');
+header('X-Webkit-CSP: default-src \'self\'');
+header('Set-Cookie: abc=123');
+?&gt;&lt;!doctype html&gt;
+&lt;body onclick="alert(1)"&gt;
+Click me
+&lt;/body&gt;
+</code></pre><p>详细的讨论可以看这里：<a href="https://bugzilla.mozilla.org/show_bug.cgi?id=886164">https://bugzilla.mozilla.org/show_bug.cgi?id=886164</a></p><p>（2）XSS Auditor和CSP</p><p>关于XSS Auditor和CSP，这里我想进行一次更开放式的讨论。以Chrome中测试为例，当XSS Auditor和CSP同时作用到一段JS代码上，会有怎样一个效果呢。比如XSS Auditor设置的是阻断，CSP里设置unsafe-inline放行，结果还是被阻断。这是由于浏览器解析JS脚本的时候先使用了XSS auditor这层安全防御策略，所以CSP中的unsafe-inline这个指令并没有起作用，从广义的角度来看，CSP中的策略被Bypass了。浏览器的策略中，类似与这样的情况还有很多。比如下面介绍的这个。</p><p>（3） X-Frame-Options和CSP frame</p><p>当a.com设置X-Frame-Options:deny，b.com设置CSP frame-src a.com，那么b.com是否可以iframe a.com呢。测试中发现a.com还是不能被b.com包含的。你可以认为浏览器解析中，X-Frame-Options优先级大于CSP frame。</p><h2>0x0a CSP总结</h2><hr><p>充分了解CSP安全策略的语法和指令，并最大程度的合理的去利用和部署这些策略，努力把安全策略发挥到极致，使其最终把危害降低到最低。</p><p>CSP并不能消除内容注入攻击，但可以有效的检测并缓解跨站攻击和内容注入攻击带来的危害。</p><p>CSP不是做为防御内容注入(如XSS)的第一道防线而设计，而最适合部署在纵深防御体系中。</p><p>关于为什么CSP的使用率如此之低。究其原因，CSP虽然提供了强大的安全保护，但是他也造成了如下问题：Eval及相关函数被禁用、内嵌的JavaScript代码将不会执行、只能通过白名单来加载远程脚本。这些问题阻碍CSP的普及，如果要使用CSP技术保护自己的网站，开发者就不得不花费大量时间分离内联的JavaScript代码和做一些调整。</p><p>没有被绕过的策略不是好的策略，而从辩证角度来讲，多加载一种安全策略，就多了一种Bypass的维度。在安全领域“Bypass”始终是一个曼妙而鬼魅的名字。</p><p>应该把CSP安全策略视为是一把可以直插心脏的锋利的尖刀，而不是一根电线杆子杵在那。</p><h2>0x0b 参考</h2><hr><p><a href="http://www.w3.org/TR/CSP11/">http://www.w3.org/TR/CSP11/</a> <a href="http://www.w3.org/TR/CSP/">http://www.w3.org/TR/CSP/</a> <a href="http://www.html5rocks.com/en/tutorials/security/content-security-policy/">http://www.html5rocks.com/en/tutorials/security/content-security-policy/</a> <a href="http://ruxcon.org.au/assets/slides/CSP-kuza55.pptx">http://ruxcon.org.au/assets/slides/CSP-kuza55.pptx</a> <a href="https://code.google.com/p/mustache-security/wiki/AngularJS">https://code.google.com/p/mustache-security/wiki/AngularJS</a> <a href="http://content-security-policy.com/">http://content-security-policy.com/</a> <a href="https://github.com/blog/1477-content-security-policy">https://github.com/blog/1477-content-security-policy</a> <a href="http://cspisawesome.com/">http://cspisawesome.com/</a> <a href="https://developer.mozilla.org/en-US/docs/Security/CSP/Using_Content_Security_Policy">https://developer.mozilla.org/en-US/docs/Security/CSP/Using_Content_Security_Policy</a> <a href="http://benvinegar.github.io/csp-talk-2013/#1">http://benvinegar.github.io/csp-talk-2013/#1</a> <a href="http://caniuse.com/#feat=contentsecuritypolicy">http://caniuse.com/#feat=contentsecuritypolicy</a> <a href="https://www.imququ.com/post/content-security-policy-reference.html">https://www.imququ.com/post/content-security-policy-reference.html</a> <a href="http://docs.angularjs.org/api/ng.directive:ngCsp">http://docs.angularjs.org/api/ng.directive:ngCsp</a> <a href="https://developer.mozilla.org/en-US/docs/Security/CSP/Using_CSP_violation_reports">https://developer.mozilla.org/en-US/docs/Security/CSP/Using_CSP_violation_reports</a> <a href="http://stackoverflow.com/questions/14629534/json-post-in-php-csp-report">http://stackoverflow.com/questions/14629534/json-post-in-php-csp-report</a> <a href="http://mathiasbynens.be/notes/csp-reports">http://mathiasbynens.be/notes/csp-reports</a> <a href="http://www.madirish.net/556">http://www.madirish.net/556</a> <a href="http://www.veracode.com/blog/2013/11/security-headers-on-the-top-1000000-websites-november-2013-report/">http://www.veracode.com/blog/2013/11/security-headers-on-the-top-1000000-websites-november-2013-report/</a> <a href="https://github.com/google/CSP-Validator">https://github.com/google/CSP-Validator</a> <a href="http://www.benmarshall.me/content-security-policy/">http://www.benmarshall.me/content-security-policy/</a> <a href="http://www.slideshare.net/x00mario/jsmvcomfg-to-sternly-look-at-javascript-mvc-and-templating-frameworks">http://www.slideshare.net/x00mario/jsmvcomfg-to-sternly-look-at-javascript-mvc-and-templating-frameworks</a> <a href="http://trends.builtwith.com/javascript/Angular-JS">http://trends.builtwith.com/javascript/Angular-JS</a> <a href="http://developer.chrome.com/extensions/contentSecurityPolicy">http://developer.chrome.com/extensions/contentSecurityPolicy</a> <a href="http://cs.ucsb.edu/~adoupe/static/dedacota-ccs2013.pdf">http://cs.ucsb.edu/~adoupe/static/dedacota-ccs2013.pdf</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4482" rel="bookmark" id="re1">利用CSP探测网站登陆状态（alipay/baidu为例）</a></li><li><a href="http://drops.wooyun.org/tips/1166" rel="bookmark" id="re2">header的安全配置指南</a></li><li><a href="http://drops.wooyun.org/tips/956" rel="bookmark" id="re3">mXSS攻击的成因及常见种类</a></li><li><a href="http://drops.wooyun.org/tips/151" rel="bookmark" id="re4">Browser Security-同源策略、伪URL的域</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HRay</span> <span class="reply-time">2016-01-29 17:43:42</span></div><p></p><p>补充个东西吧，文章中拦截报告url是&quot;blocked-uri&quot;: &quot;http://example.com/css/style.css&quot;，但是我实际测试中发现都是只记录到http://example.com这种，查了一下，https://developer.mozilla.org/zh-CN/docs/Web/Security/CSP/Using_CSP_violation_reports 中提到“ 如果被拦截资源的URI属于与当前文档不同的来源，则所拦截的资源URI会被削减至只剩scheme,host和port三部分。”</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jarhf</span> <span class="reply-time">2015-11-20 16:36:54</span></div><p></p><p>（3） X-Frame-Options和CSP frame<br>文中下面这段说法有错误：<br>当a.com设置X-Frame-Options:deny，b.com设置CSP frame-src a.com，那么b.com是否可以iframe a.com呢。测试中发现a.com还是不能被b.com包含的。你可以认为浏览器解析中，X-Frame-Options优先级大于CSP frame。<br>这不是优先级的问题，a站已经说了不能被别人嵌套，不能因为别人说我可以嵌套a那就行了，必须得当事人a自己同意才行啊，这是个逻辑问题。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Coyote</span> <span class="reply-time">2015-03-06 10:37:48</span></div><p></p><p>很多安全人员连开写代码都不会, 你想过安全人员的感受吗?</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Y</span> <span class="reply-time">2014-10-10 18:32:12</span></div><p></p><p>新手什么都看不懂，有没有教教电脑知识的o(︶︿︶)o</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我</span> <span class="reply-time">2014-10-10 11:42:25</span></div><p></p><p>关键要涉及好安全策略要被自己符合。能够阻止而不阻止就是允许.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">梧桐雨</span> <span class="reply-time">2014-04-18 14:28:37</span></div><p></p><p>普及之后你总能找到绕过的办法=。=</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">k1d</span> <span class="reply-time">2014-04-18 13:02:44</span></div><p></p><p>这玩意儿不会普及的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-04-18 11:50:39</span></div><p></p><p>恩，普及了，就没饭吃了！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jaffer</span> <span class="reply-time">2014-04-18 10:30:01</span></div><p></p><p>这肯定是一个方向。但是实施起来估计比较困难呀。如果有好的框架给程序员省事就好了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xser233</span> <span class="reply-time">2014-04-18 09:46:21</span></div><p></p><p>很多开发人员连xss都没听说过，你想过开发人员的感受吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sogili</span> <span class="reply-time">2014-04-18 00:36:49</span></div><p></p><p>我倒觉得这个东西很有必要普及。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ktmud</span> <span class="reply-time">2014-04-17 23:43:51</span></div><p></p><p>还有一大原因是标准还不稳定，浏览器没普及啊，你说让那些需要兼容IE8的网站哪儿抽功夫来做这个？1.0 标准才发布一年，路还长……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2014-04-17 17:56:43</span></div><p></p><p>我也感觉是技术上落地难导致的 而且我觉得一般意义上的网站对xss防御系数没有必要这么高</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gainover</span> <span class="reply-time">2014-04-17 17:50:13</span></div><p></p><p>我觉得csp难以普及的原因应该是，加上了CSP之后，开发人员会感觉被框了起来一样！估计他们都不太喜欢这种感觉，哈哈！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">心伤的胖子</span> <span class="reply-time">2014-04-17 17:41:47</span></div><p></p><p>全新的业务其实是比较容易实施 CSP 的，旧的业务太难了。我们自己的业务之前也想去做，可是考虑到业务的变动以及后续对业务的影响就放弃了。</p><p></p></div></div></div></div></div></main>

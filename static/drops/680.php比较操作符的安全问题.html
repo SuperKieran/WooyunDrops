@@ -1,0 +1,80 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">php比较操作符的安全问题</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">xxlegend</a> <span class="bull">·</span> <time title="2015/08/05 10:40" ui-time="" datetime="2015/08/05 10:40" class="published ng-binding ng-isolate-scope">2015/08/05 10:40</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 比较操作符</h1><hr><p>php的比较操作符有==（等于）松散比较，===（完全等于）严格比较，这里面就会引入很多有意思的问题。</p><p>在松散比较的时候，php会将他们的类型统一，比如说<strong>字符到数字，非bool类型转换成bool类型</strong>，为了避免意想不到的运行效果，应该使用严格比较。如下是php manual上的比较运算符表：</p><pre><code>例子        名称         结果
+$a == $b    等于      TRUE，如果类型转换后 $a 等于 $b。
+$a === $b   全等      TRUE，如果 $a 等于 $b，并且它们的类型也相同。
+$a != $b    不等      TRUE，如果类型转换后 $a 不等于 $b。
+$a &lt;&gt; $b    不等      TRUE，如果类型转换后 $a 不等于 $b。
+$a !== $b   不全等     TRUE，如果 $a 不等于 $b，或者它们的类型不同。
+$a &lt; $b     小与      TRUE，如果 $a 严格小于 $b。
+$a &gt; $b     大于      TRUE，如果 $a 严格大于 $b。
+$a &lt;= $b    小于等于     TRUE，如果 $a 小于或者等于 $b。
+$a &gt;= $b    大于等于     TRUE，如果 $a 大于或者等于 $b。
+</code></pre><h1>0x01 安全问题</h1><hr><h2>1 hash比较缺陷</h2><p>php在处理hash字符串的时候会用到<code>!=,==</code>来进行hash比较，如果hash值以0e开头，后边都是数字，再与数字比较，就会被解释成0*10^n还是为0，就会被判断相等，绕过登录环节。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6a1805051e2a010b0603">[email&#160;protected]</a>:~/tool# php -r 'var_dump("00e0345" == "0");var_dump("0e123456789"=="0");var_dump("0e1234abc"=="0");'
+bool(true)
+bool(true)
+bool(false)
+</code></pre><p>当全是数字的时候，宽松的比较会执行尽力模式，如0e12345678会被解释成<code>0*10^12345678</code>,除了e不全是数字的时候就不会相等，这能从<code>var_dump("0e1234abc"=="0")</code>可以看出来。</p><h2>2 bool 欺骗</h2><p>当存在json_decode和unserialize的时候，部分结构会被解释成bool类型，也会造成欺骗。json_decode示例代码：</p><pre><code>#!php
+$json_str = '{"user":true,"pass":true}';
+$data = json_decode($json_str,true);
+if ($data['user'] == 'admin' &amp;&amp; $data['pass']=='secirity')
+{
+    print_r('logined in as bool'."\n");
+}
+</code></pre><p>运行结果：</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="2d5f4242596d464c4144">[email&#160;protected]</a>:/var/www# php /root/php/hash.php
+logined in as bool
+</code></pre><p>unserialize示例代码：</p><pre><code>#!php
+$unserialize_str = 'a:2:{s:4:"user";b:1;s:4:"pass";b:1;}';
+$data_unserialize = unserialize($unserialize_str);
+if ($data_unserialize['user'] == 'admin' &amp;&amp; $data_unserialize['pass']=='secirity')
+{
+    print_r('logined in unserialize'."\n");
+}
+</code></pre><p>运行结果如下：</p><pre><code>#!php
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c5b7aaaab185aea4a9ac">[email&#160;protected]</a>:/var/www# php /root/php/hash.php
+logined in unserialize
+</code></pre><h2>3 数字转换欺骗</h2><pre><code>#!php
+$user_id = ($_POST['user_id']);
+if ($user_id == "1")
+{
+    $user_id = (int)($user_id);
+    #$user_id = intval($user_id);
+    $qry = "SELECT * FROM `users` WHERE user_id='$user_id';";
+}
+$result = mysql_query($qry) or die('&lt;pre&gt;' . mysql_error() . '&lt;/pre&gt;' );
+print_r(mysql_fetch_row($result));
+</code></pre><p>将user_id=0.999999999999999999999发送出去得到结果如下：</p><pre><code>Array
+(
+    [0] =&gt; 0
+    [1] =&gt; lxx'
+    [2] =&gt; 
+    [3] =&gt; 
+    [4] =&gt; 
+    [5] =&gt; 
+)
+</code></pre><p>本来是要查询user_id的数据，结果却是user_id=0的数据。int和intval在转换数字的时候都是就低的，再如下代码:</p><pre><code>#!php
+if ($_POST['uid'] != 1) {
+ $res = $db-&gt;query("SELECT * FROM user WHERE uid=%d", (int)$_POST['uid']);
+ mail(...);
+} else {
+ die("Cannot reset password of admin");
+}
+</code></pre><p>假如传入1.1，就绕过了<code>$_POST['uid']！=1</code>的判断，就能对<code>uid=1</code>的用户进行操作了。另外<code>intval</code>还有个尽力模式，就是转换所有数字直到遇到非数字为止，如果采用:</p><pre><code>if (intval($qq) === '123456')
+{
+    $db-&gt;query("select * from user where qq = $qq")
+}
+</code></pre><p>攻击者传入<code>123456 union select version()</code>进行攻击。</p><h2>4 PHP5.4.4 特殊情况</h2><p>这个版本的php的一个修改导致两个数字型字符溢出导致比较相等</p><pre><code>$ php -r 'var_dump("61529519452809720693702583126814" == "61529519452809720000000000000000");'
+bool(true)
+</code></pre><h1>3 题外话：</h1><p>同样有类似问题的还有php strcmp函数,manual上是这么解释的，<code>int strcmp ( string $str1 , string $str2 )</code>,str1是第一个字符串，str2是第二个字符串，如果str1小于str2，返回&lt;0,如果str1>str2,返回>0,两者相等返回0，假如str2为一个array呢？</p><pre><code>#!php
+$_GET['key'] = array();
+$key = "llocdpocuzion5dcp2bindhspiccy";
+$flag = strcmp($key, $_GET['key']);
+if ($flag == 0) {
+    print "Welcome!";
+} else {
+    print "Bad key!";
+}
+</code></pre><p>运行结果：</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ea9885859eaa818b8683">[email&#160;protected]</a>:~/php# php strcmp.php
+PHP Warning:  strcmp() expects parameter 2 to be string, array given in /root/php/strcmp.php on line 13
+Welcome!
+</code></pre><p>参考： 1，http://phpsadness.com/sad/47<br>2，http://php.net/language.operators.comparison<br>3，http://indico.cern.ch/event/241705/material/slides/0.pdf</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/tips/4483" rel="bookmark" id="re2">浅谈PHP弱类型安全</a></li><li><a href="http://drops.wooyun.org/tips/7299" rel="bookmark" id="re3">MySQL注入技巧</a></li><li><a href="http://drops.wooyun.org/tips/2460" rel="bookmark" id="re4">用Burpsuite 来处理csrf token</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2015-11-22 11:15:35</span></div><p></p><p>学习了，谢谢大牛分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">isno</span> <span class="reply-time">2015-08-06 10:49:22</span></div><p></p><p>https://bugs.php.net/bug.php?id=69892</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xy小雨</span> <span class="reply-time">2015-08-06 09:46:32</span></div><p></p><p>23333</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">封停</span> <span class="reply-time">2015-08-05 12:55:31</span></div><p></p><p>学习了……</p><p></p></div></div></div></div></div></main>

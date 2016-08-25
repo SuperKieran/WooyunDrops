@@ -1,0 +1,147 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">SNORT入侵检测系统</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">YxWa</a> <span class="bull">·</span> <time title="2015/10/09 10:38" ui-time="" datetime="2015/10/09 10:38" class="published ng-binding ng-isolate-scope">2015/10/09 10:38</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 一条简单的规则</h1><hr><p><code>alert tcp 202.110.8.1 any -&gt; 122.111.90.8 80 (msg:”Web Access”; sid:1)</code></p><ul><li>alert：表示如果此条规则被触发则告警</li><li>tcp：协议类型</li><li>ip地址：源/目的IP地址</li><li>any/80：端口号</li><li>->：方向操作符，还有&lt;>双向。</li><li>msg：在告警和包日志中打印消息</li><li>sid：Snort规则id …</li></ul><p>这条规则看字面意思就很容易理解。Snort就是利用规则来匹配数据包进行实时流量分析，网络数据包记录的网络入侵检测/防御系统(Network Intrusion Detection/Prevention System),也就是NIDS/NIPS。</p><h1>0x01 SNORT目录结构</h1><hr><p>建议将Snort的目录结构配置成如下：</p><pre><code>/etc/snort
+ ├── barnyard2.conf      barnyard2日志分析工具配置文件
+ ├── snort.conf          snort配置文件（关键）
+ ├── threshold.conf      事件过滤配置文件
+ ├── classification.config 规则分类配置文件(classtype)
+ ├── reference.config      外部参考配置文件(reference)
+ ├── gen-msg.map      generate id 和 msg 对应关系map
+ ├── sid-msg.map      snort id 和 msg对应关系map
+ ├── unicode.map      预处理器http_inspect编码翻译文件
+ ├── preproc_rules       预处理器及解码器规则集
+ │ ├── decoder.rules  
+ │ ├── preprocessor.rules
+ │ └── sensitive-data.rules
+ ├── rules               Snort规则集（关键）
+ │  ├── web-iis.rules 
+ │  ├── web-php.rules
+ More…
+ ├── so_rules            Share Object规则集
+ │  ├── browser-ie.rules
+ │  ├── browser-other.rules    
+ More…
+</code></pre><h1>0x02 snort.conf配置文件</h1><hr><pre><code>此文件是配置snort的核心文件，包括以下几部分：
+  1) Set the network variables.  设置各类网络地址，规则中易于使用
+  2) Configure the decoder      设置解码器
+  3) Configure the base detection engine  设置基础检测引擎
+  4) Configure dynamic loaded libraries   设置动态链接库
+  5) Configure preprocessors     设置预处理器
+  6) Configure output plugins    设置输出插件
+  7) Customize your rule set     设置自定义规则
+  8) Customize preprocessor and decoder rule set设置预处理、解码器规则
+  9) Customize shared object rule set 设置共享对象规则集
+</code></pre><h1>0x03 SNORT体系结构</h1><hr><p><img alt="Paste_Image.png" img-src="996e5c4e7af5f24853cfd14d0deba9bc53129aa1.jpg"></p><ul><li>数据包嗅探模块，主要负责监听网络数据包，并根据TCP/IP协议解析数据包。</li><li>预处理模块，1.包重组预处理器，它的作用是为了防止攻击信息被拆分到多个包中而 逃避了Snort的检测；2.协议编码预处理器，它的功能是把数据包协议解码成一个统一的格式，再传送给检测模块；3.协议异常检测预处器。</li><li>检测引擎模块，当预处理器把数据包送过来后，检测引擎将这些数据包与三维链表形式的检测规则进行匹配，一旦发现数据包中的内容和某条规则相匹配，就通知报警模块。</li><li>报警/日志模块，检测引擎将数据包传送给报警模块后，报警模块会根据规则定义（alert，log..）对其进行不同的处理（数据库，日志）。</li></ul><p>下面分别详细介绍这四大模块。</p><h1>0x04 解码模块与预处理模块</h1><hr><h2>4.1 模块介绍</h2><p>由于解码模块和预处理模块功能类似，都是在规则检测引擎之前对数据包的处理，所以两个模块一并介绍。 解码模块主要是将从监控网络当中抓取的原始网络数据包，按照各个网络协议栈从下至上进行解码，并将解码数据保存到各个对应的数据结构当中，最后交由预处理模块进行处理。</p><p>解码后的数据包经过预处理之后才能被主探测引擎进行规则匹配。预处理器的主要用来应对一些IDS攻击手段。其作用包括：</p><p>1)针对可疑行为检查包或修改包，以便探测引擎能对其正确解释。 2)负责对流量标准化，以便探测引擎能精确匹配特征。</p><p>目前已知的IDS逃避技术主要有：</p><p>1)– 多态URL编码； 2)– 多态shellcode； 3)– 会话分割； 4)– IP碎片；</p><p>Snort主要包含以下三类预处理器（举例说明）：</p><p>1)包重组预处理器：</p><ul><li>frag3：IP分片重组和攻击监测。</li><li>stream：维持TCP流状态，进行会话重组。</li></ul><p>2)协议规范化预处理器：</p><ul><li>http_inspect：规范HTTP流。</li><li>rpcDecode：规范RPC调用。</li></ul><p>3)异常检测预处理器：</p><ul><li>ARP spoof：检测ARP欺骗。</li><li>sfPortscan：检测端口扫描。</li></ul><h2>4.2 模块配置</h2><p>配置分两个步骤，都是在snort.conf中配置。</p><p>1.snort.conf的2)和5)中配置解码器或者预处理参数。</p><p>2.snort.conf的8)中启用检测规则。</p><h3>4.2.1 解码器配置举例</h3><p>1.配置解码器</p><pre><code>config disable_decode_alerts   关闭decode告警。
+config enable_decode_oversized_alerts
+      如果一个包（IP,UDP,TCP）长度长于length字段，则告警。
+# Stop generic decode events
+</code></pre><p>格式为<code>config docoder [option]</code>,使用<code>#</code>作为注释</p><p>2.启用解码器检测规则</p><p><code>include $PREPROC_RULE_PATH/decoder.rules</code></p><p>snort.conf文件中使用include关键词包含配置文件和规则文件。</p><p>3.在decoder.rules中我们找到了检测IP长度异常的规则。</p><p><code>alert ( msg:"DECODE_IPV4_DGRAM_GT_IPHDR"; sid:6; gid:116; rev:1; metadata:rule-type decode;classtype:protocol-command-decode; )</code></p><h3>4.2.2 预处理器http_insepect配置举例</h3><p>1.下面是http_inspect默认的配置</p><pre><code>preprocessor http_inspect: global iis_unicode_map                            unicode.map 1252 compress_depth 65535 decompress_depth 65535
+#unicode.map是http_inspect解码unicode时的解码文件。
+preprocessor http_inspect_server: server default \
+http_methods { GET POST PUT SEARCH MKCOL ...} \
+    ...  
+    enable_cookie        #将http请求或响应中的cookie提取到缓存，用于后面规则匹配。
+    normalize javascript #对标签中的js脚本解码。
+    ...
+</code></pre><p>2.启用预处理器规则</p><p><code>#include $PREPROC_RULE_PATH/preprocessor.rules</code></p><p>下面是一条解码器规则：</p><p><code>alert ( msg:"DECODE_TCP_INVALID_OFFSET"; sid:46; gid:116; rev:1; metadata:rule-type decode; reference:cve,2004-0816; classtype:bad-unknown; )</code></p><p>发现这条规则和之前看到的不一样，它没有源/目的IP，端口等信息，说明这条规则是由解码器自动触发的，用户不需要干预。 一般我们也不需要去修改解码器或者预处理器的规则，只需要去snort.conf中添加、配置或者删除插件即可。</p><h1>0x05检测引擎模块</h1><hr><p>规则结构 alert tcp 202.110.8.1 any -> 122.111.90.8 80 (msg:”Web Access”; sid:1) |&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||--规则头&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||&#45;--||--||&#45;--||&#45;--||&#45;--||-规则选项&#45;--||&#45;--||&#45;--||&#45;--||-|</p><h2>5.1 规则头</h2><p>动作：</p><p>在snort中有五种动作：alert、log、pass、activate和dynamic.</p><pre><code>  1)Alert：       生成一个告警，然后记录（log）这个包。
+  2)Log：         记录这个包。
+  3)Pass：        丢弃这个包。
+  4)Activate： alert并且激活另一条dynamic规则。
+  5)Dynamic：保持空闲直到被一条activate规则激活，被激活后就作为一条log规则执行。
+</code></pre><p>协议：</p><p>Snort当前可分析的协议有四种：TCP,UDP,ICMP和IP。将来可能会更多，例如：ARP、IGRP、GRE、OSPF、RIP、IPX等。</p><p>IP地址：</p><p>1)地址就是由直接的ip地址或一个CIDR块组成的。也可以指定ip地址列表，一个ip地址列表由逗号分割的ip地址和CIDR块组成，并且要放在方括号内 [,]。 2)否定操作符用<code>!</code>表示。 3)关键字“any”可以被用来定义任何地址。</p><p>例如：</p><p><code>alert tcp ![192.168.1.0/24,10.1.1.0/16] any -&gt; 192.168.2.1 80(msg:”notice!”;content|xxxx|;)</code></p><p>方向操作符：</p><p>方向操作符<code>-&gt;</code></p><p>表示规则所施加的流的方向。方向操作符左边的ip地址和端口号被认为是流来自的源主机，方向操作符右边的ip地址和端口信息是目标主机，还有一个双向操作符<code>&lt;&gt;</code>。</p><p>端口号：</p><p>1)端口号可以用几种方法表示，包括any端口、静态端口定义、范围、以及通过否定操作符。 2)静态端口定义表示一个单个端口号，例如111表示portmapper，23表示telnet，80表示http等等。 3)端口范围用范围操作符“:”表示.比如，<code>80:</code> , <code>:1024</code> ,<code>80:1024</code></p><h2>5.2 规则选项</h2><p>规则选项分为四大类：</p><p>1)General rule option 通用规则选项 2)Payload detection rule option 负载检测规则选项 3)Non-Payload detection rule option 非负载检测规则选项 4)Post detection rule option 后检测规则选项</p><h3>5.2.1 General rule option通用规则选项</h3><p><strong>sid</strong></p><pre><code>   snort id ,这个关键字被用来识别snort规则的唯一性（说的其实严禁，后面会有补充）。sid 的范围是如下分配的：          
+</code></pre><ul><li>&lt;100 保留做将来使用</li><li>100-1000,000 包含在snort发布包中</li><li>>1000,000 作为本地规则使用</li></ul><p><strong>msg</strong></p><pre><code>      标示一个消息，但是规则中的msg不起作用，sid和msg的对应关系查阅sid-msg.map。
+</code></pre><p><strong><em>sid-msg.map</em></strong></p><p>格式：<code>sid || msg</code></p><p>例子：<code>384 || PROTOCOL-ICMP PING</code> 在/etc/snort/rules/protocol-icmp.ruls中我们找到了这条规则： <code>alert icmp $EXTERNAL_NET any -&gt; $HOME_NET any (msg:"PROTOCOL-ICMP PING"; icode:0; itype:8; metadata:ruleset community; classtype:misc-activity; sid:384; rev:8;)</code></p><p>此文件作用是将sid与msg的一一对应，否则，在告警中会出现下图中第一条的现象。</p><p><img alt="Paste_Image.png" img-src="71dd944c878c7c29b0c9b1a88c2a4af4da06f8a8.jpg"></p><p>此文件用于自定义规则中sid与msg的对应和在snort自有规则中自定义告警信息。 上图中<code>Snort Alert[1:1000015:0]</code>其中内容对应为<code>Snort alert[gid:sid:rev]</code>。这说明一个规则需要这三个因素才能确定,之前说只有sid唯一标示一条规则是不严谨的。</p><p><strong>gid</strong></p><pre><code> generate id，作用是为了说明这条规则是snort的哪部分触发的。比如是由解码器、预处理器还是Snort自有规则等。
+ 查看/usr/local/share/doc/snort/generators文件（此文件不是配置文件）：
+
+rules_subsystem       1 # Snort Rules Engine
+rpc_decode            106 # RPC Preprocessor(预处理器)
+stream4               111 # Stream4 preprocessor（预处理器）
+ftp                   125 # FTP decoder（解码器）
+...                   ...
+</code></pre><p>decoder和preprocessor的gid就不一一列举，可以看到Snort Rule Engine的gid为1，自定义规则和snort自有规则（也就是/etc/snort/rules目录下的规则）gid默认是1。但是这里我们获知decoder和preprocessor也是有sid的。 举例说明：</p><p>/etc/snort/rules/protocol-icmp.rules中的一条规则：</p><p><code>alert icmp $EXTERNAL_NET any -&gt; $HOME_NET any (msg:“PROTOCOL-ICMP Traceroute”; icode:0; itype:30; metadata:ruleset community; classtype:misc-activity; sid:456; rev:8;)</code></p><p>gid默认为1</p><p>/etc/snort/preproc_rules/decoder.rules中的一条规则：</p><p><code>alert ( msg:"DECODE_IP6_EXCESS_EXT_HDR"; sid:456; gid:116; rev:1; metadata:rule-type decode; classtype:misc-activity; )</code></p><p>可以看到两条规则的sid是相同的，所以还需要gid来区分。</p><p><strong><em>gen-msg.map</em></strong></p><p>这个文件和sid-msg.map作用类似，在逻辑上应该是包含了sid-msg.map（sid-msg.map相当于默认gid为1）</p><p>格式：<code>generatorid || alertid(sid) || MSG</code></p><p>例子：</p><pre><code>1   || 1 || snort general alert
+129 || 2 || stream5: Data on SYN packet
+116 || 271 || snort_decoder: WARNING: IPv6 header claims to not be IPv6
+116 || 456 || snort_decoder: WARNING: too many IPV6 extension headers #例子
+...
+</code></pre><p>拿<strong>gid</strong>中第二条规则举例，如果此条规则被触发，则会报<code>snort_decoder: WARNING: too many IPV6 extension headers</code>告警，而不是<code>DECODE_IP6_EXCESS_EXT_HDR</code>。所以规则中的msg仅仅起到标示作用，告警msg需要在sid-msg.map和gen-msg.map这两个文件中对应查找。</p><p><strong>rev</strong></p><p>这个关键字是被用来识别规则修改的版本，需要和sid,gid配合使用。 这样就介绍完了gid，sid，rev三个确定规则唯一的元素。</p><p><strong>reference</strong></p><p>外部攻击参考，这个关键字允许规则包含一个外面的攻击识别系统。这个插件目前支持几种特定的系统，这些插件被输出插件用来提供一个关于产生报警的额外信息的连接。</p><p><img alt="Paste_Image.png" img-src="6624c1932f7fb9f8c75d54de5765a5f9cd18140f.jpg"></p><p><strong><em>reference.config</em></strong></p><p>格式：<code>config reference: system URL</code></p><p>例子： <code>config reference: cve http://cve.mitre.org/cgi-bin/cvename.cgi?name=</code> 定义了一些外部安全网站的网址。比如规则中定义reference: cve,1001,那么就像在上面的网址后面添加了1001，<code>http://cve.mitre.org/cgi-bin/cvename.cgi?name=1001</code>，最后点击告警中的[cve]，就会跳转到相应的网址。注：reference也需要在sid-msg.map中与sid对应，否则不起作用，类比msg。</p><p><strong>classtype</strong></p><p>规则类别标识。这个关键字把报警分成不同的攻击类。通过使用这个关键字和使用优先级，用户可以指定规则类中每个类型所具有的优先级。</p><p><strong>priority</strong></p><p>设置classtype的优先级。classtype和priority是配合使用的，classification.config文件将其联系起来。</p><p><strong><em>classification.config</em></strong></p><p>格式： <code>config classification:shortname,short description,priority</code></p><p>例子： <code>config classification: attempted-admin,Attempted Administrator Privilege Gain,1</code> 写在此文件中的都是默认值，priority关键词可以在规则中重写优先级。 例子： <code>alert tcp any any -&gt; any 80 (msg:"EXPLOIT ntpdx overflow"; dsize:&gt;128; classtype:attempted-admin; priority:10 );</code></p><p><strong>metadata</strong></p><p>可以在规则中添加自定义的信息，一般以键值对的形式出现。</p><blockquote><p>通用规则选项只是对一条规则进行标示，分类等操作，并没有进行实际的过滤检测。</p></blockquote><h3>5.2.2 Payload Detection Rule Options 负载检测规则选项</h3><p><strong>content</strong></p><p>content是Snort重要的关键词之一。它规定在数据包的负载中搜索指定的样式。它的选项数据可以包含混合的文本和二进制数据。二进制数据一般包含在管道符号中“|”，表示为字节码（bytecode），也就是将二进制数据的十六进制形式。</p><pre><code>alert tcp any any -&gt; any 139 (content:"|5c 00|P|00|I|00|P|00|E|00 5c|";)
+alert tcp any any -&gt; any 80 (content:!“GET”;)
+</code></pre><p>content还有很多修饰符：</p><pre><code>Nocase            content字符串大小写不敏感
+rawbytes          直接匹配原始数据包
+Depth             匹配的深度
+Offset            开始匹配的偏移量
+Distance          两次content匹配的间距
+Within            两次content匹配之间至多的间距  
+http_cookie       匹配cookie
+http_raw_cookie   匹配未经normalize的cookie
+http_header       匹配header
+http_raw_header   匹配未经normalize的header
+http_method       匹配method
+http_url          匹配url
+http_raw_url      匹配日在未经normalize的url中
+http_stat_code    匹配状态码中匹配
+http_stat_msg     匹配状态信息
+http_encode       匹配编码格式
+</code></pre><p>http开头的修饰符需要配合前面介绍过的预处理器http_inspect一起使用。</p><p><strong>pcre</strong></p><pre><code>允许用户使用与PERL语言相兼容的正则表达式。
+</code></pre><p>格式 <code>pcre:[!]"(/&lt;regex&gt;/|m&lt;delim&gt;&lt;regex&gt;&lt;delim&gt;)[ismxAEGRUBPHMCOIDKY]</code></p><p>例子：<br><code>alert tcp any any -&gt; any 80 (content:“/foo.php?id="; pcre:"/\/foo.php?id=[0-9]{1,10}/iU";)</code> 正则的细节查阅snort_manual。</p><p><strong>protected_content</strong></p><p>将content中的查询内容使用hash算法加密，保护规则的私密性。 <code>protected_content:[!]"&lt;content hash&gt;", length:orig_len[, hash:md5|sha256|sha512];</code></p><p><strong>rawbytes</strong></p><p>忽略解码器及预处理器的操作，直接匹配原始网络包。</p><blockquote><p>上面只列举出了一些常用的payload detection rule option，更多的关键词查阅snort_manual。</p></blockquote><h3>5.2.3 Non-Payload Detection Rule Option非负载检测规则选项</h3><pre><code>Fragoffset                IP 偏移量
+Ttl                       IP 生存时间
+Tos                       IP 服务类型
+Id                        IP 标识
+Ipopts                    IP 可选项
+Fragbits                  IP 标志
+Dsize                     数据包负载量
+Flags                     TCP flags
+Seq                       TCP seq
+Ack                       TCP ack
+Window                    TCP window
+Icmp_id                   ICMP ID
+</code></pre><p>此类规则选项都是对数据包帧结构中特殊字段的匹配。</p><h3>5.2.4 Post-Detection Rule Option后检测规则选项</h3><pre><code>Logto                     输出日志路径
+Session                   从TCP会话中获取用户数据
+Resp                      通过发送响应结束恶意的请求
+React                     不仅仅记录触发规则的特定数据包
+Tag                       不仅仅记录触发规则的特定数据包
+Activates                 activate动作
+Activates_by              dynamic动作
+Count                     dynamic规则被触发后可以匹配的包的数目
+Replace                   替换content内容
+Detection-filter          检测过滤
+</code></pre><h2>5.3 检测引擎模块配置</h2><p>1.在/etc/rules目录下的*.rules文件中写规则。 2.snort.conf 7)中include对应规则。</p><pre><code>include $RULE_PATH/local.rules
+#include $RULE_PATH/app-detect.rules
+#include $RULE_PATH/attack-responses.rules
+#include $RULE_PATH/backdoor.rules
+#include $RULE_PATH/bad-traffic.rules
+#include $RULE_PATH/blacklist.rules
+</code></pre><h1>0x06 Snort告警/日志模块</h1><hr><h2>6.1 输出模块配置</h2><p>snort.conf 6):Configure output plugins 设置日志路径 <code>config logdir：/var/log/snort</code> 设置输出格式为unified2： <code>output unified2: filename snort.log, limit 128</code></p><p><strong><em>barnyard2.conf</em></strong></p><p>barnyard2的作用是将unified2格式的数据存入数据库 设置与snort日志关联 <code>config waldo_file:/var/log/snort/barnyard.waldo</code> 设置数据库 <code>output database: log, mysql, user=snort password=123456 dbname=snort host=localhost</code></p><h2>6.2 数据库</h2><p>ER图</p><p><img alt="Paste_Image.png" img-src="a1e334c2b1cf67b493fe4217716089ed3da10e8f.jpg"></p><p><strong>schema</strong></p><p><img alt="Paste_Image.png" img-src="5bc830fe34663aa7dcdf78e3df3d1ec10a7b60d5.jpg"></p><pre><code>vseq：数据库模式ID
+ctime：数据库创建时间
+</code></pre><p>信息表，和其他数据库内容上没有联系</p><p><strong>sensor</strong></p><p><img alt="Paste_Image.png" img-src="e9dcd2fac2cba2ce165a2120efaf796eb96b7379.jpg"></p><pre><code>sid：传感器代号
+hostname：传感器所属的用户名称
+Interface：传感器对应的网络接口
+filter：对应传感器的过滤原则
+detail：表示传感器监测模式，记录模式详细程度的级别        
+encoding：包含数据存在形式
+last_cid： 对应每个sid即传感器捕获告警的最后一个值
+</code></pre><p><strong>detail</strong></p><p><img alt="Paste_Image.png" img-src="873f90096df1f9d8229837c610dd6e58b62e0f25.jpg"></p><pre><code>0-fast快速检测
+1-full全面检测
+</code></pre><p>传感器sensor的检测级别。</p><p><strong>encoding</strong></p><p><img alt="Paste_Image.png" img-src="21abec8a2bafbf785d121b9a9fe3a94389d0ef75.jpg"></p><pre><code>0- Hex
+1- base64
+2- asci
+</code></pre><p>数据包中数据的存在形式。</p><p><strong>event</strong></p><p><img alt="Paste_Image.png" img-src="fc7fdd2bb982559f73a6fb2ee74cd4503bc7e756.jpg"></p><pre><code>sid：sensor id，传感器id。
+cid；event id   事件id。sid和cid共同作为主码，其中cid是在sid的基础上进行排序的。每个sid对应自己的cid排序。
+signature：对应signature表格中的sig_id选项，表明这条告警事件所属的规则形式的告警对应哪一类rules。
+timestamp：对应告警事件发生的系统时间。
+</code></pre><p>最核心的一张表，告警的每一条数据都会存储在event表中，一条event数据就代表一个包。</p><p><strong>signature</strong></p><p><img alt="Paste_Image.png" img-src="550d89de565a6617a2cbf945cf3644bf9db1b44b.jpg"></p><pre><code>sig_id： 总数代表发生告警种类的总数。是告警种类的主码。唯一标识一条规则。
+sig_name：告警名称。对应每条alert语句的Msg。
+sig_class_id：对应sig_class表格中的sig_class_id.代表告警种类的大类信息。
+sig_priority：告警的优先级
+sig_rev：版本号
+sig_sid：snort id   
+sig_gid：generate id 
+</code></pre><p>存储snort规则的一张表，可以看到sig&#95;sid,sig&#95;gid,sig_rev分别对应规则中的sid,gid,rev。注意规则中的snort id和数据库中的 sensor id注意区分。</p><p><strong>sig_reference</strong></p><p><img alt="Paste_Image.png" img-src="8a0789ed00e514623a0216b955c94790b69691d6.jpg"></p><pre><code>sig_id：对应的告警种类。
+ref_id：对应reference表格中的主码
+ref_seq：参考序列号
+</code></pre><p>提供报警种类信息signature的参考信息。将signature与reference联系起来的表格。</p><p><strong>reference</strong></p><p><img alt="Paste_Image.png" img-src="4a95f6ac65a21ee97e7c3a9da50f01131a3b79e8.jpg"></p><pre><code>Ref_id：主码
+Ref_system_id：对应reference_system表格
+Ref_tag：规则中 cve,bugtraq 后面的参数
+</code></pre><p><strong>reference_system</strong></p><p><img alt="Paste_Image.png" img-src="f099eb4bac7e24ef52aa0623619974b9288de85f.jpg"></p><pre><code>ref_system_id：主码
+ref_system_name：reference system的名字，如cve，url等。
+</code></pre><p><strong>sig_class</strong></p><p><img alt="Paste_Image.png" img-src="61907df2b942e2d7a96e48e420056ee6e205a6db.jpg"></p><pre><code>sig_class_id：分类编号
+sig_class_name：分类名称
+</code></pre><p>signature告警种类的分类信息。</p><p><strong>iphdr</strong></p><p><img alt="Paste_Image.png" img-src="092be4a21b553dce6c00860b02da4a2fdbe8420d.jpg"></p><p><strong>tcphdr</strong></p><p><img alt="Paste_Image.png" img-src="fcdc69671983878f80542b0ba37a9d644518c08d.jpg"></p><p><strong>udphdr</strong></p><p><img alt="Paste_Image.png" img-src="2432756e80143d4825a35d34b6721b1eb90c9be0.jpg"></p><p><strong>icmphdr</strong></p><p><img alt="Paste_Image.png" img-src="39a467e87ad5fc50877788c4c551b8bbe518a08c.jpg"></p><p><strong>data</strong></p><p><img alt="Paste_Image.png" img-src="e7e4822a9c812f9417ea79485590231d9b4e3c9c.jpg"></p><pre><code>data_payload：数据包有效载荷
+</code></pre><p>规则中协议为tcp时，data_payload中是tcp后面的内容</p><p>规则中协议为icmp时，data_payload中是icmp协议中的data字段值</p><p><strong>opt</strong></p><p><img alt="Paste_Image.png" img-src="89fb193a2fde50fccaf34e89f3c3ff086d035f4e.jpg"></p><p>IP和OPT的option。</p><p>参考文献：</p><ul><li><a href="http://wenku.baidu.com/view/1d38ae4d2cc58bd63186bddf?fr=prin">[1] CentOS6.6下基于snort+barnyard2+base的入侵检测系统的搭建</a></li><li><a href="http://upload-images.jianshu.io/upload_images/764908-5d6ab8767d56c9f8.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240">2</a> 基于Snort的C&#95;S模式的IDS的设计与应用&#95;王会霞.caj</li><li><a href="http://blog.csdn.net/jo_say/article/details/6330477">[3] Snort 笔记1 - 3种模式简介</a></li><li><a href="http://blog.csdn.net/jo_say/article/details/6302367">[4] Snort.conf 分析</a></li><li><a href="http://www.jianshu.com/p/113345bbf2f7">[5] Snort 入侵检测系统简介</a></li><li><a href="http://wenku.baidu.com/view/0810a3bf3186bceb18e8bb3b?fr=prin">[6] Snort部署及端口扫描检测试验总结</a></li><li><a href="https://github.com/firnsy/barnyard2/blob/master/schemas/create_mysql">[7] Barnyard create_mysql</a></li><li><a href="http://www.jianshu.com/p/b047101f93a2">[8] Snort mysql概述</a></li><li><a href="http://wenku.baidu.com/link?url=On2WXmk0bTqt985TWqvFD-iqiMRKktAUWOfhmZcZjKRa7YbDju-fjSgv4m_JvPW69-94Et-x2H-ZHoDj2KMoSg7rCYs6xIS8x9ntL7eKucC">[9] Snort响应模块总结-实时监听-数据库分析</a></li><li><a href="http://www.andrew.cmu.edu/user/rdanyliw/snort/acid_db_er_v102.html">[10] Snort数据表项含义及ER图</a></li><li><a href="http://m.blog.csdn.net/blog/shuaihuiminps/5082641">[11] 上文的中文翻译</a></li><li><a href="http://www.jianshu.com/writer#/notebooks/1640991/notes/2062809/preview">[12] Snort rules概述</a></li><li><a href="http://www.cnblogs.com/lasgalen/p/4512755.html?utm_source=tuicool">[13] Snort安装配置与NIDS规则编写</a></li><li><a href="http://blog.csdn.net/jo_say/article/details/6335640">[14] Snort 笔记2 - 规则编写</a></li><li><a href="http://bbs.chinaunix.net/thread-1211897-1-1.html">[15] 撰写一组SNORT规则防御SQL注入</a></li><li><a href="http://www.jianshu.com/p/9d11a3e039e9">[16] Snort规则中的逻辑关系</a></li><li><a href="http://www.jianshu.com/p/a87086078728">[17] Snort_manual.pdf 官方文档中文翻译</a></li><li><a href="http://www.jianshu.com/p/6de14a787868">[18] Snort sid-msg.map文件概述</a></li><li><a href="http://www.jianshu.com/p/e031003dfcff">[19] Snort classification.config文件概述</a></li><li><a href="http://www.jianshu.com/p/d08bfe6210bf">[20] Snort reference.config文件概述</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/413" rel="bookmark" id="re1">CentOS 6.2下安装基于Suricata + Barnyard 2 + Base 的⼊侵检测系统</a></li><li><a href="http://drops.wooyun.org/news/11588" rel="bookmark" id="re2">安全预警：国内超过300台juniper网络设备受后门影响</a></li><li><a href="http://drops.wooyun.org/tips/1424" rel="bookmark" id="re3">Iptables入门教程</a></li><li><a href="http://drops.wooyun.org/tips/2614" rel="bookmark" id="re4">配置ModSecurity防火墙与OWASP规则</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YxWa</span> <span class="reply-time">2015-10-10 17:24:28</span></div><p></p><p>@her0ma 是啊，这先做了前期的调研，英文文档啃了很久。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">低调的Y哥</span> <span class="reply-time">2015-10-10 14:12:29</span></div><p></p><p>求带飞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">IsTr33</span> <span class="reply-time">2015-10-10 14:05:09</span></div><p></p><p>赶紧过来拜读，给经理XX。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rootsecurity</span> <span class="reply-time">2015-10-10 13:55:29</span></div><p></p><p>@her0ma suricata就是snort的改版，不需要安装snort了。:-)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YxWa</span> <span class="reply-time">2015-10-10 13:15:18</span></div><p></p><p>@Xmyth_夏洛克 蒋少回来带带我！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">YxWa</span> <span class="reply-time">2015-10-10 13:14:28</span></div><p></p><p>@Xmyth_夏洛克 哈哈，本月最佳白帽子你好！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">有事请联系王经理</span> <span class="weibo"></span> <span class="reply-time">2015-10-10 13:12:31</span></div><p></p><p>哈哈，是我！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">带脚镣跳舞</span> <span class="weibo"></span> <span class="reply-time">2015-10-09 17:56:04</span></div><p></p><p>→_→</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xmyth_夏洛克</span> <span class="reply-time">2015-10-09 17:13:58</span></div><p></p><p>顶！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">her0ma</span> <span class="reply-time">2015-10-09 12:38:17</span></div><p></p><p>suricata+baynyard2+snort规则+base这个方案搭建的入侵检测系统也挺给力的。<br>做了优化和后续的二次开发，应该就很霸气了。</p><p>之前drops里有相关的文章....<br>国内资料不是特别多</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2015-10-09 11:49:33</span></div><p></p><p>终于看到比较全的Snort介绍了！10086个赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">有态度VIP</span> <span class="weibo"></span> <span class="reply-time">2015-10-09 11:31:49</span></div><p></p><p>以前搭建过，但是觉得实际使用效率然并卵</p><p></p></div></div></div></div></div></main>

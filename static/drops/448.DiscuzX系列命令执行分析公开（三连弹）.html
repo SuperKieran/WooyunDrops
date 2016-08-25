@@ -1,0 +1,101 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">DiscuzX系列命令执行分析公开（三连弹）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">tang3</a> <span class="bull">·</span> <time title="2015/01/15 18:55" ui-time="" datetime="2015/01/15 18:55" class="published ng-binding ng-isolate-scope">2015/01/15 18:55</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 漏洞概要</h1><hr><p>昨天360补天发了这样的一条微博：</p><p><img alt="enter image description here" img-src="87aee71b889cb3dd2143bcffc086772945d8f38d.jpg"></p><p>然后打听了一下细节，发现居然是我13年7月报给TSRC的漏洞，看今天大家玩的挺开心，与TSRC的人聊了两句，说这个系列可以发几个了，所以我也来凑个热闹，把原来的分析发出来给大家看一下（这里做个广告，TSRC提交Discuz的漏洞，奖品棒棒哒~~）。这个漏洞原来我是作为前台命令执行发个TSRC的，虽然有限制，但是个人感觉还是不错的。只发一个怕各位不过瘾，就再来一发这个点比较直观的后台命令执行和绕过前台命令执行的修复。原TSRC上的漏洞标题是《Discuz! X系列远程命令执行漏洞（二）》、《Discuz! X系列远程命令执行漏洞（三）》和《Discuz! X系列远程命令执行漏洞（四）》。</p><p>下面是原漏洞报告的概要部分：</p><blockquote><p>“腾讯旗下Discuz! X系列cms存在远程命令执行漏洞，经测试在其2013年6月20日发布的最新版本的Discuz! X3中仍存在此问题。目前这个漏洞尚未在网络中流传，属于0day漏洞。 这个漏洞存在于图片裁剪功能中，需要管理员启用ImageMagick上传图片功能方可触发。此漏洞只需一个可访问论坛内容的账号，即可利用。”</p></blockquote><h1>0x01 原理分析</h1><hr><h2>0. 一定条件下前台命令执行</h2><hr><p>这个漏洞出现在\source\class\class&#95;image.php文件中的Thumb&#95;IM()函数，问题代码如下：</p><pre><code>#!php
+function Thumb_IM() {
+        switch($this-&gt;param['thumbtype']) {
+            case 'fixnone':
+            case 1:
+                if($this-&gt;imginfo['width'] &gt; $this-&gt;param['thumbwidth'] || $this-&gt;imginfo['height'] &gt; $this-&gt;param['thumbheight']) {
+                    $exec_str = $this-&gt;param['imageimpath'].'/convert -quality '.intval($this-&gt;param['thumbquality']).' -geometry '.$this-&gt;param['thumbwidth'].'x'.$this-&gt;param['thumbheight'].' '.$this-&gt;source.' '.$this-&gt;target;
+                    $return = exec($exec_str);
+                    if(!file_exists($this-&gt;target)) {
+                        return -3;
+                    }
+                }
+                break;
+//省略部分代码
+</code></pre><p>从第一行红色代码中可以看出，程序通过一些变量的拼接形成一条系统命令，在第二行使用exec方法进行执行。若用户可以控制这些变量中的任何一个，那么就可能导致任意命令的执行。</p><h2>1. 同点后台命令执行</h2><hr><p>这个漏洞出现在\source\class\class&#95;image.php文件中的Thumb&#95;IM()函数，问题代码如下：</p><pre><code>#!php
+function Thumb_IM() {
+        switch($this-&gt;param['thumbtype']) {
+            case 'fixnone':
+            case 1:
+                if($this-&gt;imginfo['width'] &gt; $this-&gt;param['thumbwidth'] || $this-&gt;imginfo['height'] &gt; $this-&gt;param['thumbheight']) {
+                    $exec_str = $this-&gt;param['imageimpath'].'/convert -quality '.intval($this-&gt;param['thumbquality']).' -geometry '.$this-&gt;param['thumbwidth'].'x'.$this-&gt;param['thumbheight'].' '.$this-&gt;source.' '.$this-&gt;target;
+                    $return = exec($exec_str);
+                    if(!file_exists($this-&gt;target)) {
+                        return -3;
+                    }
+                }
+                break;
+//省略部分代码
+</code></pre><p>从第一行红色代码中可以看出，程序通过一些变量的拼接形成一条系统命令，在第二行使用exec方法进行执行。若用户可以控制这些变量中的任何一个，那么就可能导致任意命令的执行。</p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c5225174217f4b217c4e204c48225f4126454ff7f5f4f6e8f5f2e8f7f18581acb6a6b0bf">[email&#160;protected]</a>! X系列远程命令执行漏洞分析（二）》报告中提到过这个问题，也已经提交给腾讯修复了，使用的利用点是param['thumbwidth']和param[' thumbheight']。而这次我使用到param['imageimpath']这个参数，这个参数对应的是后台配置中的“ImageMagick程序安装路径”。</p><p>这个利用点应该是最后一个可控点了，因为param['thumbwidth']和param[' thumbheight']在提交给腾讯后添加了整形校验转换，无法传递字符串。而source和target需要在前面进行文件和文件是否存在的验证，无法自由发挥☹。</p><p>下面来看一下传递param['imageimpath']这个参数的代码，它的位置在\source\admincp\admincp_checktools.php文件中：</p><pre><code>#!php
+$settingnew = $_GET['settingnew'];
+    if(!empty($_GET['previewthumb'])) {
+        $_G['setting']['imagelib'] = $settingnew['imagelib'];
+        $_G['setting']['imageimpath'] = $settingnew['imageimpath'];
+        $_G['setting']['thumbwidth'] = $settingnew['thumbwidth'];
+        $_G['setting']['thumbheight'] = $settingnew['thumbheight'];
+        $_G['setting']['thumbquality'] = $settingnew['thumbquality'];
+
+        require_once libfile('class/image');
+        @unlink(DISCUZ_ROOT.$_G['setting']['attachdir'].'./temp/watermark_temp1.jpg');
+        @unlink(DISCUZ_ROOT.$_G['setting']['attachdir'].'./temp/watermark_temp2.jpg');
+        $image = new image;
+//省略部分代码
+</code></pre><p>可以从红色代码出看到imageimpath参数没有进行任何过滤，便传入到全局变量中了。在后面的image类中使用它也是直接从全局变量中提取，没有做任何的过滤和校验，下面是image类的构造函数代码：</p><pre><code>#!php
+function image() {
+        global $_G;
+        $this-&gt;param = array(
+            'imagelib'      =&gt; $_G['setting']['imagelib'],
+            'imageimpath'       =&gt; $_G['setting']['imageimpath'],
+            'thumbquality'      =&gt; $_G['setting']['thumbquality'],
+            'watermarkstatus'   =&gt; dunserialize($_G['setting']['watermarkstatus']),
+            'watermarkminwidth' =&gt; dunserialize($_G['setting']['watermarkminwidth']),
+            'watermarkminheight'    =&gt; dunserialize($_G['setting']['watermarkminheight']),
+            'watermarktype'     =&gt; $_G['setting']['watermarktype'],
+            'watermarktext'     =&gt; $_G['setting']['watermarktext'],
+            'watermarktrans'    =&gt; dunserialize($_G['setting']['watermarktrans']),
+            'watermarkquality'  =&gt; dunserialize($_G['setting']['watermarkquality']),
+        );
+}
+</code></pre><h2>2. 前台命令执行修复绕过</h2><hr><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="48add4e0aec0d9acf1c3adc1c5afd2ccabc8c27a78797b65787f657a7c080c213b2b3d32">[email&#160;protected]</a>! X系列远程命令执行漏洞分析（二）<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7b98fbf09ee9f798fbf1494b4a48564b4c56494f3b3f1208180e01">[email&#160;protected]</a>! X系列远程命令执行漏洞分析（三）》两篇报告中，将视角盯死在了Thumb_IM这个方法上。在修复后，这个方法的命令执行失败，导致利用后续操作停止。</p><p>但是如果让这个方法正常完成它的工作，那么他后面的操作中还是有很多修复中没有考虑到的利用点。下面我们来看下其中的一个利用点,source/class/class&#95;image.php中的Cropper&#95;IM方法：</p><pre><code>#!php
+function Cropper_IM() {
+        $exec_str = $this-&gt;param['imageimpath'].'/convert -quality 100 '.
+            '-crop '.$this-&gt;param['srcwidth'].'x'.$this-&gt;param['srcheight'].'+'.$this-&gt;param['srcx'].'+'.$this-&gt;param['srcy'].' '.
+            '-geometry '.$this-&gt;param['dstwidth'].'x'.$this-&gt;param['dstheight'].' '.$this-&gt;source.' '.$this-&gt;target;
+        exec($exec_str);
+        if(!file_exists($this-&gt;target)) {
+            return -3;
+        }
+}
+</code></pre><p>从上面代码可以看出，这个方法先拼接命令，然后通过exec函数执行。在拼接的过程中很多变量的内容是可控的，而且在到达这个方法之前没有做足够的校验和过滤。从而导致攻击者可以通过传递一些带有命令操作的内容，来达到命令执行的目的。</p><h1>0x02 利用思路</h1><hr><h2>0. 一定条件下前台命令执行</h2><hr><p>看到这个漏洞点后，我就开始尝试通过关键字从源码中寻找调用Thumb_IM函数的地方。搜索到使用此函数的文件很多，但是由于这个函数的前两个参数都是和上传文件的文件名相关，而且discuz对于上传文件名做了随机化命名和后缀白名单处理，所以导致前三个参数为不可控点。</p><p>所以这之后我将目标点瞄准到图片宽度和高度这几个点，从中筛选参数未被写死的可控调用。这样我找到了\source\module\misc\misc_imgcropper.php文件，之后大量的时间花费在对于这个文件调用的业务逻辑的查找上。</p><h2>1. 一定条件下前台命令执行</h2><hr><p>无</p><h2>2. 前台命令执行修复绕过</h2><hr><p>漏洞的触发点在source/module/misc/misc_imgcropper.php中，部分代码如下：</p><pre><code>#!php
+$cropfile = md5($_GET['cutimg']).'.jpg';
+$ictype = $_GET['ictype'];
+
+if($ictype == 'block') {
+        require_once libfile('function/block');
+        $block = C::t('common_block')-&gt;fetch($_GET['bid']);
+        $cropfile = block_thumbpath($block, array('picflag' =&gt; intval($_GET['picflag']), 'pic' =&gt; $_GET['cutimg']));
+        $cutwidth = $block['picwidth'];
+        $cutheight = $block['picheight'];
+    } else {
+        $cutwidth = $_GET['cutwidth'];
+        $cutheight = $_GET['cutheight'];
+    }
+    $top = intval($_GET['cuttop'] &lt; 0 ? 0 : $_GET['cuttop']);
+    $left = intval($_GET['cutleft'] &lt; 0 ? 0 : $_GET['cutleft']);
+    $picwidth = $cutwidth &gt; $_GET['picwidth'] ? $cutwidth : $_GET['picwidth'];
+    $picheight = $cutheight &gt; $_GET['picheight'] ? $cutheight : $_GET['picheight'];
+
+    require_once libfile('class/image');
+    $image = new image();
+    $prefix = $_GET['picflag'] == 2 ? $_G['setting']['ftp']['attachurl'] : $_G['setting']['attachurl'];
+    if(!$image-&gt;Thumb($prefix.$_GET['cutimg'], $cropfile, $picwidth, $picheight)) {
+        showmessage('imagepreview_errorcode_'.$image-&gt;errorcode, null, null, array('showdialog' =&gt; true, 'closetime' =&gt; true));
+    }
+    $image-&gt;Cropper($image-&gt;target, $cropfile, $cutwidth, $cutheight, $left, $top);
+    showmessage('do_success', dreferer(), array('icurl' =&gt; $cropfile), array('showdialog' =&gt; true, 'closetime' =&gt; true));
+}
+</code></pre><p>可以看到在最后调用了$image对象的Cropper方法，而这个过程中$cutwidth和$cutheight都是用户可控的变量，并且在执行到Cropper方法前没有进行过任何校验和过滤。</p><h1>0x03 技术验证</h1><hr><h2>0. 一定条件下前台命令执行</h2><hr><p>在管理员开启ImageMagick上传图片功能的前提下，攻击者只需要一个普通用户权限即可，后台设置方法如下图：</p><p><img alt="enter image description here" img-src="ee9eb9702b291fd483f35535bd1a88f13d60208b.jpg"></p><p>由于这个功能是对图片进行处理的，所以，要在访问时提供一个本站有效的图片地址。而且最好是存放在data/attachment目录下的，因为默认就是这个目录，否则就要用“../”来修改路径。</p><p>所以我的访问路径为：</p><pre><code>http://localhost/Discuz_X3.0/upload/misc.php?mod=imgcropper&amp;img=group/19/group_36_banner.jpg
+</code></pre><p>然后使用chrome审查元素功能，修改picwidth的value为“||whoami&amp;”，如下图所示：</p><p><img alt="enter image description here" img-src="cc0789a2badabb83f3b8d05b0472b5b435e8a356.jpg"></p><p>然后点击网页右下角的裁剪按钮就触发了。为了能直观显示，我添加了一行代码将接受执行结果的$return变量，echo出来并exit来结束掉后面的语句，效果如下图所示：</p><p><img alt="enter image description here" img-src="e6482f2675fb4b17e1a66b6287e9536683170847.jpg"></p><h2>1. 同点后台命令执行</h2><hr><p>在后台全局->上传设置->ImageMagick 程序安装路径</p><p><img alt="enter image description here" img-src="c0360830a1a681005495ab3546e778192212b0fe.jpg"></p><p>由于这个功能是对图片进行处理的，所以，要在访问时提供一个本站有效的图片地址。而且最好是存放在data/attachment目录下的，因为默认就是这个目录，否则就要用“../”来修改路径。</p><p>所以我的访问路径为</p><pre><code>http://192.168.188.142/DiscuzX3.1_1122/upload/misc.php?mod=imgcropper&amp;img=forum/201312/05/094746ub04zw03jr4wi44m.jpg
+</code></pre><p>然后直接点击左下角的裁剪，虽然会返回图片访问错误，但是命令却正常执行了，如下图所示：</p><p><img alt="enter image description here" img-src="2203752d89cc0939b8a3eae94db079e4e34fc654.jpg"></p><h2>2. ImageMagick</h2><hr><p>这个漏洞需要在后台开启ImageMagick功能，并确保ImageMagick功能正常运行。下图是我在后台中开启的这个功能，并填写ImageMagick安装目录。</p><p><img alt="enter image description here" img-src="c77a0a8b8ea29a2276fbaba6abbdff50f7c11226.jpg"></p><p>如果这个功能开启，我们甚至可以在没有账号的情况下，前台完成命令执行的触发。</p><p>首先访问裁切图片的这个功能，因为这个漏洞的触发必须要有一张有效图片，所以我们可以在论坛帖子中随便找到一张图片来引用。例如：我的发帖图片是:</p><pre><code>http://192.168.188.143/discuz20140604/data/attachment/forum/201406/13/155944d557e0dtcdpouoad.jpg
+</code></pre><p>那么我要访问的裁切功能的URL为：</p><pre><code>http://192.168.188.143/discuz20140604/misc.php?mod=imgcropper&amp;img=forum/201406/13/155944d557e0dtcdpouoad.jpg
+</code></pre><p>然后修改POST数据包中cutheight或者cutwidth中的内容为“%26%26mkdir tsrc||”提交，就可以在discuz根目录下创建一个tsrc的目录。</p><p>修改输入包如下图所示：</p><p><img alt="enter image description here" img-src="034b245774a0469f6e832e9a79f968d97ac87219.jpg"></p><p>提交后效果如下图所示：</p><p><img alt="enter image description here" img-src="95b8601453383b0977a30f313e364e2cf977edba.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/7830" rel="bookmark" id="re1">Discuz! X系列远程代码执行漏洞分析</a></li><li><a href="http://drops.wooyun.org/web/5282" rel="bookmark" id="re2">分析WordPress中esc_sql函数引起的注入危害</a></li><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re3">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/papers/9510" rel="bookmark" id="re4">WordPress 利用 XMLRPC 高效爆破 原理分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">少宇</span> <span class="reply-time">2016-01-03 19:40:36</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p>果然诚不欺我！！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">’‘Nome</span> <span class="reply-time">2015-01-27 17:15:35</span></div><p></p><p>膜拜，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d5307172307172316e79953d575c3d575c">[email&#160;protected]</a> 啥时候解封。。。。。已泪奔</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mango</span> <span class="reply-time">2015-01-26 10:06:08</span></div><p></p><p>膜拜。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BeenQuiver</span> <span class="reply-time">2015-01-19 22:06:12</span></div><p></p><p>吊啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑暗啊</span> <span class="reply-time">2015-01-19 17:58:24</span></div><p></p><p>这个网站，不回都不行啊</p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">byr5ec</span> <span class="reply-time">2015-01-19 15:42:21</span></div><p></p><p>使用GD图像处理库,可以避免上述问题否？？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小飞</span> <span class="reply-time">2015-01-18 12:02:06</span></div><p></p><p>师傅还收徒么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2015-01-18 00:53:02</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">浅蓝</span> <span class="reply-time">2015-01-17 10:41:27</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">w5r2</span> <span class="reply-time">2015-01-16 15:52:32</span></div><p></p><p>换的kindle什么时候到呢。囧。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">bitcoin</span> <span class="reply-time">2015-01-16 11:26:24</span></div><p></p><p>收徒弟不</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">憨厚的王小胖</span> <span class="reply-time">2015-01-16 10:51:49</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">无心、</span> <span class="reply-time">2015-01-16 07:56:16</span></div><p></p><p>再给力点啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sky</span> <span class="reply-time">2015-01-15 23:11:44</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">漫步云端</span> <span class="reply-time">2015-01-15 20:20:41</span></div><p></p><p>好屌</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Manning</span> <span class="reply-time">2015-01-15 19:51:12</span></div><p></p><p>威武！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">saline</span> <span class="reply-time">2015-01-15 19:47:49</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">泳少</span> <span class="reply-time">2015-01-15 19:38:23</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">S0cial</span> <span class="reply-time">2015-01-15 19:17:38</span></div><p></p><p>占坑....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-01-15 19:00:10</span></div><p></p><p>有那么多么....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">肉肉</span> <span class="reply-time">2015-01-15 18:59:14</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">redrain有节操</span> <span class="reply-time">2015-01-15 18:58:51</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">肉肉</span> <span class="reply-time">2015-01-15 18:56:18</span></div><p></p><p>师傅我来剥蒜了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">EvilMoon</span> <span class="reply-time">2015-01-15 18:56:06</span></div><p></p><p>师傅说，乌云drops开到什么时候，dz的连载系列就发到什么时候</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tang3</span> <span class="reply-time">2015-01-15 18:55:48</span></div><p></p><p>自带沙发</p><p></p></div></div></div></div></div></main>

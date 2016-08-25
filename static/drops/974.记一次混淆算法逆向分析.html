@@ -1,0 +1,354 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">记一次混淆算法逆向分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">ThomasKing</a> <span class="bull">·</span> <time title="2015/12/30 10:26" ui-time="" datetime="2015/12/30 10:26" class="published ng-binding ng-isolate-scope">2015/12/30 10:26</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>小弟最近整理之前的资料，偶然发现半年前的混淆对抗研究以及一道CTF练习题目，故分享以作记录。限于水平，难免会有疏漏或者错误之处，望各位读者批评指正。</p><h1>0x01 基本分析</h1><hr><p>jeb打开文件，找到方法校验方法。逻辑很简单，校验函数既是Native函数check.</p><pre><code>#!vb
+public native boolean check(String arg1) {
+}
+
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    this.setContentView(2130903040);
+    this.inputCode = this.findViewById(2131099648);
+    this.btn_submit = this.findViewById(2131099649);
+    this.btn_submit.setOnClickListener(new View$OnClickListener() {
+        public void onClick(View v) {
+            if(MainActivity.this.check(MainActivity.this.inputCode.getText().toString())) {
+                MainActivity.this.startActivity(new Intent(MainActivity.this, ResultActivity.class));
+            }
+            else {
+                Toast.makeText(MainActivity.this.getApplicationContext(), "Incorrect Password!", 
+                        0).show();
+            }
+        }
+    });
+}
+</code></pre><p>直接使用IDA默认Loader打开直接崩溃，存在畸形ELF文件对抗，使用自定义LOADER加载，也是然并卵的节奏。</p><p>使用Tracer动态打印check函数地址，挂起进程，dump出对应的代码段加载到IDA，找到check函数。</p><pre><code>#!bash
+seg000:4561E4E8 check
+seg000:4561E4E8                 LDR             PC, =sub_4561E4EC
+seg000:4561E4E8 ; End of function check
+seg000:4561E4E8
+seg000:4561E4EC ; =============== S U B R O U T I N E   seg000:4561E4EC sub_4561E4EC                            ; CODE XREF: checkj
+seg000:4561E4EC                                         ; DATA XREF:    seg000:4561E4EC                 STMFD           SP!, {R0-R12,LR}
+seg000:4561E4F0                 LDR             R0, =6
+seg000:4561E4F4                 B               loc_4561E444
+</code></pre><p>通过分析发现，其实为一个汇编stub，通过此stub跳到真正的check函数。</p><pre><code>#!bash
+seg013:80A0135C sub_80A0135C                            ; DATA XREF: seg013:80A13F98o
+seg013:80A0135C                 B               sub_80A065B8
+seg013:80A0135C ; End of function sub_80A0135C
+seg013:80A01360
+seg013:80A01360 ; =============== S U B R O U T I N E   seg013:80A01360 ; Attributes: thunk
+seg013:80A01360
+seg013:80A01360 sub_80A01360                            ; DATA XREF: sub_80A065C4+Co
+seg013:80A01360                 B               sub_80A065F8
+seg013:80A01360 ; End of function sub_80A01360
+seg013:80A01364 ; =============== S U B R O U T I N E   seg013:80A01364 ; Attributes: thunk
+seg013:80A01364
+seg013:80A01364 sub_80A01364                            ; CODE XREF: sub_80A06620j
+seg013:80A01364                 B               sub_80A0663C
+seg013:80A01364 ; End of function sub_80A01364
+</code></pre><p>以80A0135C(B sub&#95;80A065B8)为例子，跟进sub&#95;80A065B8，可以看到如下指令：</p><pre><code>#!bash
+// 0x80A0135C
+seg013:80A065B8                 BEQ             loc_80A0658C
+seg013:80A065BC                 BNE             loc_80A0658C
+
+seg013:80A0658C                 STMFD           SP!, {R3-R8,R10,LR} 真实指令
+seg013:80A06590                 STMFD           SP!, {R8,LR}
+seg013:80A06594                 LDR             R8, loc_80A065A4
+seg013:80A06598                 LDR             R8, loc_80A065A8
+seg013:80A0659C                 LDR             R8, loc_80A065AC
+seg013:80A065A0                 LDR             R8, locret_80A065B0
+seg013:80A065A4                 LDR             R8, =(sub_80A065C4 - 0x80A065B0)
+seg013:80A065A8                 ADD             R8, PC, R8 ; sub_80A065C4
+seg013:80A065AC                 STR             R8, [SP,#4]
+seg013:80A065B0                 LDMFD           SP!, {R8,PC}
+
+seg013:80A065C4                 STMFD           SP!, {R8,LR}
+seg013:80A065C8                 LDR             R8, =0xFFFFAD25
+seg013:80A065CC                 EOR             R8, R8, #0xAD
+seg013:80A065D0                 ADD             R8, PC, R8 ; loc_80A01360 //返回到80A01360
+seg013:80A065D4                 STR             R8, [SP,#8+var_4]
+seg013:80A065D8                 LDMFD           SP!, {R8,PC}
+</code></pre><p>通过分析可以得到真实指令(STMFD SP!, {R3-R8,R10,LR})，其余指令为混淆指令，最终返回到下一条B即80A01360(B sub_80A065F8)指令。通过分析其他B指令，可以得到类似的混淆指令中夹在一条真实指令，只是存在多种混淆的方式。 至此，我们可以得到此混淆的思路：执行"一个B指令"即一条真实的指令，混淆抽象为:</p><ul><li>执行前跳转混淆</li><li>真实指令</li><li>执行后跳转混淆</li></ul><p>不难发现，如果仅仅靠一条一条的寻找真实指令，是非常费时费力的。由于执行前后都存在多种模式的混淆，但总的模式是有限的，那么通过提取指令特征匹配即可以自动化实现去混淆，找出真实指令。</p><h1>0x02 基于指令特征匹配对抗混淆</h1><hr><p>通过分析找到所有的混淆模式，最后大概几种。限于篇幅，列举一些做说明</p><pre><code>#!bash
+// 0x80A0135C
+seg013:80A065B8                 BEQ             loc_80A0658C
+seg013:80A065BC                 BNE             loc_80A0658C
+
+seg013:80A0658C                 STMFD           SP!, {R3-R8,R10,LR} 真实指令
+
+seg013:80A06590                 STMFD           SP!, {R8,LR}
+seg013:80A06594                 LDR             R8, loc_80A065A4
+seg013:80A06598                 LDR             R8, loc_80A065A8
+seg013:80A0659C                 LDR             R8, loc_80A065AC
+seg013:80A065A0                 LDR             R8, locret_80A065B0
+seg013:80A065A4                 LDR             R8, =(sub_80A065C4 - 0x80A065B0)
+seg013:80A065A8                 ADD             R8, PC, R8 ; sub_80A065C4
+seg013:80A065AC                 STR             R8, [SP,#4]
+seg013:80A065B0                 LDMFD           SP!, {R8,PC}
+
+seg013:80A065C4                 STMFD           SP!, {R8,LR}
+seg013:80A065C8                 LDR             R8, =0xFFFFAD25
+seg013:80A065CC                 EOR             R8, R8, #0xAD
+seg013:80A065D0                 ADD             R8, PC, R8 ; loc_80A01360
+seg013:80A065D4                 STR             R8, [SP,#8+var_4]
+seg013:80A065D8                 LDMFD           SP!, {R8,PC}
+</code></pre><p>执行前混淆：B(连续两条条件完全相反的指令) <code>next_jmp</code> 执行后混淆：这里有两组STMFD--LDMFD构成的跳转stub,但其是为一种模式。那如何计算<code>next_jmp</code>呢？这里我采用取巧的方式，通过从LDMFD所在地址反向找到ADD指令，得到<code>";loc_80a01360"</code>，再解析出地址80a01360。当然，存在多种prefix，需要作简单处理获取地址。</p><pre><code>#!python
+def prefix_match(str):
+    pattern = ['sub_', 'loc_', 'unk_', 'locret_']
+    for prefix in pattern:
+        if str.find(prefix) &gt; -1:
+            substr = str[str.find(prefix) + len(prefix):]
+            return string.atoi(substr, 16)
+    return 0xffffffff;
+</code></pre><p>真实指令：通过解析跳转遍历完整个混淆后，通过堆栈平衡原理，提取出真实指令。以上述分析为例，遍历回到下一条指令80a01360后，对指令进行分组即(B)(STMFD SP!, {R3-R8,R10,LR})(STMFD-LDMFD)(STMFD-LDMFD)，非常容易获取真实指令。实现时，可将分组过程可融入到指令的遍历即可。</p><p>再接着看另一组混淆，以80A01360(B sub_80A065F8)为例。</p><pre><code>#!bash
+// 0x80A01360
+seg013:80A065F8                 STMFD           SP!, {R0,LR}
+seg013:80A065FC                 LDR             R0, loc_80A0660C
+seg013:80A06600                 LDR             R0, loc_80A06610
+seg013:80A06604                 LDR             R0, loc_80A06614
+seg013:80A06608                 LDR             R0, locret_80A06618
+seg013:80A0660C                 LDR             R0, =(loc_80A065E0 - 0x80A06618)
+seg013:80A06610                 ADD             R0, PC, R0 ; loc_80A065E0
+seg013:80A06614                 STR             R0, [SP,#4]
+seg013:80A06618
+seg013:80A06618                 LDMFD           SP!, {R0,PC}
+
+seg013:80A065E0                 LDR             R3, [R0] //真实指令
+
+seg013:80A065E4                 STMFD           SP!, {R0,LR}
+seg013:80A065E8                 MOV             LR, PC
+seg013:80A065EC                 BL              loc_80A065F0
+seg013:80A065F0
+seg013:80A065F0 loc_80A065F0                            ; CODE XREF: seg013:80A065ECj
+seg013:80A065F0                 LDMFD           SP!, {R0,LR}
+
+seg013:80A065F4                 B               sub_80A06620
+
+seg013:80A06620                 B               sub_80A01364
+</code></pre><p>执行前混淆：STMFD-LDMFD跳转到<code>loc_80A065E0</code>。获取<code>next_jmp</code>和上述一致。<br>执行后混淆：通过STMFD-LDMFD和两次B直接跳转返回到下一条B指令地址sub_80A01364。<br>真实指令：和上述类似，遍历混淆指令时，对指令进行分组(STMFD-LDMFD)、(LDR R3, [R0])、(B)、(B)。易获取真实指令(LDR R3, [R0])。</p><p>通过上述方法，大概分析20个多有的B指令即可找到所有的混淆模式，总的来说混淆的模式是有限的。</p><p>通过编写IDAPython脚本，即可实现自动打印真实指令。</p><pre><code>#!bash
+0x80a0135c            PUSH            {r3, r4, r5, r6, r7, r8, sl, lr}
+0x80a01360            LDR             r3, [r0]
+0x80a01364            MOV             r1, r2
+0x80a01368            MOV             r6, r2
+0x80a0136c            LDR             r3, [r3, #0x2a4]
+0x80a01370            MOV             r2, #0
+0x80a01374            MOV             r4, r0
+0x80a01378            BLX             r3
+0x80a0137c            MOV             r7, r0
+</code></pre><p>但存在问题，当IDA并没有识别出指令时，无法通过GetMnem等API获取信息。</p><p><img alt="p1" img-src="ae9935b1223c11e72b66410c701c764c7a833e08.jpg"></p><p>由于混淆对IDA指令识别的影响，致使IDA无法自动将指令反汇编出来。可能已经有读者意识到，遇到这种情况直接调用MakeCode将数据转化为指令即可。然而，实际使用MakeCode自动处理时，并不能完成手动按'C'识别指令的功能。那么，是否遇到这种情况后，就手动去完成指令反汇编呢？答案是否定的。由于存在很多这种情况，手动转化也很费时(测试环境IDA6.8)。</p><p>到这里可以看到，单纯依靠简单的字符串匹配比较的方法，并不能完全满足自动化提取指令对抗混淆的需求。</p><h1>0x03 基于指令解析执行对抗混淆</h1><hr><p>通过上述分析，由于IDA存在无法自动反汇编一部分opcode数据，故单纯依靠IDAPython是无法满足指令解析指令的需求的。为了实现对指令的解析，可采用两种途径：</p><ol><li>对照arm汇编手册，编写常见的opcode解析脚本。以笔者的经验，这部分内容是比较耗时的。</li><li>引入现有的反汇编引擎，且这种反汇编引擎具备对指令的想尽分析的能力。这里，我选用Capstone。</li></ol><p>Capstone是一款支持多种架构的反汇编引擎，支持对汇编指令粗略和详细的分析，支持多种语言。当然，Capstone还有很多其他优点，这里就不赘述了。</p><p><strong>3.1 ARM处理器模拟</strong></p><p>可能有读者马上会问，模拟arm处理器执行不又是一大工程呢。的确，完全模拟确实包含许多工作量。但结合此混淆的一些特性，整个模拟执行可简化许多。</p><p>首先，此混淆并不存在流程分支扁平化(与OLLVM相对比)。结合上述分析也可以看到，所有的混淆执行并不会影响条件标志即CPSR寄存器。</p><p>再者，结合堆栈平衡原理，SP寄存器仅仅只需要保存堆栈的变化，比如stmfd仅仅对SP寄存器进行减法操作。</p><p>最后，根据上述找到的混淆模式，可以发现使用的指令其实很少，实际编写模拟函数工作量也比较小。</p><pre><code>#!python
+def do_emulate(code, base, Rx):
+    ret_addr = 0xffffffff
+    emu = ARM_emu()
+    md = Cs(CS_ARCH_ARM, CS_MODE_ARM)
+    md.detail = True
+
+    for i in md.disasm(code, base):
+        emu.regs[PC] = i.address + 2 * inst_size
+        dst = i.operands[0]
+        src = i.operands[1]
+
+        if (i.mnemonic).upper() == 'LDR':
+            if dst.type == ARM_OP_REG and src.type == ARM_OP_MEM:
+                Rd = conv_reg(dst.value.reg)    
+                Rs = conv_reg(src.value.mem.base)
+                addr = emu.regs[Rs] + src.value.mem.disp
+                emu.regs[Rd] = Dword(addr &amp; 0xffffffff)
+
+                if Debug:
+                    print ('\t LDR %s :\t0x%x' %(i.op_str, emu.regs[Rd]))
+
+        elif (i.mnemonic).upper() == 'ADD':
+            if i.operands[0].type == ARM_OP_REG and i.operands[1].type == ARM_OP_REG and i.operands[2].type == ARM_OP_REG:
+                Rd = conv_reg(i.operands[0].value.reg)
+                R1 = conv_reg(i.operands[1].value.reg)
+                R2 = conv_reg(i.operands[2].value.reg)
+                emu.regs[Rd] = (emu.regs[R1] + emu.regs[R2]) &amp; 0xffffffff
+
+                if Debug:
+                    print ('\t ADD %s :\t0x%x' %(i.op_str, emu.regs[Rd]))
+        ...
+</code></pre><p>在模拟执行一条真实指令时，首先将所有寄存器的初始值设置为0，通过主流程中的B指令进入到混淆指令。</p><p><strong>3.2 真实指令提取</strong></p><p>模拟执行时，将混淆中的每条指令都存储到一个指令堆栈中。结合之前直接字符串模式的思路，来实现对真实指令的提取。</p><p>以80A01364为例子来说明真实指令的提取方法。</p><pre><code>#!bash
+seg013:80A01364 sub_80A01364                            ; CODE XREF: sub_80A06620j
+seg013:80A01364                 B               sub_80A0663C
+
+seg013:80A0663C                 BMI             loc_80A06648
+seg013:80A06640                 BPL             loc_80A06644
+seg013:80A06644
+seg013:80A06644 loc_80A06644                            ; CODE XREF: sub_80A0663C+4j
+seg013:80A06644                                         ; sub_80A0663C:loc_80A06648j
+seg013:80A06644                 B               loc_80A06624
+seg013:80A06648 ; 
+seg013:80A06648
+seg013:80A06648 loc_80A06648                            ; CODE XREF: sub_80A0663Cj
+seg013:80A06648                 B               loc_80A06644
+
+seg013:80A06624 loc_80A06624                            ; CODE XREF: 
+seg013:80A06624                 MOV             R1, R2
+seg013:80A06628                 STMFD           SP!, {R0,LR}
+seg013:80A0662C                 MOV             LR, PC
+seg013:80A06630                 BL              loc_80A06634
+seg013:80A06634 ; 
+seg013:80A06634
+seg013:80A06634 loc_80A06634                            ; CODE XREF: sub_80A0663C-Cj
+seg013:80A06634                 LDMFD           SP!, {R0,LR}
+seg013:80A06638                 B               sub_80A0664C
+
+seg013:80A0664C sub_80A0664C                            ; CODE XREF: sub_80A0663C-4p
+seg013:80A0664C                 B               sub_80A01368
+</code></pre><p>若不在模拟执行中对指令堆栈修正，那么执行完后存储指令如下所示：</p><pre><code>#!bash
+80A0663C    BMI     loc_80A06648
+80A06648    B       loc_80A06644
+80A06644    B       loc_80A06624
+80A06624    MOV     R1, R2
+80A06628    STMFD   SP!, {R0,LR}
+80A06630    BL      loc_80A06634
+80A06634    LDMFD   SP!, {R0,LR}
+80A06638    B       sub_80A0664C
+80A0664C    B       sub_80A01368
+</code></pre><p>对于BMI，虽然形式上和之前分析的(<code>BEQ loc_80A0658C</code>,<code>BNE loc_80A0658C</code>)直接跳到<code>next_jmp</code>，但检测下一条指令即可根据条件相反去处。</p><p>对于STM-LDM，当遇到LDM指令时，将STM-LDM及其之间的指令出栈移除。</p><p>剩余(B B MOV B)这些指令，根据上述人工分析的结果可知，因为只存在一条真实指令，那么MOV必定是真实指令。另外，存在这种情况(B B BNE B)，产生这种情况的根本原因是混淆前这条指令是if或者循环语句的判定点，直接取出BNE指令即可。</p><p><strong>3.3 函数识别</strong></p><p>不管是基于指令名称匹配还是解析执行，都需要对函数进行识别。先来看一个函数混淆片段：</p><pre><code>#!bash
+seg013:80A067F0 loc_80A067F0                    ; CODE XREF: seg013:loc_80A06838j
+seg013:80A067F0                 ADR             LR, sub_80A06814
+seg013:80A067F4                 STMFD           SP!, {R8,R9,LR}
+seg013:80A067F8                 LDR             R8, loc_80A067FC
+seg013:80A067FC
+seg013:80A067FC loc_80A067FC                            ; DATA XREF: seg013:80A067F8r
+seg013:80A067FC                 LDR             R9, =0x1A6016A4
+seg013:80A06800                 ADD             R8, R9, R8
+seg013:80A06804                 ADD             R8, PC, R8 ; j_strlen
+seg013:80A06808                 STR             R8, [SP,#8]
+seg013:80A0680C                 LDMFD           SP!, {R8,R9,PC}
+</code></pre><p>对于未混淆的指令，函数通常被编译为BL或者BLX(指令模式切换)。由于B指令本身的跳转地址范围很有限，那么混淆后代码膨胀必定需要对其指令修正，有点类似InlineHook指令修正。另外，函数的返回地址需要显式存放到LR寄存器。</p><p>这样，上述代码在模拟执行时，当LR寄存器值不为0时，将后续的函数调用转化为'Call sub_xxx'指令，将PC置为<code>next_jmp</code>(<code>sub_80A06814</code>)接着模拟。</p><p>另外，便于更加清晰的分析，将libc.so加载到和进程一致的基地址，通过IDAPython GetFunctionName获取函数名称。</p><p>至此，即可提取出真实指令，check函数流程：</p><pre><code>#!bash
+0x80a0135c            PUSH            {r3, r4, r5, r6, r7, r8, sl, lr}
+0x80a01360            LDR             r3, [r0]
+0x80a01364            MOV             r1, r2
+0x80a01368            MOV             r6, r2
+0x80a0136c            LDR             r3, [r3, #0x2a4]
+0x80a01370            MOV             r2, #0
+0x80a01374            MOV             r4, r0
+0x80a01378            BLX             r3
+0x80a0137c            MOV             r7, r0
+0x80a01380            call  j_strlen
+0x80a01384            ADD             sl, r0, #1
+0x80a01388            MOV             r8, r0
+0x80a0138c            MOV             r0, sl
+0x80a01390            call  j_malloc_0
+0x80a01394            MOV             r1, r7
+0x80a01398            MOV             r2, sl
+0x80a0139c            MOV             r5, r0
+0x80a013a0            call  j_memcpy
+0x80a013a4            LDR             r3, [r4]
+0x80a013a8            MOV             r2, #0
+0x80a013ac            STRB            r2, [r5, r8]
+0x80a013b0            LDR             r3, [r3, #0x2a8]
+0x80a013b4            MOV             r2, r7
+0x80a013b8            MOV             r0, r4
+0x80a013bc            MOV             r1, r6
+0x80a013c0            BLX             r3
+0x80a013c4            LDR             R0, =0x12BC4
+0x80a013c8            MOV             r1, #0x80
+0x80a013cc            LDR             R0, [PC,R0]
+0x80a013d0            call  0x80a01048
+0x80a013d4            ADD             r5, r5, r0
+0x80a013d8            MOV             r0, r5
+0x80a013dc            call  0x80a010c0
+0x80a013e0            MOV             r4, r0
+0x80a013e4            MOV             r0, r5
+0x80a013e8            call  j_free_1
+0x80a013ec            MOV             r0, r4
+0x80a013f0            POP             {r3, r4, r5, r6, r7, r8, sl, pc}
+</code></pre><h1>0x04 算法逆向分析</h1><hr><p>通过简单分析check即可看到算法的核心流程在0x80a010c0这个函数，而0x80a01048函数的功能是对指令路径上的断点进行检测，和其他平台的反调试思路类似，这里把重点放在0x80a010c0的逆向上。自动化分析得到0x80a010c0函数：</p><pre><code>#!bash
+0x80a010c0            PUSH            {r4, r5, r6, r7, r8, sb, sl, lr}
+0x80a010c4            LDR             R7, =0x12EB4
+0x80a010c8            SUB             sp, sp, #0x308
+0x80a010cc            ADD             r6, sp, #4 
+0x80a010d0            LDR             R7, [PC,R7]
+0x80a010d4            LDR             r3, [r7]
+0x80a010d8            MOV             r4, r0
+0x80a010dc            MOV             r1, #0
+0x80a010e0            MOV             r2, #0x100
+0x80a010e4            MOV             r0, r6
+0x80a010e8            ADD             r5, sp, #0x104 
+0x80a010ec            STR             r3, [sp, #0x304]
+0x80a010f0            call  j_memset
+0x80a010f4            MOV             r1, #0
+0x80a010f8            MOV             r2, #0x100
+0x80a010fc            MOV             r0, r5
+0x80a01100            call  j_memset
+0x80a01104            MOV             r0, r4
+0x80a01108            call  j_strlen
+0x80a0110c            SUBS            sb, r0, #0
+0x80a01110            MOVEQ           r0, sb
+0x80a01114            BNE             #0x80a01130
+0x80a01118            LDR             r2, [sp, #0x304]
+0x80a0111c            LDR             r3, [r7]
+0x80a01120            CMP             r2, r3
+0x80a01124            BNE             #0x80a01334
+0x80a01128            ADD             sp, sp, #0x308
+0x80a0112c            POP             {r4, r5, r6, r7, r8, sb, sl, pc}
+
+//获取代码段起始256字节作为key
+0x80a011bc            LDR             R0, =0x12DC0   //读取代码段起始地址
+0x80a011c0            LDR             LR, =0x66666667
+0x80a011c4            MOV             r4, #0
+0x80a011c8            LDR             R0, [PC,R0]
+0x80a011cc            MOV             r3, r0
+0x80a011d0            SMULL           r2, ip, lr, r4
+0x80a011d4            ASR             r2, r4, #0x1f
+0x80a011d8            LDRB            r1, [r3]
+0x80a011dc            RSB             r2, r2, ip, asr #1
+0x80a011e0            ADD             r2, r2, r2, lsl #2
+0x80a011e4            RSB             r2, r2, r4
+0x80a011e8            STRB            r1, [r6, r4]
+0x80a011ec            ADD             r4, r4, #1
+0x80a011f0            CMP             r4, #0x100
+0x80a011f4            ADD             r3, r3, r2
+0x80a011f8            BNE             #0x80a011d0
+
+//key变换流程
+0x80a01218            MOV             r3, #0
+0x80a0121c            MOV             r0, r3
+0x80a01220            ADD             r4, r4, #1
+0x80a01224            ADD             r6, sp, #0x308
+0x80a01228            AND             r4, r4, #0xff
+0x80a0122c            ADD             r1, r6, r4
+0x80a01230            LDRB            r2, [r1, #-0x304] 
+0x80a01234            LDRB            r8, [r5, r3] 
+0x80a01238            AND             ip, r3, #7 
+0x80a0123c            ADD             r0, r2, r0
+0x80a01240            AND             r0, r0, #0xff
+0x80a01244            ADD             r6, r6, r0
+0x80a01248            LDRB            sl, [r6, #-0x304]
+0x80a0124c            ASR             sb, r8, #5
+0x80a01250            ORR             r8, sb, r8, lsl #3 
+0x80a01254            STRB            sl, [r1, #-0x304] 
+0x80a01258            STRB            r2, [r6, #-0x304]
+0x80a0125c            LDRB            r6, [r1, #-0x304]
+0x80a01260            ADD             sl, sp, #0x308
+0x80a01264            RSB             r1, ip, #8 // 8 - [0, 7]
+0x80a01268            ADD             r2, r2, r6
+0x80a0126c            AND             r2, r2, #0xff
+0x80a01270            ADD             r2, sl, r2
+0x80a01274            LDRB            r2, [r2, #-0x304]
+0x80a01278            EOR             r2, r2, r8
+0x80a0127c            AND             r2, r2, #0xff
+0x80a01280            LSL             r1, r2, r1 
+0x80a01284            ORR             ip, r1, r2, asr ip // 循环左移(8 - i)位
+0x80a01288            STRB            ip, [r5, r3] 
+0x80a0128c            ADD             r3, r3, #1
+0x80a01290            CMP             r3, #0x100
+0x80a01294            BNE             #0x80a01220
+
+for(i = 0; i &lt; 0x100; i++){
+    left_rotate(right_rotate(mid_code[i], 5) ^ key_stream[i], 8 - (i % 8));
+...
+</code></pre><p>限于篇幅，就不在一一分析。其中包括RC4算法。最后得到算法编码主流程：</p><pre><code>#!cpp
+char gen_mid_code[N];
+char key_stream[N];
+
+for(i = 0; i &lt; N; i++){
+    gen_mid_code[i] = left_rotate(str[gen_index(i, strlen(str))], 8 - (i % 8));
+}
+gen_key_stream(ori_key, key_stream);
+RC4_encrypt(gen_mid_code, key_stream, final_code);
+for(i = 0; i &lt; N; i++){
+    if(final_code[i] != check_code[i]){
+            ...
+    }
+}
+</code></pre><p>最后，得到flag:Hello Tomorrow!</p><p>至此，此ctf题目大致分析完毕。</p><p>题目下载地址：<a href="http://pan.baidu.com/s/1hrqZH9E">http://pan.baidu.com/s/1hrqZH9E</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160126185426086b9c2e74648b5d6b73da933aed7a7e.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/10896" rel="bookmark" id="re1">CVE-2015-1538漏洞利用中的Shellcode分析</a></li><li><a href="http://drops.wooyun.org/mobile/8165" rel="bookmark" id="re2">Fragment Injection漏洞杂谈</a></li><li><a href="http://drops.wooyun.org/papers/9893" rel="bookmark" id="re3">浅谈zip格式处理逻辑漏洞</a></li><li><a href="http://drops.wooyun.org/binary/7430" rel="bookmark" id="re4">逆向基础 OS-specific (二)</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pracdniw</span> <span class="reply-time">2016-01-12 14:44:50</span></div><p></p><p>求百度云更新啊楼主 蟹蟹！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">maing</span> <span class="reply-time">2015-12-30 10:54:58</span></div><p></p><p>百度云失效了, 可以再传下题目么?亲</p><p></p></div></div></div></div></div></main>

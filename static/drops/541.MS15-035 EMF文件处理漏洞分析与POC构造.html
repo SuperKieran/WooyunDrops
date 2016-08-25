@@ -1,0 +1,51 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">MS15-035 EMF文件处理漏洞分析与POC构造</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">cssembly</a> <span class="bull">·</span> <time title="2015/04/21 9:58" ui-time="" datetime="2015/04/21 9:58" class="published ng-binding ng-isolate-scope">2015/04/21 9:58</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>MS15-035是Microsoft Graphics 组件处理增强型图元文件 (EMF) 的漏洞，可能允许远程执行代码。</p><p>通过补丁比对，可以看到主要是修补了一些可能存在整形溢出的位置，但是这些位置，我尝试了很多方法都无法执行到。</p><p><img alt="enter image description here" img-src="e7ef0c153baaad8d3aa577edd143d2007bcaab3e.jpg"></p><p>但是</p><pre><code>#!c++
+int __thiscall MRSETDIBITSTODEVICE::bPlay(EMRSETDIBITSTODEVICE *this, HDC hdc, struct tagHANDLETABLE *a3, unsigned int a4)
+</code></pre><p>的修补是个例，补丁前的代码如下：</p><p><img alt="enter image description here" img-src="33f4fd23df97d5a5b885a887154890d752a9341c.jpg"></p><p>打补丁后，代码如下：</p><p><img alt="enter image description here" img-src="303af110f88744ab0d357daec6cc4fcef7043c71.jpg"></p><p>显然补丁后的代码对LocalAlloc分配的内存空间的最小值进行了限制，而打补丁之前并没有限制，因此猜测这里可能存在一个缓冲区越界写入问题。</p><p>通过分析函数调用链，可以找到MRSETDIBITSTODEVICE::bPlay被PlayEnhMetaFileRecord调用。PlayEnhMetaFileRecord根据EMF文件中元文件块类型调用不同的解析函数。09年的文章《<a href="http://blogs.technet.com/b/srd/archive/2009/03/26/new-emf-gdiplus-dll-crash-not-exploitable-for-code-execution.aspx">New EMF gdiplus.dll crash not exploitable for code execution</a>》描述的EMF漏洞CVE-2009-1217也进一步确认了explorer进程就是通过PlayEnhMetaFileRecord解析EMF文件的元文件块的。</p><p>下面简要介绍一下EMF文件的结构，EMF文件由可变大小的元文件块组成。每个元文件块都是一个可变长度的ENHMETARECORD结构，结构如下。</p><pre><code>#!c++
+typedef struct tagENHMETARECORD {
+  DWORD iType;
+  DWORD nSize;
+  DWORD dParm[1];
+} ENHMETARECORD, *PENHMETARECORD;
+</code></pre><p>SDK中定义了不同的iType类型，如下所示。</p><p><img alt="enter image description here" img-src="4fccf57dbe46aa8c6ccf854ce35556fd003b1847.jpg"></p><p>根据iType类型的不同，dParm是不同的结构，EMR_SETDIBITSTODEVICE对应的结构是EMRSETDIBITSTODEVICE。</p><pre><code>#!c++
+typedef struct tagEMR
+{
+    DWORD   iType;              // Enhanced metafile record type
+    DWORD   nSize;              // Length of the record in bytes.
+                                // This must be a multiple of 4.
+} EMR, *PEMR;
+
+typedef struct tagEMRSETDIBITSTODEVICE
+{
+    EMR     emr;
+    RECTL   rclBounds;          // Inclusive-inclusive bounds in device units
+    LONG    xDest;
+    LONG    yDest;
+    LONG    xSrc;
+    LONG    ySrc;
+    LONG    cxSrc;
+    LONG    cySrc;
+    DWORD   offBmiSrc;          // Offset to the source BITMAPINFO structure
+    DWORD   cbBmiSrc;           // Size of the source BITMAPINFO structure
+    DWORD   offBitsSrc;         // Offset to the source bitmap bits
+    DWORD   cbBitsSrc;          // Size of the source bitmap bits
+    DWORD   iUsageSrc;          // Source bitmap info color table usage
+    DWORD   iStartScan;
+    DWORD   cScans;
+} EMRSETDIBITSTODEVICE, *PEMRSETDIBITSTODEVICE;
+
+对于MRSETDIBITSTODEVICE::bPlay函数，其第一个参数为EMRSETDIBITSTODEVICE。为了验证猜想的正确性，通过程序生成一个小的emf文件，对其中的iType进行修改，以便其执行到MRSETDIBITSTODEVICE::bPlay函数，将0x54（EMR_EXTTEXTOUTW）修改为0x50（EMR_SETDIBITSTODEVICE）
+</code></pre><p>。</p><pre><code>#!c++
+HDC hEmf = CreateEnhMetaFile( 0 , "1.emf" , NULL , NULL );
+RECT rect;
+rect.top = 0 ;
+rect.left = 0 ;
+rect.bottom = 20;
+rect.right = 200;
+
+char szStr[] = "WSAWSAW";
+ExtTextOut( hEmf , 0 , 0 , ETO_OPAQUE , &amp;rect , szStr , sizeof(szStr) , NULL );
+CloseEnhMetaFile(hEmf);               
+DeleteObject(hEmf);
+</code></pre><p><img alt="enter image description here" img-src="173a2cd643b9b02163227f94f7bad07b4f50b9f2.jpg"></p><p>由于我在Win7下，浏览存放EMF文件的目录并没有触发EMF文件的解析，因此通过mspaint.exe加载1.emf文件，执行到</p><pre><code>#!c++
+int __thiscall MRSETDIBITSTODEVICE::bPlay(EMRSETDIBITSTODEVICE *this, HDC hdc, struct tagHANDLETABLE *a3, unsigned int a4)
+</code></pre><p>函数时，可以看到ecx指向的数据与文件中的数据一致。</p><p><img alt="enter image description here" img-src="4494341fc252960afad7a2664d7eb74daed3703c.jpg"></p><p>为了实现之前的猜想，实现越界写操作，假定在<em>((_DWORD *)v8 + 5) = v4->cbBitsSrc处实现了越界写，这就要求v4->cbBmiSrc小于（6</em>4）。</p><p><img alt="enter image description here" img-src="3737cb0ed0f1d0b1e30fb046ad600797edd9acbd.jpg"></p><p>由于MRSETDIBITSTODEVICE::bCheckRecord实现了对EMRSETDIBITSTODEVICE结构的合法性检查。函数如下。</p><p><img alt="enter image description here" img-src="cfa9854a042c519b18c98581675321ce7e9a7bb6.jpg"></p><p>根据检查的内容，对emf文件进行修改，使其满足MRSETDIBITSTODEVICE::bCheckRecord检查的各项条件，同时使v4->cbBmiSrc小于（6*4），最终得到如下文件内容。</p><p><img alt="enter image description here" img-src="5926add8421afb99b237d152eead86dbe72735c2.jpg"></p><p>用mspaint.exe加载emf文件，通过windbg可以观察到所有的检查都被绕过，同时LocalAlloc分配的内存大小为2。</p><p><img alt="enter image description here" img-src="d1e0c776c6d1cfb264e597ef9a6b5910b31112bd.jpg"></p><p>之后的<em>((_DWORD *)v8 + 2) = v9与</em>((_DWORD *)v8 + 5) = v4->cbBitsSrc都将实现缓冲区越界写入操作。</p><p>如果可以通过脚本在浏览器上显示emf文件，则有可能利用该漏洞实现远程代码执行。另外值得一提的是补丁中修补的其他如MF16_*的函数，这些函数的调用点都存在如下的代码段。这是对HDC的类型进行验证，只有类型是0x660000时，才会执行这些函数，而我只在调用CreateMetaFile后才得到了类型是0x660000的HDC，屏幕上显示时使用的HDC类型为0x10000。当HDC类型是0x660000时，调用PlayEnhMetaFile，最终不会执行PlayEnhMetaFileRecord。</p><p><img alt="enter image description here" img-src="dac4ce55c60aace759f43e5f41d4c4681889a316.jpg"></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/4621" rel="bookmark" id="re1">MS15-002 telnet服务缓冲区溢出漏洞分析与POC构造</a></li><li><a href="http://drops.wooyun.org/papers/5669" rel="bookmark" id="re2">MS15-034/CVE-2015-1635 HTTP.SYS 漏洞分析</a></li><li><a href="http://drops.wooyun.org/papers/7816" rel="bookmark" id="re3">分析及防护：Win10执行流保护绕过问题</a></li><li><a href="http://drops.wooyun.org/papers/7031" rel="bookmark" id="re4">Hacking Team 新 Flash 0day分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0CC</span> <span class="reply-time">2015-04-21 11:49:00</span></div><p></p><p>exp ip 80 getshell</p><p></p></div></div></div></div></div></main>

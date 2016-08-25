@@ -1,0 +1,63 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">wargame behemoth writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">litao3rd</a> <span class="bull">·</span> <time title="2015/04/28 10:34" ui-time="" datetime="2015/04/28 10:34" class="published ng-binding ng-isolate-scope">2015/04/28 10:34</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><blockquote><p>又一期的<code>wargame</code>来了，这一期的<em>wargame</em>主要侧重于逆向，基本上在<em>gdb</em>下把程序的思路弄清楚了，再利用一些简单的渗透溢出技巧，就可以成功了。 Let's go!</p></blockquote><p></p><p>依然是老方法，在游戏<a href="http://overthewire.org/wargames/behemoth/">behemoth</a>首页可以找到登陆的服务器的账号和密码。<code>ssh</code>登陆上去，开始我们的<code>wargame</code>之旅。</p><h1>level 0</h1><hr><p>登陆服务器，在游戏文件夹<code>/behemoth</code>下可以看到全部的可执行程序，首先执行<code>./behemoth0</code>，这是这一关待解决的程序。</p><p><img alt="behemoth_level0_login" img-src="61f542ac9e45888c3c45afd58c4ff8a3338f3362.jpg"></p><p>程序让我们输入一个密码，估计是将我们输入的密码和某个固定的密码做匹配，可能是加密后最匹配，谁知道它怎么做。<code>gdb</code>走起。</p><p><img alt="behemoth_level0_disassemble" img-src="3b68f3394e49d12544a65bb9d7ab4cd44966c9a9.jpg"></p><p>从反汇编的代码可能看到两个令人激动的函数，一个是<code>memfrob()</code>，通过找男人(<em>man</em>)知道，这个函数是将输入的指定长度的字符串中的字符与数字<code>42</code>做异或，既然是异或操作，就是可逆的。另一个函数是<code>strcmp()</code>，这个函数才是最令人激动的，从整个程序流程大概看到，程序通过<code>scanf()</code>获取用户输入，然后通过<code>memfrob()</code>做异或处理，然后再送入<code>strcmp()</code>做匹配，所以，我们只要在<code>strcmp()</code>函数调用处下断点，然后查看栈内容就可以得到真正的密码了。</p><p><img alt="behemoth_level0_passwd" img-src="54c96ecdf30b064959d54a464b4ae61f09eff47b.jpg"></p><p>程序需要输入的密码是<code>eatmyshorts</code>，执行程序，这一关就过去了。</p><p><img alt="behemoth_level0_crack" img-src="3a3fda5e3e30c34ba89b014f57cf6ed7834a2459.jpg"></p><h1>level 1</h1><hr><p>这一关程序也是要求输入一个密码，无法得到准备密码，还是要<code>gdb</code>走起。</p><p><img alt="behemoth_level1_login" img-src="7e987ccbf872950629fa255685eae6bd6384fa93.jpg"></p><p><img alt="behemoth_level1_disassemble" img-src="5fef0875ea7bd0e9f1dd8d24ce805622f5762644.jpg"></p><p>好吧，从逆向出来的汇编代码看，程序很简单，使用<code>gets()</code>得到用户输入，然后<code>puts()</code>输出<code>"Authentication failure.\nSorry."</code>提示结束就可以了，没有匹配，也就是没有正确的密码。不过从<code>gets()</code>这是一个不安全的函数，这里也没有边界检查，说明存在缓冲区溢出漏洞，这是可以利用的。</p><p><img alt="behemoth_level1_overflow" img-src="447519ec678de1b40c285c833ec0dc2d8427833f.jpg"></p><p>通过验证，确实存在缓冲区溢出漏洞，下面就是如何利用这个漏洞了，这个溢出利用前面的<code>wargame</code>已经玩得很多了。</p><p><img alt="behemoth_level1_crack" img-src="5ef055bbd59b0884f2d81653d01bbbffbdfa7670.jpg"></p><h1>level 2</h1><hr><p>这里程序执行似乎是要创建某个文件，多次执行发现，每次创建的文件名似乎都不相同，应该是跟<code>pid</code>相关。</p><p><img alt="behemoth_level2_login" img-src="f8b87badac60c4d23a9f1efca96dd054c07e6555.jpg"></p><p>还是看汇编代码比较容易理解程序的执行意图。</p><p><img alt="behemoth_level2_disassemble" img-src="b459f4d88f4ccb6166af51d966e189eb46b2e5be.jpg"></p><p>对反汇编代码做个大概解释，执行的流程如下</p><pre><code>#!c
+id = getpid()
+s = lstat("touch " + str(id))
+if(s &amp; 0xf000 == 0x8000){
+    unlink(str(id);
+    system("touch " + ID);
+}
+sleep(0x7d0);
+system("cat  " + str(id));
+</code></pre><p>程序在当前目录下尝试查找以自己<code>pid</code>为名的文件，如果不存在的话，就建立该文件，然后执行一个很长时间的<code>sleep()</code>，然后再打开文件。这里没有输入，不存在溢出，也没有其它很明显的漏洞。<code>sleep(a_long_time)</code>这个函数调用似乎没有办法越过，也没法通过修改<code>.got.plt</code>来尝试将<code>sleep()</code>替换成其它的函数。后来再参考了网上的类似<code>writeup</code>，发现这里在调用<code>system()</code>的时候使用的是相对路径，既然是相对路径，那么这个路径就是我们可以控制的，通过修改<code>PATH</code>环境变量，这样就可以使程序在路径搜索的时候，先搜索我们指定的路径，这样就可以将<code>touch</code>程序替换成我们想要执行的程序，比如<code>执行生成一个*shell*</code>。这样就顺利通过这一关了。</p><p><img alt="behemoth_level2_crack" img-src="33d476d193096a59043f58458543bbee7d4d91b3.jpg"></p><p>这里需要注意<code>路径和伪 touch 程序</code>的权限问题，开始我一直失败就是因为权限配置的不对，浪费了不少时间按。</p><h1>level 3</h1><hr><p>这里还是有一个输入，既然有输入就有可能有溢出点。</p><p><img alt="behemoth_level3_login" img-src="711e6cdf5ee792f75fc57848b6b60c37fb8c5c09.jpg"></p><p>从程序执行的结果来看，程序打印了我们的输入，猜测可能有缓冲区溢出，或者是格式化字符串漏洞，经过验证，确实有格式化字符串漏洞，这样就很容易了，基本上不需要看汇编代码就可以搞定了。</p><p><img alt="behemoth_level3_test_offset" img-src="fb66a90a1d38e038189317c4e147661739db572e.jpg"></p><p>从上面的测试我们发现，字符串存储地址是在当前栈的第六个偏移的地方，即<code>0x18(%esp)</code>，这个值在<code>gdb</code>中也是可以看到的。接下来就是构造攻击程序了。我将<code>shellcode</code>放在环境变量中。</p><p><img alt="behemoth_level3_gdb_test" img-src="a480b4437b9c81976003bf92be6a06bdce95ed5c.jpg"></p><p>如上图所示，环境变量即<code>shellcode</code>保存在<em>0xffffd78c</em>中，可能存在一点偏移，不过我们有<code>Nop sled</code>，<code>Return Address</code>处保存着程序原来的返回地址，我们需要将它修改为<code>shellcode</code></p><p><img alt="behemoth_level3_crack_attack" img-src="c40bde0508c0e0214a7e304d1f77ed2f4104409a.jpg"></p><p>这里执行的<code>cat</code>是为了防止管道关闭，在前面的<code>wargame</code>也使用了这个方法。其中需要注意的是，管道的右边，一开始我使用的是相对路径，导致总是没法得到正确的结果，也不知道问题出现在哪里，后来无意中使用了绝对路径，才搞定的。这里不知道为什么，等我之后看看管道的具体原理再做记录。</p><p><img alt="behemoth_level3_crack_ret" img-src="1c4ef5e2f9f492b69a427fca3147ee5b782bf8d5.jpg"></p><h1>level 4</h1><hr><p>这里执行的结果就给了一个提示，<code>PID not found!</code>，看样子程序又是跟<code>PID</code>相关了。</p><p><img alt="behemoth_level4_login" img-src="63c4b18d8d097a947fb8a4c17da865b44942513d.jpg"></p><p>从反汇编出来的代码可以大概了解到程序的执行流程。</p><p><img alt="behemoth_level4_disassemble" img-src="d404d2b974d923961c68d03ca90ed6fd82c75a5d.jpg"></p><p><img alt="behemoth_level4_disassemble_2" img-src="ac4c32d3d52d4a837919c6fa6b400b5453f0e878.jpg"></p><p>程序首先打开<code>/tmp/pid</code>文件，然后<code>sleep(1)</code>一秒，然后将文件内容输出，这样我们只要将文件软链接到密码文件，就可以让程序打开密码文件，同时输出文件内容了。难点在于，我们如何知道程序的<code>pid</code>，虽然<em>linux 下　pid 是递增的，但是这也无法保证每次增加的就是 1 个单位</em>。于是，我想到了一个<em>不优雅</em>的方法，我们先建立大量的可能的<code>pid</code>软链接文件，然后一直执行程序，执行程序的<code>pid</code>会落到我们建立的文件范围内的。</p><p><code>behemoth4.py</code></p><pre><code>#!python
+#!/usr/bin/env python
+#coding=utf-8
+
+import sys, os
+passwd_file = "/etc/behemoth_pass/behemoth5"
+
+if len(sys.argv) &lt; 2:
+        print "usage %s [start pid num]"
+        sys.exit(-1)
+try:
+        start_pid = int(sys.argv[1])
+except ValueError:
+        print "usage %s [start pid num]"
+        sys.exit(-1)
+
+# 建立 50 个符号链接文件
+for i in range(50):
+        os.popen("ln -s " + passwd_file + " /tmp/" + str(i+start_pid))
+
+# 执行 1000 次程序
+for i in range(1000):
+        ret = os.popen("/behemoth/behemoth4")
+        ret = ret.read()
+        if not "not" in ret:
+                print ret
+                break
+
+# 删除所有建立的文件
+for i in range(50):
+        os.popen("rm /tmp/" + str(i+start_pid))
+</code></pre><p>主要是<code>python</code>下获取子进程的<code>pid</code>太麻烦了，要不然这个爆破的代码可以写得更优雅一点。不过不影响结果，依然爆破出来了。这里需要注意的是，<code>start pid</code>即程序的参数应该要选得大一点，因为程序里面建立符号链接文件启动了不少子进程，我这里在原来的基础上增加了<code>500</code>个数，否则容易越过。</p><p><img alt="behemoth_level4_crack" img-src="81725852f7e686915b0fd28bd05d2c9d2b4a2462.jpg"></p><h1>level 5</h1><hr><p>这一关执行程序没有任何输出，没有提示，还是直接看反汇编出来的代码吧。代码</p><p><img alt="behemoth_level5_disassemble_0" img-src="3a44764a36e2f38b60d6ab2a3f9a7503b29e9781.jpg"></p><p><img alt="behemoth_level5_disassemble_1" img-src="aa4c04f50e78c21f91f122a596354650a3a6bf09.jpg"></p><p><img alt="behemoth_level5_disassemble_2" img-src="49b1928c4f51f5d7101708b44eff79a89f912952.jpg"></p><p><img alt="behemoth_level5_disassemble_3" img-src="35e87be77e8b954d210b59c449f10a5a38ded9b0.jpg"></p><p><img alt="behemoth_level5_disassemble_4" img-src="faea2cc2a58cb66518c76f940df7bf3495ca2ddc.jpg"></p><p>可以看到，程序首先打开了密码文件<code>/etc/behemoth_pass/behemoth6</code>，然后建立了<code>localhost:1337</code>的<code>socket</code>，再用<code>sendto</code>函数将文件内容发送出去。程序的流程很明显了，接下来我们只要监听本地端口<code>1337</code>就可以收到密码了。需要注意的是<code>sendto</code>是用<code>UDP</code>协议发送的，需要监听该端口的<code>UDP</code>数据包。</p><p>使用瑞士军刀<code>nc</code>进行监听，然后在另外一个<code>shell</code>中执行程序，<code>nc</code>就会输出收到的<code>UDP</code>数据包内容了。</p><p><code>shell 1</code> <img alt="behemoth_level5_listen" img-src="cfd9588ff9b9dfed85ccd56b1eb48a1a6bfcdbf0.jpg"></p><p><code>shell 2</code> <img alt="behemoth_level5_sendto" img-src="b4487d3b656ff8775455e0c072f20e171ecc8b7a.jpg"></p><p><code>shell 1</code> <img alt="behemoth_level5_crack" img-src="94b5e9a9befbba5faf1f49644abe95efe9cf09fd.jpg"></p><h1>level 6</h1><hr><p>这一关有两个可执行程序，执行程序都没有得到任何有意义的结果，还是直接看反汇编出来的代码吧。</p><p><img alt="behemoth_level6_disassemble" img-src="9ce599ecf850bb12102db5239a2c66188139ab59.jpg"></p><p><img alt="behemoth_level6_memory" img-src="abcd4afee838f6a69ffce221fbe2955ff9474f69.jpg"></p><p>第一个主程序与第二个程序<code>/behemoth/behemoth6_reader</code>建立一个管道，然后通过管道读取，如果读到的内容等于<code>HelloKitty</code>，这样就会执行<code>execl()</code>，建立一个<code>shell</code>。我们再看看第二个程序。第二个程序，执行就会输出<code>Couldn't open shellcode.txt!</code>，看样子是要建立一个名为<code>shellcode.txt</code>的文件，具体还是看看汇编代码吧。</p><p><img alt="behemoth_level6_reader" img-src="1274f85aad98da7d9d6a899a56069c6c483c8ca8.jpg"></p><p>程序首先打开一个名为<code>shellcode.txt</code>的文件，然后将文件内容读取到动态申请的存储区，最后跳转到动态存储区，执行读取到的内容。这样就很容易理解了，我们在<code>shellcode.txt</code>文件中存放一段<code>shellcode</code>，这段<code>shellcode</code>只执行一个任务，就是向标准输出<code>stdout</code>打印一段字符串<code>HelloKitty</code>就可以了。</p><pre><code>section .text
+global _start
+_start:
+        mov ax, 0x7974          ; ty
+        movzx eax, ax           ; zero-extend ax to 32bits
+        push eax
+        push 0x74694b6f         ; oKit
+        push 0x6c6c6548         ; Hell
+        mov ecx, esp
+        xor ebx, ebx
+        inc ebx
+        xor edx, edx
+        mov dl, 10
+        xor eax, eax
+        mov al, 4
+        int 80h
+
+        ; exit(0)
+        xor ebx, ebx
+        xor eax, eax
+        mov al, 1
+        int 80h
+</code></pre><p>上面就是我写的输出<code>HelloKitty</code>的<code>shellcode</code>程序，汇编之后就可以得到可用的<code>shellcode</code>程序了。需要注意的是，<code>behemoth6_reader</code>程序使用的也是相对路径，既然是相对路径，就是我们可以控制的。在<code>/tmp</code>下建立文件夹<code>behemoth6</code>，将当前文件夹设置为<code>/tmp/behemoth6</code>，在该目录下操作就可以了。</p><p><img alt="behemoth_level6_crack" img-src="f36163fcc9c128bf4059d98fcabf7857bc7aa151.jpg"></p><h1>level 7</h1><hr><p>这一关的程序也是执行没有任何输出，所以说这次的<code>wargame</code>主要还是看逆向能力，基本上能逆向出来程序流程，后面的问题都很容易就可以解决了。汇编出来的程序很长，就不贴了。</p><p>唯一可能有点难度的是，在汇编代码中有两次调用<code>call 0x8048420 &lt;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="db8484b8afa2abbe84b984b7b4b89babb7af">[email&#160;protected]</a>&gt;</code>这一个函数，男人(man)告诉说，这个函数一般是<code>&lt;ctype.h&gt;</code>中的函数如<code>isspace()</code>、<code>isalpha()</code>等调用的，也就是在程序里执行的是类似的检测，再加上从其它的代码总体来看，得到结论。该程序检测<code>argv[1]</code>中是否有<code>Non-alpha</code>字符存在，如果有的话那么就有可能是<code>shellcode</code>，这样就提示错误。如图所示，</p><p><img alt="behemoth_level7_login" img-src="34431ad0453a33b626895601579672ce0e1d714e.jpg"></p><p>如上图所示，第一次执行时，<code>argv[1]</code>中有字符<code>,</code>存在，于是程序报错，提示可能有<code>shellcode</code>存在。</p><p>不过程序只是检测<code>argv[1]</code>中前<code>256</code>个字符，这样我们只需要用<code>alpha</code>字符填充前面<code>256</code>个位置就可以了，后面可以进行缓冲区溢出利用。不过程序中将全部的环境变量都清空了，这就意味着我们不能将<code>shellcode</code>放置在环境变量中，需要找其它的地方存放，同时一开始，我将<code>shellcode</code>放在<code>argv[1]</code>字符串中的尾部，加上<code>Nop sled</code>，执行的时候提示<code>Illegal Struction</code>，猜测可能栈不可执行。最终我使用<code>return-to-libc</code>，将返回地址修改成<code>system()</code>函数的地址，同时将参数<code>/bin/sh</code>放置在<code>argv[2]</code>中，加上一定的猜测，最终搞定了。</p><p><img alt="behemoth_level7_crack" img-src="190668eaf511d06031ebe2340cef5b231497e718.jpg"></p><h1>end of the game</h1><hr><p>又完成一期<code>wargame</code>了，现在的难度不是很大，都是一些很基础的逆向、溢出的知识，不过作为一个新手，我深深地知道打好基础才是最重要的，后面依然有很多好玩的。尽请期待～</p><p>想了解更多关于<code>wargame</code>的内容，请参考<a href="http://overthewire.org/wargames/">这里</a>！</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">litao3rd</span> <span class="reply-time">2015-06-01 13:36:04</span></div><p></p><p>@0xmuhe 确实有点问题，那个 if 判断，应该是相等的时候跳转，不等的时候成立。这里返了，谢谢指正。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Croxy</span> <span class="reply-time">2015-05-19 15:35:42</span></div><p></p><p>学到了几招姿势。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Nullun</span> <span class="reply-time">2015-04-29 01:40:36</span></div><p></p><p>m</p><p></p></div></div></div></div></div></main>

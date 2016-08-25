@@ -1,0 +1,62 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">回顾历史上那些因为一行代码出现问题的bug</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">news</a> <span class="bull">·</span> <time title="2014/03/04 10:39" ui-time="" datetime="2014/03/04 10:39" class="published ng-binding ng-isolate-scope">2014/03/04 10:39</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>最近苹果的那一行<a href="https://www.imperialviolet.org/2014/02/22/applebug.html">没有验证SSL证书的bug代码</a>，闹的纷纷攘攘，其实历史上也有很多出现类似的代码，让我们来回顾一下：</p><h3>X</h3><p>回到2006年，X server检测用户是否为root用户，竟然忘记了<a href="http://www.x.org/releases/X11R7.0/patches/xorg-server-1.0.1-geteuid.diff">调用检测函数</a>。</p><pre><code>#!diff
+--- hw/xfree86/common/xf86Init.c
++++ hw/xfree86/common/xf86Init.c
+@@ -1677,7 +1677,7 @@
+   }
+   if (!strcmp(argv[i], "-configure"))
+   {
+-    if (getuid() != 0 &amp;&amp; geteuid == 0) {
++    if (getuid() != 0 &amp;&amp; geteuid() == 0) {
+        ErrorF("The '-configure' option can only be used by root.\n");
+        exit(1);
+     }
+</code></pre><p>很奇怪吧，编译的时候没有人看到警告信息吗？</p><h3>Debian OpenSSL</h3><p>在2008年，Debian发行了的一个版本<a href="http://www.debian.org/security/2008/dsa-1571">密钥可能被猜测到</a></p><pre><code>#!diff
+--- openssl-a/md_rand.c
++++ openssl-b/md_rand.c
+@@ -271,10 +271,7 @@
+                else
+                        MD_Update(&amp;m,&amp;(state[st_idx]),j);
+
+-/*             
+- * Don't add uninitialised data.
+                MD_Update(&amp;m,buf,j);
+-*/
+                MD_Update(&amp;m,(unsigned char *)&amp;(md_c[0]),sizeof(md_c));
+                MD_Final(&amp;m,local_md);
+                md_c[1]++;
+</code></pre><p>嗯，这个是三行修复代码，搞不明白代码审计的时候发生了什么。</p><h3>OpenSSL</h3><p>同样是OpenSSL，同样在2008年，<a href="http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2008-5077">OpenSSL 0.9.8i以及更早版本中没有正确的检查EVP_VerifyFinal函数的返回值，导致远程攻击者可以通过绕过证书的验证</a>。</p><pre><code>#!diff
+--- lib/libssl/src/ssl/s3_srvr.c
++++ lib/libssl/src/ssl/s3_srvr.c
+@@ -2009,7 +2009,7 @@ static int ssl3_get_client_certificate(S
+    else
+        {
+        i=ssl_verify_cert_chain(s,sk);
+-       if (!i)
++       if (i &lt;= 0)
+            {
+            al=ssl_verify_alarm_type(s-&gt;verify_result);
+            SSLerr(SSL_F_SSL3_GET_CLIENT_CERTIFICATE,SSL_R_NO_CERTIFICATE_RETURNED);
+</code></pre><p>这可能是你想象中最严重的安全问题了吧？</p><h3>Android</h3><p>这次是2010年，<a href="https://code.google.com/p/android-source-browsing/source/detail?spec=svn.platform--bootable--bootloader--legacy.734756ca3968b54e32acab867a05b10fc5e13d07&amp;r=734756ca3968b54e32acab867a05b10fc5e13d07&amp;repo=platform--bootable--bootloader--legacy">修复细节</a>：</p><pre><code>#!diff
+--- libc-a/memset.c
++++ libc-b/memset.c
+@@ -1,6 +1,6 @@
+ void *memset(void *_p, unsigned v, unsigned count)
+ {
+     unsigned char *p = _p;
+-    while(count-- &gt; 0) *p++ = 0;
++    while(count-- &gt; 0) *p++ = v;
+     return _p;
+ }
+</code></pre><p>这里也没有人编译的时候提示警告有个未使用的参数信息？</p><h3>Tarsnap</h3><p>2011年，<a href="http://www.daemonology.net/blog/2011-01-18-tarsnap-critical-security-bug.html">借此重构AES-CTR代码</a>：</p><pre><code>#!diff
+--- tarsnap-autoconf-1.0.27/lib/crypto/crypto_file.c
++++ tarsnap-autoconf-1.0.28/lib/crypto/crypto_file.c
+@@ -108,7 +108,7 @@
+
+        /* Encrypt the data. */
+        if ((stream =
+-           crypto_aesctr_init(&amp;encr_aes-&gt;key, encr_aes-&gt;nonce)) == NULL)
++           crypto_aesctr_init(&amp;encr_aes-&gt;key, encr_aes-&gt;nonce++)) == NULL)
+                goto err0;
+        crypto_aesctr_stream(stream, buf, filebuf + CRYPTO_FILE_HLEN, len);
+        crypto_aesctr_free(stream);
+</code></pre><p>原文：<a href="http://www.tedunangst.com/flak/post/a-brief-history-of-one-line-fixes">http://www.tedunangst.com/flak/post/a-brief-history-of-one-line-fixes</a></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/1381" rel="bookmark" id="re1">关于OpenSSL“心脏出血”漏洞的分析</a></li><li><a href="http://drops.wooyun.org/papers/4621" rel="bookmark" id="re2">MS15-002 telnet服务缓冲区溢出漏洞分析与POC构造</a></li><li><a href="http://drops.wooyun.org/tips/3589" rel="bookmark" id="re3">教你解密Gh0st 1.0远控木马VIP版配置信息</a></li><li><a href="http://drops.wooyun.org/papers/13433" rel="bookmark" id="re4">CVE-2016-0799简单分析</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">来自动物园的我</span> <span class="reply-time">2014-03-29 15:47:41</span></div><p></p><p>简直炫酷</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">龙臣</span> <span class="reply-time">2014-03-14 23:02:16</span></div><p></p><p>膜拜</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">iv4n</span> <span class="reply-time">2014-03-04 14:32:55</span></div><p></p><p>黑哥也有这样的故事</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wefgod</span> <span class="reply-time">2014-03-04 13:51:44</span></div><p></p><p>洞主自己写的吗？太牛逼了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2014-03-04 12:08:33</span></div><p></p><p>简直炫酷……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CCOz</span> <span class="reply-time">2014-03-04 11:58:12</span></div><p></p><p>和知名显卡cross fire开源解决方案bumblebee比起来，文章里的都是小case了。<br>当年bumblebee有一个更新，脚本里有一行删除<br>rm -rf /usr/lib/nvidia-current/xorg/xorg<br>结果多加了一个空格， 变成了<br>rm -rf /usr /lib/nvidia-current/xorg/xorg<br>linux系统下的usr文件夹就全都删掉了。<br>简直炫酷</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">荣耀属于跪拜猫</span> <span class="reply-time">2014-03-04 11:13:30</span></div><p></p><p>当然不是我想象中最xxx的问题</p><p>最xxx的问题是uid == 0变成uid = 0啊</p><p></p></div></div></div></div></div></main>

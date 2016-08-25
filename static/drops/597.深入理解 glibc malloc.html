@@ -1,0 +1,153 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">深入理解 glibc malloc</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">新一葛格</a> <span class="bull">·</span> <time title="2015/06/15 10:18" ui-time="" datetime="2015/06/15 10:18" class="published ng-binding ng-isolate-scope">2015/06/15 10:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>近期的在看 pwn 的一些东西，发现无论是实际场景中，还是 CTF 中，堆的利用越来越多，又由于各种环境下堆的实现都不太一样，因此就让皂皂翻译这篇文章, 我也对本文作了润色修改，以飨读者。</p><p>原文：https://sploitfun.wordpress.com/2015/02/10/understanding-glibc-malloc/comment-page-1/</p><p>我一直在执着于堆的一些问题。比如以下几个</p><ul><li>堆的内存怎样从内核中申请的？</li><li>怎样有效地进行内存管理？</li><li>堆内存是通过内核，库还是堆本身进行管理？</li><li>堆的一些相关问题能被利用吗？</li></ul><p>虽然之前经常在想这些问题，但是光想并没有什么卵用。正好，最近我找到了点时间来好好思考这些问题。所以现在我就来分享一下这些知识的总结。此外，还有很多可用的内存分配器：</p><ul><li>dlmalloc - 通用分配器</li><li>ptmallac2- glibc</li><li>jemalloc - FreeBSD &amp; Firefox</li><li>tcmalloc - Google</li><li>libumem - Solaris ...</li></ul><p>每种内存分配器都说他们是最快的、可扩展并且具有高效的内存使用！！但是并非所有的分配器都适合我们自己的应用程序。内存消耗大的应用性能很大程度依赖于内存分配器的性能。本文中，我只讨论 "glibc malloc” 内存分配器。并希望今后能涉及到其他内存分配器的讨论。本文中为了更好的理解 ”glibc malloc”,我会<a href="https://sourceware.org/ml/libc-alpha/2014-09/msg00088.html">联系</a>它最近的源码来谈。好，下面系好你的安全带，我们开启探索 glibc malloc 的旅程！！</p><h1>0x01 历史</h1><hr><p>历史： <a href="http://www.malloc.de/en/">ptmalloc2</a> 来自于 <a href="http://g.oswego.edu/dl/html/malloc.html">dlmalloc</a> 的分支。此后，添加线程支持并于 2006 年发布。正式发布后，patmalloc2 集成到 glibc 源码中。随着源码集成，代码修改便直接在 glibc malloc 源码里进行。因此 ptmalloc2 与 glibc 之间的 malloc 实现有很多不同。</p><p>系统调用：在<a href="https://sploitfun.wordpress.com/2015/02/11/syscalls-used-by-malloc/">之前的文章</a>可见malloc的内部调用不是 <a href="http://man7.org/linux/man-pages/man2/sbrk.2.html">brk</a> 就是 <a href="http://man7.org/linux/man-pages/man2/mmap.2.html">mmap</a> 系统调用。</p><p>线程化：在早期的 Linux 里，dlmalloc 被用做默认的内存分配器。但之后因为 ptmalloc2 添加了线程支持，ptmalloc2 成为了 Linux 默认内存分配器。线程支持可帮助提升内存分配器以及应用程序的性能。在 dlmalloc 里，当两个线程同时调用 malloc 时，只有一个线程能进入到临界段，因为这里的空闲列表数据结构是所有可用线程共用的。因此内存分配器要在多线程应用里耗费时间，从而导致性能降低。然而在 ptmalloc2 里，当两个线程同时调用 malloc 时，会立即分配内存。因为每个线程维护一个单独的堆分段，因此空闲列表数据结构正在维护的这些堆也是独立的。这种维护独立堆以及每一个线程享有空闲列表数据结构的行为被称为 Per Thread Arena。</p><h1>0x02 示例：</h1><hr><pre><code>#!c
+/* Per thread arena example. */
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;pthread.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/types.h&gt;
+
+void* threadFunc(void* arg) {
+        printf("Before malloc in thread 1\n");
+        getchar();
+        char* addr = (char*) malloc(1000);
+        printf("After malloc and before free in thread 1\n");
+        getchar();
+        free(addr);
+        printf("After free in thread 1\n");
+        getchar();
+}
+
+int main() {
+        pthread_t t1;
+        void* s;
+        int ret;
+        char* addr;
+
+        printf("Welcome to per thread arena example::%d\n",getpid());
+        printf("Before malloc in main thread\n");
+        getchar();
+        addr = (char*) malloc(1000);
+        printf("After malloc and before free in main thread\n");
+        getchar();
+        free(addr);
+        printf("After free in main thread\n");
+        getchar();
+        ret = pthread_create(&amp;t1, NULL, threadFunc, NULL);
+        if(ret)
+        {
+                printf("Thread creation error\n");
+                return -1;
+        }
+        ret = pthread_join(t1, &amp;s);
+        if(ret)
+        {
+                printf("Thread join error\n");
+                return -1;
+        }
+        return 0;
+}
+</code></pre><p>输出分析：</p><p>在主线程 malloc 之前：在以下输出里我们可以看到，由于 thread1 尚未创建，这里尚无堆分段，也没有线程栈。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="354645595a5c4153405b754645595a5c4153405b18635c4741405459775a4d">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="750605191a1c0113001b350605191a1c0113001b58231c0701001419371a0d">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+b7e05000-b7e07000 rw-p 00000000 00:00 0 
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e794978b888e93819289a794978b888e93819289cab18e959392868ba5889f">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><p>在主线程 malloc 之后: 在下面的输出里我们可以看到，堆正好被创建在数据段附近（0804b000-0806c000），这表明堆的空间是由调用高级别的中断所创建（即，使用 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2458">brk</a> 系统调用）。还要注意的是，即使用户只发出了 1000 bytes 请求，就会创建 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2429">132 KB</a> 大小的堆内存。这个堆内存的连续区域被称为「arena」。这个 arena 是由主线程创建，则被称为<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1740">main arena</a>。进一步的分配请求会继续使用这个 arena 直到 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3788">arena 空闲空间耗尽</a>。当 arena 耗尽空闲空间 时，它能在线程调用高级别的中断的位置时建立（调整建立开始块的 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2521">size</a> 以包含额外空间之后）。类似地，arena 也能在 top chunk 有大量空闲空间时<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L4044">回收</a>。</p><p>注：top chunk 是一个 arena 里最多的块。关于它的更多细节，请看以下 "Top Chunk" 部分</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4033302c2f293426352e0033302c2f293426352e6d1629323435212c022f38">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+After malloc and before free in main thread
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="d1a2a1bdbeb8a5b7a4bf91a2a1bdbeb8a5b7a4bffc87b8a3a5a4b0bd93bea9">[email&#160;protected]</a>:~/lsploits/hof/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804b000-0806c000 rw-p 00000000 00:00 0          [heap]
+b7e05000-b7e07000 rw-p 00000000 00:00 0 
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4c3f3c202325382a39220c3f3c202325382a3922611a253e38392d200e2334">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><p>在主线程 Free 之后： 在以下输出里我们可以看到，当分配内存区域被释放时，其后内存不会被立即释放给操作系统。分配内存区域（1000 bytes 大小）只释放给 "glibc malloc" 库，在这里的释放掉的 Chunk 会被添加到 main arenas 中（在 glibc malloc 里，freelist 这种数据结构被称为 bins 译者注：freelist 是一种单向链表）。此后当用户申请内存时，glibc malloc 不会从内核中获得新的堆内存，而是尽量在 bins 里找到一个空闲块(Free Chunk)。只有当没有空闲块存在时，glibc malloc 才会从继续内核中申请内存。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ed9e9d818284998b9883ad9e9d818284998b9883c0bb849f99988c81af8295">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+After malloc and before free in main thread
+After free in main thread
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="96e5e6faf9ffe2f0e3f8d6e5e6faf9ffe2f0e3f8bbc0ffe4e2e3f7fad4f9ee">[email&#160;protected]</a>:~/lsploits/hof/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804b000-0806c000 rw-p 00000000 00:00 0          [heap]
+b7e05000-b7e07000 rw-p 00000000 00:00 0 
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f88b889497918c9e8d96b88b889497918c9e8d96d5ae918a8c8d9994ba9780">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><p>在线程1 malloc 之前：在以下输出中我们可以看到，这里没有 thread1 的堆但现在 thread1 的每一线程栈已被创建。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fc8f8c909395889a8992bc8f8c909395889a8992d1aa958e88899d90be9384">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+After malloc and before free in main thread
+After free in main thread
+Before malloc in thread 1
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1261627e7d7b6674677c5261627e7d7b6674677c3f447b606667737e507d6a">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804b000-0806c000 rw-p 00000000 00:00 0          [heap]
+b7604000-b7605000 ---p 00000000 00:00 0 
+b7605000-b7e07000 rw-p 00000000 00:00 0          [stack:6594]
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6310130f0c0a1705160d2310130f0c0a1705160d4e350a111716020f210c1b">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><p>在线程1 malloc 之后：在以下输出里我们可以看到，thread1 的堆被创建了。且在内存映射段区域出现（b7500000-b7521000 大小为 132 KB），这表明堆内存通过使用 mmap 系统调用而不是主线程（使用 sbrk）创建。这里再一次看到，即使用户只请求 1000 bytes，1MB 大小的堆内存还是会被映射到进程地址空间中。而<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L546">1 MB</a> 以外只有 132KB 被设置有读写权限，并同时成为该线程的堆。这块内存（132KB）区域被称为<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L736">thread arena</a>。</p><p>注：当用户申请的内存大小超过 128KB（ malloc(132*1024) ）并且当一个 arena 里没有足够的空间来满足用户的请求时，内存是使用 mmap 系统调用来分配的（不使用 sbrk） 无论这个请求是来自于 main arena 还是 thread arena。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3d4e4d515254495b48537d4e4d515254495b4853106b544f49485c517f5245">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+After malloc and before free in main thread
+After free in main thread
+Before malloc in thread 1
+After malloc and before free in thread 1
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="cab9baa6a5a3beacbfa48ab9baa6a5a3beacbfa4e79ca3b8bebfaba688a5b2">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804b000-0806c000 rw-p 00000000 00:00 0          [heap]
+b7500000-b7521000 rw-p 00000000 00:00 0 
+b7521000-b7600000 ---p 00000000 00:00 0 
+b7604000-b7605000 ---p 00000000 00:00 0 
+b7605000-b7e07000 rw-p 00000000 00:00 0          [stack:6594]
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="394a495556504d5f4c57794a495556504d5f4c57146f504b4d4c58557b5641">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><p>在线程1 free 掉后：在以下输出我们可以看到，释放分配内存区域的过程中并不会把堆释放到操作系统。取而代之的是这块被分配的内存区域（1000 bytes 大小）还是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L4017">被释放</a> 到了 "glibc malloc" 里，并将这个释放块添加到 thread arenas 的 bins 里。</p><pre><code>#!bash
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b9cac9d5d6d0cddfccd7f9cac9d5d6d0cddfccd794efd0cbcdccd8d5fbd6c1">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ ./mthread 
+Welcome to per thread arena example::6501
+Before malloc in main thread
+After malloc and before free in main thread
+After free in main thread
+Before malloc in thread 1
+After malloc and before free in thread 1
+After free in thread 1
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="3a494a5655534e5c4f547a494a5655534e5c4f54176c53484e4f5b56785542">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$ cat /proc/6501/maps
+08048000-08049000 r-xp 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+08049000-0804a000 r--p 00000000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804a000-0804b000 rw-p 00001000 08:01 539625     /home/sploitfun/ptmalloc.ppt/mthread/mthread
+0804b000-0806c000 rw-p 00000000 00:00 0          [heap]
+b7500000-b7521000 rw-p 00000000 00:00 0 
+b7521000-b7600000 ---p 00000000 00:00 0 
+b7604000-b7605000 ---p 00000000 00:00 0 
+b7605000-b7e07000 rw-p 00000000 00:00 0          [stack:6594]
+...
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="7102011d1e180517041f3102011d1e180517041f5c2718030504101d331e09">[email&#160;protected]</a>:~/ptmalloc.ppt/mthread$
+</code></pre><h1>0x03 Arena</h1><hr><p>Arena的数量：在以上示例中，我们看到了主线程包含 main arena 同时 thread 1 包含了它自己的 thread arena。所以不论线程数量，在线程与 arena 之间可以有一对一的映射吗？当然没有。一个 arena 应用程序可以包含更多数量的线程（相较于 Cores 的数量），在这样的情况下，每个线程拥有一个 arena 显得有些不值。因此，应用程序的<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L847">arena 数量的限制是基于系统里现有的 Cores 的数量</a>。</p><pre><code>#!bash
+For 32 bit systems:
+     Number of arena = 2 * number of cores.
+For 64 bit systems:
+     Number of arena = 8 * number of cores.
+</code></pre><h1>0x04 Multiple Arena ：</h1><hr><p>示例：我们来看一个多线程应用（4线程 &#45;--||- 主线程 + 3个用户线程）在一个单核的 32 位系统上运行。这里线程数量（4）> 2 * 核心数量（2）。因此，"glibc malloc" 认定 Multiple Arena 被所有可用进程共享。但它是怎样共享的呢？</p><p>当主线程，第一次调用 malloc 时，在没有任何竞争的情况下，已经创建了 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1740">main arena</a>。</p><p>当 thread 1 和 thread 2 第一次调用 malloc 时，会为这些线程<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L870">创建一个新的 arena</a> 并且是在无任何竞争的情况下被使用。直到所有线程和 arena 有一对一映射时。</p><p>当 thread 3 第一次调用 malloc 时， arena 限制的数量被<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L847">算出</a>。这里超过了 arena 数量的限制，因此尝试<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L875">重用</a> 现存的 arena （main arena 或 arena 1 或 arena 2）</p><p>重用:</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L810">一旦遍历了所有</a>可用的 arena，就会<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L805">尽量去</a>锁定可用的 arena。</p><p>如果锁定成功（我们假设说 main arena 被锁定成功），就向用户<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L826">返回</a>该 arena。</p><p>如果没有 arena 是空闲的，请看接下来的 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/arena.c#L819">arena</a> 代码区。</p><p>现在当 thread 3 第二次调用 malloc 时，malloc 会<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2884">尽量使用上次访问的 arena</a> （main arena）。如果 main arena 是空闲的， thread 3 会一直使用该 arena 并屏蔽其他线程的申请直到 main arena 被释放。 main arena 就是如此这般在主线程和 thread 3 间共享。</p><h1>0x05 Multiple Heaps：</h1><hr><p>在 “glibc malloc”源代码里主要发现以下三种数据结构：</p><p>heap_info – 堆头 – 单个 thread arena 有多个堆。每个堆有它自己的头。为什么需要多个堆？每个 thread arena 开始都只有一个堆，但当这个堆耗尽空间时，新的堆（并不连续的）能 mmap 到这个 arena 里。</p><p>malloc_state – Arena 头 – 单个 thread arena 有多个堆，但是对于所有这些堆来说，只存在一个 arena 头。arena 头 包含 bins、top chunk、最后剩余块……</p><p>malloc_chunk – 块头 – 一个堆基于用户请求被分为很多块。每个块有它自己的块头。</p><p>注：</p><p>Main arena 没有多重堆，因此没有 heap_info 结构。当main arena 耗尽空间时，sbrk 堆被扩展（连续区域）直到它转储到内存映射分段中。</p><p>不像 thread arena，main arena 的 Arena 头不是 sbrk 堆分段的一部分。它是一个<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1740">全局变量</a>，因此可以在 libc 里找到它以及数据分段。</p><p>main arena 和 thread arena 的形象化视图（单个堆分段）：</p><p>thread arena 的形象化视图（多个堆分段）：</p><p><img alt="enter image description here" img-src="bd3c4d721a2ff7cbc9f95db5a8bb49140c39eb98.jpg"></p><p>Chunk ：在堆里的块可以是以下几种类型中的一种：</p><ul><li>Allocated chunk 分配后的块</li><li>Free chunk 空闲块</li><li>Top chunk 开始块</li><li>Last Remainder chunk 最后剩余块</li></ul><h1>0x06 Allocated Chunk：</h1><hr><p><img alt="enter image description here" img-src="1d117f41d321a1f1ebfb9487dc8a0aa31b2dd763.jpg"></p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1111">size</a>: 这部分包含了此处 Allocated 块的容量大小，该部分最后 3 bits 包含了关键信息。 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1267">PREV_INUSE (P)</a> – 这一 bit 在前一个块被分配时就被设置。 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1274">IS_MMAPPED</a> (M) – 这一 bit 在块即在 mmap 时被设置。 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1283">NON&#95;MAIN&#95;ARENA</a> (N) – 这一 bit 在块分配给 thread arena 时设置。</p><p>注意:</p><p>其他 malloc_chunk （比如 fd -- forward point，bk-- back point）的部分不会用于分配块。因此用户数据在这个区域。</p><p>由于存储 malloc_chunk 需要一些额外的空间，用户请求的容量大小转换成了可用的大小。转化通过不设置可用容量的最后 3 bits 的方式进行，因此它用于存储关键信息。</p><p>Free Chunk（空闲块）:</p><p><a href="http://static.wooyun.org//drops/20150614/2015061423255856482D8A13550-4F52-48E1-B668-32DBD8003BAE.png">enter link description here</a></p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1110">prev_size</a>： 两个空闲块是不能毗连在一起的。当两个块都空闲时，它就会与一个单独的空闲块连接。因此前一个块及当前这个释放的块会被分配，同时 prev_size 包含前一个块的用户数据。 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1111">size</a>: 这个部分包含有空闲块的 size。 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1113">fd</a>: 前指针 – 同一容器里指向下一块的指针（不是指向物理内存内的下一块）。 Bins：Bins 是 freelist 数据结构。用以支持 Free Chunk。基于块的大小，有几种可用的 bins：</p><p>Fast bin 快速bin Unsorted bin 无序bin Small bin 小bin Large bin 大bin</p><p>被用来支持这些 bin 的数据结构有：</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1680">fastbinsY</a>: 该数组支持 fast bins bins: 该数组支持 unsorted，small 以及 large 容器。总共 126 个容器被划分为以下几种： Bin 1 – Unsorted bin Bin 2 to Bin 63 – Small bin Bin 64 to Bin 126 – Large bin</p><p>Fast Bin: 大小在 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1249">16</a> 到 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1600https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1600">80</a> bytes 的块叫做 fast chunk 。支持 fast chunk 的 bin 叫做 fast bins。在上述的这些 bin 里，fast bins 在内存分配和重新分配上更快。（译者注：只有 fast bin 是 LIFO 其他的 bin 都是 FIFO）</p><p>bin 数量 - <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1680">10</a></p><p>每个 fast bin 包含 free chunk 的一个单向链表。既然在 fast bins 里，在列表中间块不会被移除，单向链接列表被使用。添加和删除都在列表末尾之前进行 - LIFO（后进先出）。</p><p>Chunk size – <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1595">8 bytes apart</a> 块大小（size） - 8 bytes 累加</p><p>Fast bins 包含大小为 8 bytes 累加的块的 binlist 。即，第一个 fast bin(index 0) 包含 16 bytes 块的binlist，第二个 fast bin (index 1)包含 24 bytes 以此类推……（译者注：binlist 是 bin 的一个链表） 在一个独有的 fast bin 内的块大小是一样的。</p><p>在 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1778">malloc 初始化</a> 过程中，最大的 fast bin 的大小<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1795">设置</a>为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L794">64</a> (!80) bytes。因此通过块的默认大小设置为 16 到 64 就可以将其划分为 fast chunks 了。 不能合并 - 空闲的两个块可以相邻，但不能合并为一个空闲块。不能合并导致产生外存储碎片，但它可以大大提速！！ malloc(fast chunk) –</p><p>初始状态 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1765">fast bin</a> 的最大容积 以及 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1680">fast bin 目录</a>是空的，因此即使用户请求一个 fast chunk，服务它的是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3367">small bin code</a> 而不是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3330">fast bin code</a>。</p><p>之后当它不再为空时， <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3332">计算</a> fast bin 目录以检索其对应的 binlist。</p><p>来自以上被检索 binlist 的第一个块会被<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3341">移除</a>并<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3355">返回</a>给用户。</p><p>free(fast chunk) –</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3887">计算</a> Fast bin 目录以检索其对应的 binlist。 该空闲块被添加到以上检索 binlist 的最前位置。</p><p><a href="http://static.wooyun.org//drops/20150614/2015061423321545199D2D7F63D-CE36-42B8-A1D7-20CF95227669.png">enter link description here</a></p><p>Unsorted Bin: 当小或者大的块被释放而非把他们添加到各自 bin 里时，它会被添加到 unsorted bin 里。 该途径给了 "glibc malloc" 第二个机会再次利用最近释放的块。因此内存分配以及回收的速度都会有所提升（因为 unsorted bin）由于排除了用于查找合适容器的时间。</p><p>Number of bins – 1</p><p>Unsorted bin 包含空闲块的一个循环双向链表（也称为 binlist 容器列表）。 块的大小 - 没有大小限制，任何大小的块都属于此容器。</p><p><img alt="enter image description here" img-src="7534a2571592703174af70292274912ce9f294d2.jpg"></p><p>Small Bin: 小于 512 bytes 的块叫做 small chunk。 支持 small chunks 的容器叫做 small bins。 Small bins 在内存分配和回收时比 large bins 快（比 fast bins 慢）。</p><p>Number of bins – 62</p><ul><li>每个 small bin 含有空闲块的一个循环双向链表（也称为 binlist 容器列表）。在 small bins 里， 块从列表中间断开链接后，便使用双向链表。在这里列表头部实现添加并在列表的后部删除 - FIFO（先进先出）。</li></ul><p>Chunk Size – 8 bytes 递增</p><ul><li>Small bin 包含一个块大小为 8 bytes 递增（即，第一个 Small Bin（Bin 2）包含块大小为 16 bytes 的binlist，第一个 Small Bin (Bin 3)包含块大小为 24 bytes 的 binlist 以此类推）的 binlist。</li><li>一个 small bin 里的块大小是一样的，因此不需要分类。</li></ul><p>合并 - 空闲的两个块不能毗邻，会被<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3964">合并</a>为一个空闲块。合并消除了外存储碎片但是运行大大减速！！</p><p>malloc(small chunk) – * 初始状态下所有 small bins 都是 NULL，因此即使用户请求一个 small chunk，提供服务的是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3432">unsorted bin code</a> 而不是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3367">small bin code</a>。 * 在第一次调用 malloc 期间，在 malloc_state 里发现的 small bin 和 large bin 数据结构（<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1689">bins 容器</a>）被初始化（即，<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3372">bins 会指向它自己</a>表示他们是空的）。 * 之后当 small bin 处于非空状态时，其对应 binlist 中的最后一个块会被<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3372">移除</a>并<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3393">返回</a>给用户。 free(small chunk) – * 释放块时，查看其前一个或下一个块是否空闲，如果空闲就合并（即，从他们各自的链表里解除块的链接，然后在 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3995">unsorted bin</a> 的链表最开端添加新的统一的块）。</p><p>Large Bin: 大小大于等于 512 bytes 的块称为 large chunk。支持 large chunks 的 bins 叫作 large bins。Large bins 在内存分配和回收中比 small bins 要慢。</p><p>Number of bins – 63 每个 large bin 包含空闲块的一个循环双向链表（也称为 binlist ）。在 large bins 里，块在任何位置（前端或中间或尾部）被添加或移除后，开始使用双向链表。 这 63 bins 以外：</p><ul><li>32 bins 包含大小为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1478">64 bytes</a> 累加的块的 binlist。即，第一个 large bin（Bin 65）包含大小为 512 bytes 到 568 bytes 的块的 binlist，第二个 large bin（Bin 66）包含大小为 576 到 632 bytes 的块的 binlist 以此类推……</li><li>16 bins 包含着大小为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1479">512 bytes</a> 累加的块的 binlist。</li><li>8 bins 包含着大小为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1480">4096 bytes</a> 累加的块的 binlist。</li><li>4 bins 包含大小为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1481">32768 bytes</a> 累加的块的 binlist。</li><li>2 bins 包含大小为 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1482">262144 bytes</a> 累加的块的 binlist。</li><li>1 bin 包含一个拥有<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1483">剩余</a>容量大小的块。</li></ul><p>不同于 small bin，在 large bin 里的块大小是不同的。因此他们以降序排列。最大的块在最前端而最小的块被排到 binlist 的末尾。</p><p>合并 - 空闲的两个块不能相邻，而是<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3964">合并</a>为一个空闲块。</p><p>malloc(large chunk) –</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3571">初始化状态</a>下所有 large bins 都是 NULL，因此即使用户请求一个 large chunk，是<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3639">下一个最大的 bin code</a> 提供服务，而不是 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3566">large bin code</a>。</p><p>同样在第一次调用 malloc 期间，在 malloc_state 里发现的 small bin 和 large bin 数据结构（bins）<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3411">被初始化</a>。即，bins 会指向它自己表示它们是空的。</p><p>此后当 large bin 不为空时，如果<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3571">最大块的大小（在它的容器列表里）比用户请求的大小还大</a>， binlist 会从<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3575">尾部到头部</a>，来查找一个大小接近或等于用户请求大小的合适的块。一旦找到，这个块将分裂为两个块。</p><p>用户块（拥有用户请求的大小）-返回给用户。</p><p>剩余块（拥有剩余容量的大小）-添加到 unsorted bin。</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3571">如果最大块的大小（在它的容器列表里）小于用户请求的大小</a>，那么尽量使用下一个最大（非空）bin 为用户的请求提供服务。下一个最大的 bin code 会<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3648">扫描</a>容器映射来查找下一个最大的非空 bin ，如果<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3682">找到</a>任何一个，从 binlist 里检索到了一个合适的块，<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3687">分裂</a>并返回给用户。如果没找到，尝试使用Top Chunk为用户请求提供服务。</p><p>free(large chunk) – 它的程序与空闲（small chunk）类似。</p><p>Top Chunk: 在一个 arena 顶部边框的块叫做<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L1683">开始块</a>(Top Chunk)。它不属于任何容器。在任一 bin 里，Top Chunk被用于在<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3739">没有空闲块</a>时为用户请求提供服务。</p><p>用户块（拥有用户请求的大小） 剩余块（拥有剩余容量的大小）</p><p><a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3762">剩余块变成新的顶部</a>。如果开始块大小比用户请求的大小要少，开始块使用 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2458">sbrk</a> (main arena) 或 <a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L2390">mmap</a> (thread arena)系统调用来<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3790">扩展</a>。</p><p>最后剩余块：是来自一个小请求的最近一次分裂的剩余。最后剩余块帮助引用地址（即，small chunks 的连续 malloc 请求可能在被分配时结束）彼此间更靠近。</p><p>但是除了在一个 arena 里可利用的的众多块，哪些块有资格成为最后剩余块呢？</p><p>当一个用户请求 small chunk 时, 不能通过 small bin 以及 unsorted bin 提供服务，这时会扫描 bin 映射会以查找下一个最大（非空）bin 。就像之前所说，一旦找到下一个最大（非空）bin ，它将分裂成两块，用户块返回给用户，同时剩余块添加到 unsorted bin。此外，它会变成<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3721">新的最后剩余块</a>。</p><p>引用地址是怎样归档的？</p><p>现在当<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3449">用户随后请求的一个 small chunk 并且最后剩余块是 unsorted bin 里唯一的块</a>时，最后剩余块会<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3455">分裂</a>成两块，用户块会返回给用户同时剩余的那个块会添加到 unsorted bin。此外，<a href="https://github.com/sploitfun/lsploits/blob/master/glibc/malloc/malloc.c#L3458">它还会成为新的一个最后剩余块</a>。如此后续的内存分配会相继结束。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/7326" rel="bookmark" id="re1">堆溢出的unlink利用方法</a></li><li><a href="http://drops.wooyun.org/papers/4780" rel="bookmark" id="re2">CVE 2015-0235: GNU glibc gethostbyname 缓冲区溢出漏洞</a></li><li><a href="http://drops.wooyun.org/tips/1621" rel="bookmark" id="re3">堆溢出学习笔记</a></li><li><a href="http://drops.wooyun.org/tips/7275" rel="bookmark" id="re4">Exploit开发系列教程-Heap</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">muhe</span> <span class="reply-time">2015-11-19 22:25:58</span></div><p></p><p>图都没抠全了... 还是直接看原文吧-。-</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Woooo</span> <span class="reply-time">2015-06-15 20:50:56</span></div><p></p><p>翻译水平有待加强。。。</p><p></p></div></div></div></div></div></main>

@@ -1,0 +1,291 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">IORegistryIterator竞争条件漏洞分析与利用</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          360NirvanTeam</a>
+        <span class="bull">·</span>
+        <time title="2016/03/09 11:07" ui-time="" datetime="2016/03/09 11:07" class="published ng-binding ng-isolate-scope">2016/03/09 11:07</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><p><strong>Author：<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c0b3a8b2a5ab9fb7bab780f3f6f08ea9b2b6a1ae94a5a1ad">[email&#160;protected]</a></strong></p>
+
+<h1>0x00 简介</h1>
+
+<hr>
+
+<p>CVE-2015-7084是由于IORegistryIterator没有考虑用户态多线程同时调用的情况，引起Race Condition，可导致任意代码执行。漏洞存在于XNU版本3248.20.55之前的内核上，即Mac OS X 10.11.2、iOS 9.2、watchOS 2.1、tvOS 9.1之前的系统版本上。官方修复公告<a href="https://support.apple.com/en-us/HT205637">https://support.apple.com/en-us/HT205637</a>。</p>
+
+<!--more-->
+
+<h1>0x01 漏洞背景</h1>
+
+<hr>
+
+<p>IORegistryIterator是用于XNU内核中用于遍历访问IO Registry Entry的一个类。在XNU版本3248.20.55之前的内核上，即Mac OS X 10.11.2、iOS 9.2、watchOS 2.1、tvOS 9.1之前的系统版本上，在操作IORegistryIterator时缺少锁机制，用户态进程通过多线程调用引起Race Condition，最终可实现任意代码执行。这个漏洞是由Google Project Zero的Ian Beer报告，CVE编号CVE-2015-7084。</p>
+
+<h1>0x02 漏洞分析</h1>
+
+<hr>
+
+<p>Ian Beer在<a href="https://code.google.com/p/google-security-research/issues/detail?id=598">https://code.google.com/p/google-security-research/issues/detail?id=598</a>中给出了漏洞的说明，以及一份导致Double Free的PoC代码。</p>
+
+<p><code>is_io_registry_iterator_exit_entry</code>是IORegistryIteratorExitEntry对应的内核接口，会调用IORegistryIterator::exitEntry函数。</p>
+
+<pre><code>#!cpp
+/* Routine io_registry_iterator_exit */
+kern_return_t is_io_registry_iterator_exit_entry(
+    io_object_t iterator )
+{
+    bool    didIt;
+    CHECK( IORegistryIterator, iterator, iter );
+    didIt = iter-&gt;exitEntry();
+    return( didIt ? kIOReturnSuccess : kIOReturnNoDevice );
+}
+</code></pre>
+
+<p>.</p>
+
+<pre><code>#!cpp
+bool IORegistryIterator::exitEntry( void )
+{
+    IORegCursor *   gone;
+…
+
+    if( where != &amp;start) {
+      gone = where;   // Race Condition
+        where = gone-&gt;next;
+        IOFree( gone, sizeof(IORegCursor));  // gone可能被释放两次
+        return( true);
+    } else
+        return( false);
+…
+}
+</code></pre>
+
+<p>但是由于缺乏锁的保护，通过多线程调用IORegistryIteratorExitEntry，导致gone指向的内存区域被释放两次，引起崩溃。示意图如下：</p>
+
+<p><img alt="p1" img-src="8d917a9cedb3adcbb51fb1989fd2432f8e9c96f5.jpg"></p>
+
+<h1>0x03 漏洞利用</h1>
+
+<hr>
+
+<p>由于Double Free不易利用，Pangu Team在其博客文章<a href="http://blog.pangu.io/race_condition_bug_92/">http://blog.pangu.io/race&#95;condition&#95;bug_92/</a>中提出了另外一种思路，可以稳定地利用Race Condition实现任意代码执行。下面将对这种思路进行具体的分析，在已知Kernel Slide的情况下，在Mac OS X 10.11上实现提权。</p>
+
+<h3>1. 攻击流程</h3>
+
+<p>通过观察操作IORegistryIterator的函数enterEntry，发现其包含向单向链表插入节点的操作，如下：</p>
+
+<pre><code>#!cpp
+void IORegistryIterator::enterEntry( const IORegistryPlane * enterPlane )
+{
+    IORegCursor *   prev;
+
+    prev = where;
+    where = (IORegCursor *) IOMalloc( sizeof(IORegCursor));
+    assert( where);
+
+    if( where) {
+        where-&gt;iter = 0;
+        where-&gt;next = prev; //在链表头部插入新的where节点，where-&gt;next指向旧where
+        where-&gt;current = prev-&gt;current;
+        plane = enterPlane;
+    }
+}
+</code></pre>
+
+<p>而IORegistryIterator::exitEntry中，包含移除单向链表头部节点的操作，并且释放移除的节点内存。</p>
+
+<pre><code>#!cpp
+bool IORegistryIterator::exitEntry( void )
+{
+    IORegCursor *   gone;
+…
+
+    if( where != &amp;start) {
+      gone = where;   
+      where = gone-&gt;next; //从链表头部移除当前where节点
+        IOFree( gone, sizeof(IORegCursor)); //释放移除的节点内存区域
+        return( true);
+    } else
+        return( false);
+…
+}
+</code></pre>
+
+<p>在两个线程中分别调用IORegistryIteratorEnterEntry和IORegistryIteratorExitEntry，在特定的执行序列下，可能导致enterEntry在执行where->next = prev;时，prev指向的where区域已经被exitEntry的IOFree释放，就会导致where->next指向被释放的内存。</p>
+
+<p>那么，当第二次调用exitEntry时，就会使得where指向被释放的内存，这块内存通过Heap Spray可以控制其中的内容。</p>
+
+<pre><code>#!cpp
+bool IORegistryIterator::exitEntry( void )
+{
+…
+    if( where != &amp;start) {
+      gone = where; //where-&gt;next已指向被释放的区域
+      where = gone-&gt;next; //where指向被释放的区域
+    }
+…
+}
+</code></pre>
+
+<p>最后，第三次调用exitEntry时，where->iter可控，通过映射用户空间内存iter对象虚表，可实现任意代码执行。</p>
+
+<pre><code>#!cpp
+bool IORegistryIterator::exitEntry( void )
+{
+…
+    if( where-&gt;iter) {  // where-&gt;iter可控
+    where-&gt;iter-&gt;release();  //可通过构造虚表，执行任意代码
+    where-&gt;iter = 0;
+    }
+…
+}
+</code></pre>
+
+<p>攻击流程示意图如下：</p>
+
+<p><img alt="p2" img-src="f68a386d6add92701b47ac053210608aa4ad5066.jpg"></p>
+
+<h3>2. Heap Spray</h3>
+
+<p>关于这个漏洞利用的关键是要控制where指向的被释放的内存区域的内容。where是IORegCursor指针，由IOMalloc申请，位于kalloc.32 zone中。</p>
+
+<pre><code>#!cpp
+struct IORegCursor {
+    IORegCursor          *  next;
+    IORegistryEntry      *  current;
+    OSIterator       *  iter;
+};
+</code></pre>
+
+<p>当第二次exitEntry被调用后，where指向的内存区域在kalloc.32的freelist链表中。我们可以通过heap spray kalloc.32，使得位于freelist中的内存重新被填充为我们控制的数据，实现控制where->iter的目的。heap spray的方法就是通过结合<code>io_service_open_extended</code>以及OSData，Pangu Team在其POC 2015的议题《Hacking from iOS8 to iOS9》中提到了这种heap spray的方法。</p>
+
+<p><img alt="p3" img-src="0348d0cbf5d4a315b7fe5680f7893d233da1d223.jpg"></p>
+
+<p>通过构造特定的XML数据，包含data标签，那么通过<code>io_service_open_extended</code>创建任意UserClient，在OSUnserializeXML中反序列化data数据时，就可以通过OSData占用内存，实现任意zone的heap spray。</p>
+
+<pre><code>#!cpp
+object_t *
+buildData(parser_state_t *state, object_t *o)
+{
+    OSData *data;
+
+    if (o-&gt;size) {
+        data = OSData::withBytes(o-&gt;data, o-&gt;size);
+    } else {
+        data = OSData::withCapacity(0);
+    }
+    if (o-&gt;idref &gt;= 0) rememberObject(state, o-&gt;idref, data);
+
+    if (o-&gt;size) free(o-&gt;data);
+    o-&gt;data = 0;
+    o-&gt;object = data;
+    return o;
+};
+</code></pre>
+
+<h3>3. 任意代码执行</h3>
+
+<p>在用户空间映射两块内存空间，分别放置构造的iter对象以及构造的虚表。将XML中的data的第三个QWORD字段设置为构造的iter对象指针，并进行heap spray。通过heap spray成功控制where指向的内存区域内容后，where->iter可控，最终调用where->iter->release()时就会调用我们构造的虚表中的函数，实现任意代码执行。在已知Kernel Slide的情况下，在10.10.5以及10.11上都成功实现提权，10.10.5如下：</p>
+
+<p><img alt="p4" img-src="235ac4a646369032d5a6c759f28930a752bba08c.jpg"></p>
+
+<h1>0x04 官方修复</h1>
+
+<hr>
+
+<p>在10.11.2的XNU源码中，苹果官方进行了修复。新添加了一个IOUserIterator,用于封装IORegistryIterator，对reset操作等加锁，也在enterEntry和exitEntry时加锁，防止多线程调用引起的Race Condition。</p>
+
+<pre><code>#!cpp
+/* Routine io_registry_iterator_enter */
+kern_return_t is_io_registry_iterator_enter_entry(
+    io_object_t iterator )
+{
+    CHECKLOCKED( IORegistryIterator, iterator, iter );
+
+    IOLockLock(oIter-&gt;lock);
+    iter-&gt;enterEntry();
+    IOLockUnlock(oIter-&gt;lock);
+
+    return( kIOReturnSuccess );
+}
+
+/* Routine io_registry_iterator_exit */
+kern_return_t is_io_registry_iterator_exit_entry(
+    io_object_t iterator )
+{
+    bool    didIt;
+
+    CHECKLOCKED( IORegistryIterator, iterator, iter );
+
+    IOLockLock(oIter-&gt;lock);
+    didIt = iter-&gt;exitEntry();
+    IOLockUnlock(oIter-&gt;lock);
+
+    return( didIt ? kIOReturnSuccess : kIOReturnNoDevice );
+}
+</code></pre>
+
+<h1>0x05 References</h1>
+
+<hr>
+
+<ol>
+<li><a href="https://code.google.com/p/google-security-research/issues/detail?id=598">https://code.google.com/p/google-security-research/issues/detail?id=598</a></li>
+<li><a href="http://blog.pangu.io/race_condition_bug_92/">http://blog.pangu.io/race&#95;condition&#95;bug_92/</a></li>
+<li><a href="http://blog.pangu.io/wp-content/uploads/2015/11/POC2015_RUXCON2015.pdf">http://blog.pangu.io/wp-content/uploads/2015/11/POC2015_RUXCON2015.pdf</a></li>
+</ol>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/papers/596" rel="bookmark" id="re1">WordPress < 3.6.1 PHP 对象注入漏洞</a></li>
+			<li><a href="http://drops.wooyun.org/papers/2803" rel="bookmark" id="re2">第三方接口 黑客怎么爱你都不嫌多</a></li>
+			<li><a href="http://drops.wooyun.org/tips/3939" rel="bookmark" id="re3">Mongodb注入攻击</a></li>
+			<li><a href="http://drops.wooyun.org/papers/66" rel="bookmark" id="re4">Python Pickle反序列化带来的安全问题</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

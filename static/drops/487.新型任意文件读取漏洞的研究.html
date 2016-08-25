@@ -1,0 +1,125 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">新型任意文件读取漏洞的研究</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">phith0n</a> <span class="bull">·</span> <time title="2015/03/04 9:21" ui-time="" datetime="2015/03/04 9:21" class="published ng-binding ng-isolate-scope">2015/03/04 9:21</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>早前发现boooom在乌云上发了很多个任意文件读取的漏洞，都是形如</p><pre><code>http://target/../../../../etc/passwd
+</code></pre><p>这样。当时感觉很新奇，因为正常情况下，通常的服务器中间件是不允许直接读取web目录以外的文件的，为什么这样的漏洞却出现在了很多案例中。</p><p>后来在lijiejie的文章给出了解释：<a href="http://www.lijiejie.com/python-django-directory-traversal/">http://www.lijiejie.com/python-django-directory-traversal/</a> ，原来是python这种新型web开发方式造成的问题。然后翻了下我自己以前用web.py、tornado开发的一些应用，果然也存在这样的问题。</p><p>这个问题就像lijiejie说的那样，一方面是低版本django框架自身的一些漏洞，另一方面，就是开发者自身的疏忽造成的问题。</p><p>这不得不提到现今开发框架与以前的一些区别。不管是python还是node、ruby的框架，都是一个可以自定义URL分配的框架，不再是像php或asp中那样根据目录结构来请求文件。所有的请求由用户定义规则，而框架内核部分解析、配发、执行。比如我们请求的“/login/”这个URL，很可能是被配发给一个LoginHandler类去处理了，而不是请求到<code>/login/index.php</code>上。</p><p>这时候造成了一个问题，如果我们就是想去请求一个真实的文件，比如css、js等静态文件，怎么办？</p><p>一般也会有一些区分，一些要求比较高的应用，多是采用了CDN缓存或负载均衡，nginx作为负载分配的处理器。当发现我们请求的url是一个静态文件的话，就直接由CDN或nginx返回相应文件。如下图：</p><p><img alt="enter image description here" img-src="a12bb4d23b49f9ab0f72123bd40d177818ca650a.jpg"></p><p>那么这之中也存在这一个定义问题，什么请求才说明是要请求“静态文件”？只要以.css、.js结尾就可以吗？当然这也是一种方法，但一般应用会定义一个目录，如/static/，所有请求匹配“<code>/static/(.*)</code>”的会被认为是静态文件，所以开发者一般将静态文件放在这个目录下，我们用户就能够直接请求到他了。</p><p>如果不存在CDN、nginx等平台，其实类似web.py、tornado这样的框架自己也定义了静态目录，在web.py下，默认的静态目录都是/static/，也就是在这个目录下的请求是不会经过URLPath的。如web.py文档中说到的：</p><p><a href="http://webpy.org/cookbook/staticfiles.zh-cn">http://webpy.org/cookbook/staticfiles.zh-cn</a></p><p>这时候，我就会有这个思考，框架内部如果是以/static/(.*)来匹配请求的话，如果我们求</p><pre><code>/static/../../../../../etc/passwd
+</code></pre><p>是不是就可以读取到<code>/etcs/passwd</code>文件？</p><h1>0x01 web.py下可能的任意文件读取漏洞研究</h1><hr><p>我们先来看看web.py是怎样处理这种请求的：</p><pre><code>/static/../../../../../etc/passwd
+</code></pre><p>我们在web/httpserver.py中可以看到这样的代码：</p><pre><code>#!python
+def do_GET(self):
+    if self.path.startswith('/static/'):
+        SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
+    else:
+        self.run_wsgi_app()
+</code></pre><p>当请求以/static/开头的话，就直接交给SimpleHTTPServer处理了。SimpleHTTPServer是python自带的一个简单的HTTP Server，我们在任意一个目录下执行</p><pre><code>python -m SimpleHTTPServer
+</code></pre><p>都会启动一个web服务器，可以直接通过HTTP协议访问目录下的文件。</p><p>web.py的Server其实就是对SimpleHTTPServer的一个继承与重写，这里它简单的把这个请求交给父类SimpleHTTPServer处理，而这个HTTP Server当然不会允许请求到web目录（也就是./static/）以外的地方去，所以得到的回复是404：</p><p><img alt="enter image description here" img-src="a45e871dd57c7c4c585f8e07f4c8e2eb32e2b934.jpg"></p><p>框架本身保证了静态文件不会造成任意文件读取。但复杂的逻辑关系应用中，开发者往往不满足于/static/一种静态目录。比如，网站允许用户上传、下载文件，可能我们会新建一个uploadfile目录，按日期、时间专门保存上传的文件。</p><p>那么，开发者为了让<code>/uploadfile</code>目录下的文件也能被直接访问，往往会这样写：</p><pre><code>#!python
+#!/usr/bin/python
+import web
+
+urls = (
+    '/uploadfile/(.*)', 'download',
+    '/', 'hello',
+)
+app = web.application(urls, globals())
+
+class hello:        
+    def GET(self, name):
+        if not name: 
+            name = 'World'
+        return 'Hello, ' + name + '!'
+
+class download:
+    def GET(self, filepath):
+        try:
+            with open("./uploadfile/%s" % filepath, "rb") as f:
+                content = f.read()
+            return content
+        except:
+            return web.notfound("Sorry, the file you were looking for was not found.")
+
+if __name__ == "__main__":
+    app.run()
+</code></pre><p>有个download类专门解析这类请求，直接在GET方法中读取文件，并作为response写入HTTP数据包。</p><p>我们请求一个正常的文件/uploadfile/01.txt，是可以得到它的内容的：</p><p><img alt="enter image description here" img-src="17c0b0096145f449cdb40844375e61d2d853d796.jpg"></p><p>但我们请求一个非uploadfile目录下的文件，却发现也能读取，导致了一个任意文件读取漏洞：</p><p><img alt="enter image description here" img-src="442f83247065abcb70466c917a57d92ccc5c591b.jpg"></p><p>这就是由于开发者的失误，并没有检查我们传入的path是否合法而导致，与框架无关。</p><h1>0x02 Tornado下可能的任意文件读取漏洞研究</h1><hr><p>tornado是一个全异步的web框架，它允许我们在配置中定义静态目录static_path。在tornado中，专门给出了一个方法来验证我们的请求是否在允许的目录内：</p><pre><code>#!python
+def validate_absolute_path(self, root, absolute_path):
+    """Validate and return the absolute path.
+
+    ``root`` is the configured path for the `StaticFileHandler`,
+    and ``path`` is the result of `get_absolute_path`
+
+    This is an instance method called during request processing,
+    so it may raise `HTTPError` or use methods like
+    `RequestHandler.redirect` (return None after redirecting to
+    halt further processing).  This is where 404 errors for missing files
+    are generated.
+
+    This method may modify the path before returning it, but note that
+    any such modifications will not be understood by `make_static_url`.
+
+    In instance methods, this method's result is available as
+    ``self.absolute_path``.
+
+    .. versionadded:: 3.1
+    """
+    root = os.path.abspath(root)
+    # os.path.abspath strips a trailing /
+    # it needs to be temporarily added back for requests to root/
+    if not (absolute_path + os.path.sep).startswith(root):
+        raise HTTPError(403, "%s is not in root static directory",
+                        self.path)
+    if (os.path.isdir(absolute_path) and
+            self.default_filename is not None):
+        # need to look at the request.path here for when path is empty
+        # but there is some prefix to the path that was already
+        # trimmed by the routing
+        if not self.request.path.endswith("/"):
+            self.redirect(self.request.path + "/", permanent=True)
+            return
+        absolute_path = os.path.join(absolute_path, self.default_filename)
+    if not os.path.exists(absolute_path):
+        raise HTTPError(404)
+    if not os.path.isfile(absolute_path):
+        raise HTTPError(403, "%s is not a file", self.path)
+    return absolute_path
+</code></pre><p>这样，一旦请求不在我们定义的静态目录下，就会抛出“is not in root static directory”错误：</p><p><img alt="enter image description here" img-src="eae7b2c6a9189e6691b48a5c69937549cb68c508.jpg"></p><p>那么如果tornado中，也需要定义一个"<code>/uploadfile/</code>"作为用户上传目录，那么我们怎么做？</p><p>文档中也提到了，我们只需要自定义一个URLPath即可，tornado内部有专门处理静态文件的控制器web.StaticFileHandler：</p><pre><code>#!python
+application = web.Application([
+
+    (r"/uploadfile/(.*)", web.StaticFileHandler, {"path": "/var/www"}),
+
+])
+</code></pre><p>就算不考虑安全问题，作为一个异步的框架，如果我们还用同步的read、write这些IO函数自己去处理静态文件，也是不可取的。</p><p>不过，在后面的研究中，我也发现了tornado的处理方式并不算完美，更多详情可以等这个洞公开后查看：</p><p><a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-098978">WooYun: Python开源框架Tornado某缺陷可能造成文件读取漏洞</a></p><h1>0x03 Django中的问题</h1><hr><p>Django低版本自身存在的漏洞导致的任意文件读取，实际上就是犯了我之前说的静态文件未检查的问题，如这个09年的BUG：</p><p><a href="https://bugzilla.redhat.com/show_bug.cgi?id=CVE-2009-2659">https://bugzilla.redhat.com/show_bug.cgi?id=CVE-2009-2659</a></p><p><img alt="enter image description here" img-src="e2461018993dcafe0b988784eb6bacd51d116490.jpg"></p><p>正如我在web.py中说到的，如果django也单纯使用open、read来读取文件，而不检查PATH的合法性，同样能够造出任意文件读取。</p><p>比如我们django的view如此写：</p><pre><code>#!python
+from django.shortcuts import render
+from django.http import HttpResponse
+
+# Create your views here.
+
+def index(request, path):
+    with open(path, "rb") as f:
+        content = f.read()
+    return HttpResponse(content)
+</code></pre><p>没有验证path的合法性，依旧可以出现任意文件读取的现象：</p><p><img alt="enter image description here" img-src="2ce864b560096a93627e3cdebbdded673da59831.jpg"></p><p>如上图，直接读取了sqlite数据库内容，拿下管理员账号密码。</p><p>那么我们怎么在这样的应用中防御任意文件读取？我们简单修改django的view防御这个漏洞：</p><pre><code>#!python
+from django.shortcuts import render
+from django.http import HttpResponse
+from django.http import Http404
+import os
+
+# Create your views here.
+
+def index(request, path):
+    static = "uploadfile"
+    root = os.path.join(os.getcwd(), static) + os.path.sep
+    path = os.path.abspath(root + path)
+    if not (path).startswith(root):
+        raise Http404
+    else:
+        with open(path, "rb") as f:
+            content = f.read()
+        return HttpResponse(content)
+</code></pre><p>其实有些框架都有自己检查静态文件的方式，django自身应该也有的。像web.py这样的轻型框架没有自带函数检查的情况下，可以考虑用我上面写的这个方法来剔除不合法的静态文件路径。</p><h1>0x04 PHP等语言会不会出现这个问题？</h1><hr><p>这个问题其实是有思考价值的。</p><p>最开始我就提到了，现代的python/node/ruby等web开发框架与老式的php、asp等语言的区别，也是造成这个漏洞的原因之一就是因为URL的分配导致静态文件不能被直接访问到，所以需要自定义静态文件的访问方式。但一旦访问参数未检查，就造成任意文件读取问题。</p><p>但传统php应用就是一个以目录形式访问的，静态文件访问应该不会经过php的，这确实是一个很大的区别。</p><p>先不论我们的请求会不会经过php，看到zblog最新版中一个实际的案例。</p><pre><code>/zb_system/function/c_system_event.php
+</code></pre><p>大概415行：</p><pre><code>#!php
+if (isset($_SERVER['SERVER_SOFTWARE']) &amp;&amp; (strpos($_SERVER['SERVER_SOFTWARE'], 'Microsoft-IIS') !== false) &amp;&amp; (isset($_GET['rewrite']) == true)){
+    //iis+httpd.ini下如果存在真实文件
+    $realurl = $zbp-&gt;path . urldecode($url);
+    if(is_readable($realurl)&amp;&amp;is_file($realurl)){
+        die(file_get_contents($realurl));
+    }
+    unset($realurl);
+}
+</code></pre><p>这里判断了</p><pre><code>$_SERVER['SERVER_SOFTWARE']
+</code></pre><p>是否包含Microsoft-IIS，当服务器中间件是IIS，而且</p><pre><code>$_GET['rewrite']
+</code></pre><p>的话，就进入这个if语句。再判断$url指向的文件是否存在，存在就把它使用<code>file_get_contents</code>读取并显示出来。</p><p>实际上这段代码所做的工作和我们之前看到的python代码是一样的。为什么php也需要这样的工作，我们url请求的文件不应该就直接由webserver返回给用户了吗？</p><p>实际上，这里开发者也考虑了url重写造成的问题。zblog重写的规则是将所有请求都指向index.php去处理，最后由index.php去处理，有可能我们的静态文件就被rewrite到index.php去了，这里的工作就是把被重写到php里的这个静态文件直接显示出来。</p><p>可惜我还是才疏学浅，不知道怎么写rewrite规则才能让静态文件请求被重写到index.php里，所以也做不到任意文件读取了。</p><p>但我们这里很明显的可以发现，zblog的开发者也没有检查这个$url是否在网站目录内，或是否在静态文件目录内，也是直接读取显示了。导致我们请求<a href="http://10.211.55.3/zblog/index.php?action=&amp;rewrite=1">http://10.211.55.3/zblog/index.php?action=&amp;rewrite=1</a>是可以读取index.php的源码的（因为我没有IIS环境，我手工将SERVER_SOFTWARE改成IIS了~）：</p><p><img alt="enter image description here" img-src="d5e7c997cd2a2469c2668cee3a156080b0fcaaae.jpg"></p><p>所以，传统PHP应用下是否可能存在这样的安全漏洞，这个问题还是有待继续研究的。理论上，我们如果写出一个这样的rewrite规则：将所有请求都交给index.php处理。那么，index.php的功能实际上就和之前的python框架主文件功能类似了。</p><h1>0x05 结语</h1><hr><p>最后，自己也只是浅显得研究和讨论了几种python框架、php某个特殊情况的漏洞，但现代的开发技术，包括企业级的一些环境我并不熟悉也没怎么接触过，所以有什么欠考虑和不完善的地方，也需要各位去补充与纠正。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/2016012414014966dd256dd9219030aec2a4c8fbe00433.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/web/8528" rel="bookmark" id="re1">从django的SECRET_KEY到代码执行</a></li><li><a href="http://drops.wooyun.org/web/7490" rel="bookmark" id="re2">python 安全编码&amp;代码审计</a></li><li><a href="http://drops.wooyun.org/papers/501" rel="bookmark" id="re3">CVE-2012-0053详解</a></li><li><a href="http://drops.wooyun.org/tips/2591" rel="bookmark" id="re4">Python教程WEB安全篇</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">est</span> <span class="reply-time">2016-02-24 16:33:37</span></div><p></p><p>这问题一般只影响开发服务器。生产服务器一般都是nginx来rewrite静态文件。</p><p>当然，黑阔们找到开发服务器也不是什么难事。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑吃黑</span> <span class="reply-time">2015-07-16 23:50:56</span></div><p></p><p>感谢分享</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xe_tko</span> <span class="reply-time">2015-05-16 16:54:37</span></div><p></p><p>好文，感谢作者的分享精神，拜读了作者的文章，然后做了实验，发现一个小问题</p><p>urls = (<br>&#039;/uploadfile/(.*)&#039;, &#039;download&#039;,<br>&#039;/&#039;, &#039;hello&#039;,<br>)<br>是不是应该更改为：<br>urls = (<br>&#039;/uploadfile/(.*)&#039;, &#039;download&#039;,<br>&#039;/(.*)&#039;, &#039;hello&#039;,<br>)</p><p>作者确认下呗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小彧</span> <span class="reply-time">2015-04-02 11:26:49</span></div><p></p><p>分析的很详细。<br>事实上，django从某些版本开始就已经不推荐在生产环境中由django自己处理static files了；django框架本身设计的没错，这种类似的漏洞也都是很多年前的版本了，之所以会出现这样的漏洞，原因大都是开发者水平太菜。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狂的dabing</span> <span class="reply-time">2015-03-25 16:24:04</span></div><p></p><p>如果没有前面两句，就会把所有的请求都解析到index.php上，这种情况要么是配置错了，要么是有特殊需求。。。这个时候如果不检查请求路径是否合法，确实会出现人意文件读取的问题。<br>给出一个实例：sae搜yii-sae这个框架。<br>由于特殊需求index.php接管了所有请求，然后就悲剧了，所有使用这个改造过的框架版本全部中招。13年我反馈过了，作者只改了自己网站的，然后就没有然后了。。。。<br>ps 发个留言太费劲了。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">疯狂的dabing</span> <span class="reply-time">2015-03-25 16:17:35</span></div><p></p><p>0x04 php会不会出现这个问题呢？<br>单入口的程序基本都会做url rewirte。以apache为例，在.htaccess上通常有这么几句配置：<br>RewriteCond %{REQUEST_FILENAME} !-f<br>RewriteCond %{REQUEST_FILENAME} !-d<br>RewriteRule . index.php<br>如果请求的文件存在，就直接访问文件；如果请求的文件夹存在，就直接访问文件夹；都不存在则重写到index.php。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">boooooom</span> <span class="reply-time">2015-03-08 16:46:17</span></div><p></p><p>不错的，感谢这个小伙伴的分析，说实话我还真没有仔细去分析每个漏洞的原因，只是去扫了一下。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">牧马人</span> <span class="reply-time">2015-03-06 19:33:19</span></div><p></p><p>from werkzeug import secure_filename</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2015-03-05 21:17:49</span></div><p></p><p>好久不见爱慕锅</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2015-03-05 13:23:15</span></div><p></p><p>这风格还是rails带起来的..</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">light</span> <span class="reply-time">2015-03-05 09:47:00</span></div><p></p><p>搬个小板凳坐下来学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2015-03-04 17:30:24</span></div><p></p><p>ph牛好棒</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">3xpl0it</span> <span class="reply-time">2015-03-04 15:54:58</span></div><p></p><p>好文</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Thorns</span> <span class="reply-time">2015-03-04 12:07:07</span></div><p></p><p>好文。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ModNar</span> <span class="reply-time">2015-03-04 10:11:23</span></div><p></p><p>楼主的代码截图为啥都没显示出来呢，其实这种问题我看了下真不少，node.js，golang等新兴语言的框架都潜在这种静态文件处理未过滤的问题。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">horseluke</span> <span class="reply-time">2015-03-04 09:40:27</span></div><p></p><p>好文。</p><p>其实确切点来讲，应该是URL Routing规则定义和处理问题。现在许多框架都支持，如果稍不留神会出错。</p><p>顺带讲讲，URL Routing和Url Rewrite有点相似，不同的是URL Routing将HTTP处理过程下移到web程序来完成，相对来讲对开发者更具灵活度；Url Rewrite则在Web服务器层面处理，相对高效。不过lua之类内嵌在Web服务器的脚本，其实可以模糊这两块界线。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sky</span> <span class="reply-time">2015-03-04 09:36:54</span></div><p></p><p>:)</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-03-04 09:31:01</span></div><p></p><p>以前还有个百合网还是世纪家园也是这个问题</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">胡小树</span> <span class="reply-time">2015-03-04 09:27:12</span></div><p></p><p>分析的好详细</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">啊L川</span> <span class="reply-time">2015-03-04 09:25:29</span></div><p></p><p>板凳</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-03-04 09:22:58</span></div><p></p><p>@boooom</p><p></p></div></div></div></div></div></main>

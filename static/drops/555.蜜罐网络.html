@@ -1,0 +1,183 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">蜜罐网络</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">我是壮丁</a> <span class="bull">·</span> <time title="2015/05/07 10:29" ui-time="" datetime="2015/05/07 10:29" class="published ng-binding ng-isolate-scope">2015/05/07 10:29</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 前言</h1><hr><p>From: https://itandsecuritystuffs.wordpress.com/2015/02/03/honeypot-networks/</p><p>PS：测试过程中有的忘记截图了，就直接用的原文章的图片。翻译过程中做了少量的修改，英语好的可以直接看原文。</p><p>这篇文章中，主要讨论蜜罐和蜜罐网络，以及如何使用它们保护真实的系统，我们称之为这个系统为MHN(Modern Honey Network，现代蜜网)，它可以快速部署、使用，也能够快速的从节点收集数据。</p><h1>0x01 什么是蜜罐</h1><hr><p>蜜罐是存在漏洞的，暴露在外网或者内网的一个虚假的机器,具有以下这些特征：</p><p>1.其中重要的一点机器是虚假的，攻击者需要花费时间攻破。在这段时间内，系统管理员能够锁定攻击者同时保护真正的机器。</p><p>2.能够学习攻击者针对该服务的攻击技巧和利用代码。</p><p>3.一些蜜罐能够捕获恶意软件，利用代码等等，能够捕获攻击者的0day,同时可以帮助逆向工程师通过分析捕获的恶意软件来提高自身系统的安全性</p><p>4.在内网中部署的蜜罐可以帮助你发现内网中其他机器可能存在的漏洞。</p><p>蜜罐是把双刃剑，如果不能正确的使用，有可能遭受更多的攻击，模拟服务的软件存在问题，也会产生新的漏洞。</p><p>蜜罐分为几下几类：</p><p>１．低交互式：低交互式模拟常规的服务，服务存在漏洞，但是模拟的这些漏洞无法被利用，开发和维护这种类型的蜜罐比较容易。</p><p>２．高交互式：高交互式使用的是真实的服务，有助于发现服务存在的新漏洞，同时能够记录所有的攻击，但是，部署困难、维护成本高，一旦服务上存在的漏洞被利用，容易引发新的安全问题。</p><p>３．粘性蜜罐(Tarpits)：这种类型的蜜罐，使用新的IP来生成新的虚拟机，模拟存在服务的漏洞，来做诱饵。因此攻击者会花费长时间来攻击，就有足够的时间来处理攻击，同时锁定攻击者。</p><p>还有其他类型的蜜罐，比如专门捕获恶意软件的，数据库漏洞利用程序和垃圾邮件等等。当部署两个或者两个以上蜜罐时可以称之为蜜网。</p><p>网上关于蜜罐的一些定义：</p><p>1.什么是蜜罐：</p><p>http://www.sans.org/security-resources/idfaq/honeypot3.php</p><p>2.蜜网：</p><p>http://www.honeynet.org/</p><p>3.蜜罐项目：</p><p>https://www.projecthoneypot.org/，攻击者的ＩＰ和攻击者的一些数据统计。</p><p>4.蜜罐的wiki：</p><p>http://en.wikipedia.org/wiki/Honeypot_(computing)</p><h1>0x02 现代密网(MHN)</h1><hr><p>MHN是一个开源软件，它简化了蜜罐的部署，同时便于收集和统计蜜罐的数据。用ThreatStream（http://threatstream.github.io/mhn/）来部署，MHN使用开源蜜罐来收集数据，整理后保存在Mongodb中，收集到的信息也可以通过web接口来展示或者通过开发的API访问。</p><p>MHN能够提供多种开源的蜜罐，可以通过web接口来添加他们。一个蜜罐的部署过程很简单，只需要粘贴，复制一些命令就可以完成部署，部署完成后，可以通过开源的协议hpfeeds来收集的信息。</p><p>MHN支持以下蜜罐：</p><p>1.Sort:https://www.snort.org/</p><p>2.Suricata:http://suricata-ids.org/</p><p>3.Dionaea:http://dionaea.carnivore.it/,它是一个低交互式的蜜罐，能够模拟MSSQL, SIP, HTTP, FTP, TFTP等服务 drops中有一篇介绍：http://drops.wooyun.org/papers/4584</p><p>4.Conpot:http://conpot.org/</p><p>5.Kippo:https://github.com/desaster/kippo，它是一个中等交互的蜜罐，能够下载任意文件。 drops中有一篇介绍：http://drops.wooyun.org/papers/4578</p><p>6.Amun:http://amunhoney.sourceforge.net/，它是一个低交互式蜜罐，但是已经从2012年之后不在维护了。</p><p>7.Glastopf：http://glastopf.org/</p><p>8.Wordpot：https://github.com/gbrindisi/wordpot</p><p>9.ShockPot：https://github.com/threatstream/shockpot，模拟的CVE-2014-6271，即破壳漏洞</p><p>10.p0f：https://github.com/p0f/p0f</p><h1>0x03 MHN的硬件要求</h1><hr><p>MHN服务器：</p><pre><code>4 GB Ram
+Dual Core Processor
+40 Gb Drive
+</code></pre><p>蜜罐：</p><pre><code>512 Mb – 1 Gb
+Dual Core CPU
+20 Gb Drive
+</code></pre><p>具体部署时取决以蜜罐所在的位置，在防火墙后面或者在直接暴露在互联网上，被攻击次数不同，消耗的资源肯定也不同。如果只是测试着玩256M的内存就足够了。</p><h1>0x04 MHN的安装</h1><hr><p>因为ThreatStream有部署脚本，所以安装MHN很简单，我们在只安装了OpenSSH的Ubuntu 14.04 LTS (64 bits)上进行测试，安装步骤如下：</p><pre><code>#!bash    
+sudo apt-get update &amp;&amp; sudo apt-get upgrade
+sudo apt-get install git
+cd /opt
+sudo git clone https://github.com/threatstream/mhn
+cd /opt/mhn/scripts
+</code></pre><p>新版本中已经做了修改，安装前可以做一下检查</p><pre><code>#!bash
+sudo vim install_mnemosyne.sh
+</code></pre><p>找到修改CHANNELS，添加shockpot.events 修改成下面的样子</p><pre><code>#!bash
+CHANNELS=’amun.events,conpot.events,thug.events,beeswarm.hive,dionaea.capture,dionaea.connections,thug.files,beeswarn.feeder,cuckoo.analysis,kippo.sessions,glastopf.events,glastopf.files,mwbinary.dionaea.sensorunique,snort.alerts,wordpot.events,p0f.events,suricata.events,shockpot.events’
+
+sudo ./install_hpfeeds.sh
+sudo ./install_mnemosyne.sh 
+sudo ./install_honeymap.sh
+</code></pre><p>安装完成后执行sudo supervisorctl status看到四个服务起来了</p><p><img alt="enter image description here" img-src="8c8c37c77c658b7ec76899a35e0791542e9e9420.jpg"></p><p>机器位于公网，就可以跳过这一步，如果只是放在内网里面，则需要配置mnemosyne的配置文件</p><pre><code>#!bash
+sudo vim /opt/mnemosyne/mnemosyne.cfg
+ignore_rfc1918 = False
+</code></pre><p>允许节点使用私有地址和服务器进行通信</p><p>重启服务</p><pre><code>#!bash
+sudo supervisorctl restart mnemosyne
+</code></pre><p>运行最后一个脚本，对MHN进行配置</p><pre><code>#!bash
+sudo ./install_mhnserver.sh
+
+    ===========================================================
+
+MHN Configuration
+
+===========================================================
+
+Do you wish to run in Debug mode?: y/n n
+
+Superuser email: <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="b6d8d7dbd3f6d3ced7dbc6dad398d5d9db">[email&#160;protected]</a>
+Superuser password: 
+
+Superuser password: (again): 
+
+Server base url [“http://1.2.3.4″]: http://192.168.5.3
+
+Honeymap url [http://1.2.3.4:3000]: http://192.168.5.3:3000
+
+Mail server address [“localhost”]: 
+
+Mail server port [25]: 
+
+Use TLS for email?: y/n y
+
+Use SSL for email?: y/n y
+
+Mail server username [“”]:  
+
+Mail server password [“”]: 
+
+Mail default sender [“”]: 
+
+Path for log file [“mhn.log”]: 
+</code></pre><p>这个过程需要比较长的时间，需要初始化数据库，同时还要插入Snort/Suricata规则，脚本运行结束后，直接访问配置中定义的base url，登录后就可以配置</p><h1>0x06 MHN服务器安装</h1><hr><p>一旦安装了基础的服务，就能够部署蜜罐节点了，通过web来展示相关数据等等，可以根据具体的境况做一些简单的调整。</p><p>例如要非匿名的将收集到得攻击数据回传到ThreatStream，要做以下操作</p><pre><code>#!bash
+cd /opt/mhn/scripts
+sudo ./disable_collector.sh
+</code></pre><p>执行enable_collector.sh可以开启</p><p>如果想修改smtp服务的配置，可以编辑config.py，</p><p>绝对路径</p><pre><code>#!bash
+/opt/mhn/server/config.py 
+cd /opt/mhn/server
+sudo vim config.py 
+sudo supervisorctl restart mhn-uwsgi
+</code></pre><p>尽量不要使用超级管理员来配置，可以从web页面中添加其他的用户，但是所有用户都是超级用户，没有任何区别，当你删除用户的时候，实际上并没有吧该用户删除，只是在数据库中标记为"not active",同时该用户不能再次被使用，除非更改数据库。</p><p>也可以从终端去直接更改用户的密码</p><pre><code>#!bash
+sudo su
+cd /opt/mhn/
+source env/bin/activate
+cd server
+python manual_password_reset.py
+deactivate
+exit
+</code></pre><h1>0x07 排错</h1><hr><p>如果发现服务不正常，你可以使用一些命令和排查一些日志来来判断问题出在哪里，第一个命令就是supervisorctl，可以看到那些进程出问题了，那些在正常的运行</p><pre><code>#!bash    
+supervisorctlv status
+
+#列出所有进程的状态
+supervisorctl　restart [process|all]
+#重启单个或者全部进程
+supervisorctl start [process|all]
+#开始单个进程或者全部进程
+supervisorctl stop [process|all]
+#停止单个进程或者全部进程
+</code></pre><p>如果你发现一个进程的状态为ERROR或者FATAL，就需在 /etc/supervisor/conf.d/找到对应进程的配置文件，查看日志进行分析 https://github.com/threatstream/mhn/wiki/MHN-Troubleshooting-Guide，寻求帮助 遇到的问题：</p><p>1.honeymap在安装的时候报错</p><pre><code>#!bash
+hg clone http://code.google.com/p/go.net/    
+mv go.net/ /opt/honeymap/server/src/code.google.com/p/
+go build
+supervisorctl restart honeymap
+</code></pre><h1>0x08 MHN的web接口</h1><p>MHN的web接口是很简洁明了的，第一次访问web截面时，需要输入账户名和密码，登录成功后会看见一个总结性的页面</p><p>1.在最近24小时内有多少攻击着攻击</p><p>2.攻击次数排在前五的IP</p><p>3.被攻击端口排在前五的端口</p><p>4.top 5的攻击签名</p><p><img alt="enter image description here" img-src="d1fea6ba6d373b2e92cf067a0b1bc28c8916436c.jpg"></p><p>还有一些菜单选项可以进行配置或者获取更多的攻击细节</p><p>Map:查看攻击者的IP在全球的分布</p><p>Deploy:添加，编辑和使用蜜罐的部署脚本</p><p>Attacks:所有攻击者的列表</p><p>Payloads:所有攻击的payload，其实只有三种蜜罐可以收集payload(snort,dionaea.glastofp)</p><p>Rules:所有的snort和suricata规则</p><p>Seneors:有安装蜜罐节点操作的相关记录</p><p>Settings:MHN服务的设置</p><p>攻击来源全球的分布图,运行在3000端口，是不需要验证就能看到的，可以做ACL开控制访问。</p><p><img alt="enter image description here" img-src="dbc43aea9cde25120b9e288db417b8dcff106114.jpg"></p><h1>0x09 蜜罐节点</h1><hr><p>这一节中，主要讨论蜜罐，如何安装，多么容易操作，以及会出现的问题，是否需要在进行特殊的配置等等。也会进行一些测试，看攻击者如何攻击，蜜罐对攻击行为的记录。最后会讨论MHN如何收集信息，以及web所展现的数据。</p><h2>9.1 安装蜜罐节点</h2><hr><p>安装蜜罐节点很容易，所有的节点都基于同样的平台，MHN上对每个蜜罐都有对应的安装脚本，所以安装起来是非常容易的，只需要一个服务器去安装。</p><p>我们在Ubuntu 14.04 LTS 上进行测试。建议通过ssh去访问，如果不可以，请安装ssh，修改对应的22端口，同时加防火墙保护</p><p>安装ssh</p><pre><code>#!bash
+sudo apt-get update &amp;&amp; sudo apt-get upgrade &amp;&amp; sudo apt-get install openssh-server
+</code></pre><p>修改端口为2222</p><pre><code>#!bash    
+vim /etc/ssh/sshd_config
+
+Port 2222
+</code></pre><p>重启服务</p><pre><code>#!bash    
+sudo service ssh restart
+</code></pre><p>定义的安装脚本在MHN服务器的web界面中，在"Deploy"这个选项下有所有蜜罐的安装脚本。</p><pre><code>http://192.168.5.11/ui/manage-deploy/?script_id=11
+</code></pre><p><img alt="enter image description here" img-src="bbb67dc6be1a3eebbe2351644b75e905964e03ae.jpg"></p><p>安装完成后可以通过以下命令来检查</p><pre><code>#!bash
+sudo netstat –tunlp
+＃产看当前的网络连接情况
+supervisorctl status
+#查看运行状态
+</code></pre><h2>9.2 Wordpot</h2><hr><p>首先，安装一个wordpress蜜罐在Ubuntu 14.04 LTS上，安装完成后 sudo netstat –tunlp查看80端口是否打开， sudo supervisorctl status可以查看服务的运行状态。 访问后该ip,看到下图</p><p><img alt="enter image description here" img-src="9a7dfa10f31d2fc570c83807a9d8af9b275b5640.jpg"></p><p>如果想更改wp的插件和相关设置，</p><pre><code>#!bash
+vim /opt/wordpot/wordpot.conf
+</code></pre><p>使用nmap扫描该80端口</p><pre><code>#!bash
+nmap -A -Pn -p80 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="1029421e3982621c889b42304ce9fa6b74b9a866.jpg"></p><p>通过nmap识别80看到的是wordpress 2.8，运行的http版本是0.96,识别出来的python 2.7.6的版本。这种端口扫描不会被记录，回传到MHN服务。</p><p>使用wpscan进行扫描</p><pre><code>#!bash
+wpscan –url http://ip/
+</code></pre><p><img alt="enter image description here" img-src="bc8c7898df262e9c89f538a4dd198eb98237fae1.jpg"></p><h2>9.3 p0f被动指纹识别系统</h2><hr><p>p0f是一个被动的系统指纹识别工具，借助它可以快速识别操作系统的类型和其他的信息，它在MHN中部署也是很容易的，p0f有可以根据已有的指纹，能够快速的匹配，虽然不是一个精确计算，但是识别度很高。</p><p>通过netstat命令的输出可以看到没有p0f没有去新建新的进程来实现网络监听。</p><p>如果所要保护的ssh端口处于防火墙后或者前端有一个IPS/IDS，获取这些数据的时候就比较麻烦。</p><p>如果我们在安装了wordpot的机器上安装p0f，一个访问wordpot的80端口的请求不会触发wordpot的报警，但是p0f会触发，MHN只是能够显示攻击者攻击的端口，但是不能显示关于操作系统类型，uptime和其他的信息。p0f的日志是纯文本的，分析和收集数据不是太容易，还好p0f存在API，还有一些其他的工具，可以帮助我们快速分析。</p><p><img alt="enter image description here" img-src="063a94b003b8626b01d574c8646d2246754df8c8.jpg"></p><p>如果需要正在进行攻击的系统系统的信息，可以从/var/log/p0f.out中提取，可以使用python、bash、sed、grep等来帮助你快速的获取想要的信息。 想要获取相关ip的系统信息，可以使用以下这个命令</p><pre><code>#!bash
+grep -n “\[ 192.168.10.151.*\(syn\)\|os\s*=” /var/log/p0f.out
+</code></pre><p>如果想要获得更多关于p0f的信息，访问 http://www.sans.org/security-resources/idfaq/p0f.php，查看相关接口信息https://github.com/p0f/p0f/blob/master/docs/README，还有很重要的一点，p0f把攻击的信息保存在MHN服务的mongodb中，其他的一些信息，如操作系统类型等信息没有展现出来，有可能下一个版本会对这些信息进行展示。</p><h2>9.4 kippo蜜罐</h2><hr><p>kippo是一个中等交互式的ssh蜜罐，安装它很容易，但是要注意以下</p><p>1.ssh服务默认监听的是22端口，/etc/ssh/sshd_config为默认配置文件，要想正常运行，需要修改监听端口到2222。</p><p>2.安装完成后需要重启服务。</p><p>3.supervisor可以使kippo程序运行，但是不能够停止它，这需要修改部署脚本</p><p>进入web的deploy界面，选择kippo,在部署脚本后添加下面这些东西</p><pre><code>#!bash
+command=/opt/kippo/start.sh #modify this command for the line below
+
+command=su kippo -c “authbind –deep twistd -n -y /opt/kippo/kippo.tac -l /opt/kippo/log/kippo.log –pidfile /opt/kippo/kippo.pid”
+
+stopsignal=QUIT #Modify this line for the line below
+
+stopasgroup=true
+</code></pre><p>编辑完成后点击update保存，安装完成后就可以看到kippo监听在22端口,ssh服务在2222端口，下次ssh登录的服务器的时候需要指定ssh -p 2222 ip，否则登录的为kippo。</p><p>以下是一些关于kippo的介绍，包括如何配置以及工作原理：</p><pre><code>1.默认的ssh登录账户名密码为root/12345,也可以进行配置，配置的路径在 /opt/kippo/data/userdb.txt，同时当攻击者登陆后，使用useradd和passwd添加账户和密码的时候也会保存在这个文件里面．
+
+2.当攻击者下载文件时，下载的文件会被保存在/opt/kippo/dl
+
+3.可以设置蜜罐中命令执行后的返回值，也可以添加命令．例如来修改ifconfig命令的输出，可以编辑/opt/kippo/txtcmds/sbin/ifconfig这个文本文件。
+
+4.有一个特点就是，当攻击者输入exit想退出的时候，其实没有退出，只是显示退出，给攻击者一个假象，以为回到的他的本机，他接下来的操作还是会被记录到日志中。
+
+5.你可以更改/opt/kippo/honeyfs，里面保存模拟的系统的文件等内容，使蜜罐更像真实环境。
+
+6.log存储在/opt/kippo/log/kippo.log，你也可以修改配置，把log存储到数据库中，数据库的表结构在 /opt/kippo/doc/sql目录中。
+
+7.每一次登录成功后的操作都会把日志单独再存储一份，存储的路径在/opt/kippo/log/tty,可以通过在/opt/kippo/utils中的playlog.py脚本，来重现这个操作过程。
+</code></pre><p>安装和配置kippo后，如果有人尝试登录，会被记录登录所使用的用户名和密码。</p><p>我们用nmap来扫描，看到以下信息</p><p><img alt="enter image description here" img-src="7d7f695bd06b6154bec9dd7908fd3150bf6286ce.jpg"></p><p>根据nmap的输出，我们看到22端口已经被识别为ssh服务，其中输出的ssh版本能够在kippo.cfg中被修改，这种简单的扫描是不会在MHN服务上产生记录的 如果我们使用hydra(https://www.thc.org/thc-hydra/),去进行暴力破击(hydra -l root -P darkc0de.lst ssh://192.168.10.21),hydra在连接的时候 会出现一些问题，但是我们使用 medusa(http://foofus.net/goons/jmk/medusa/medusa.html)时，暴力破解的命令如下</p><pre><code>#!bash
+medusa -u root -P darkc0de.lst -M ssh -h 192.168.10.21
+</code></pre><p>每进行一次尝试登录，都会产生一条扫描记录，如果想更了解kippo，可以参考http://edgis-security.org/honeypot/kippo/</p><h2>9.5 Suricata网络入侵检测和阻止引擎</h2><hr><p>Suricata的部署脚本没有问题，直接执行就好了，部署完成后需要重启服务。Suricata是一个IDS,监听的接口为eth0,规则是通过crontab中的/etc/cron.daily/update&#95;suricata&#95;rules.sh脚本，每天都从MHN服务更新的(可以开启或者关闭规则)</p><p>正如supervisor显示的，只有一个进程，没有生成其他的服务，因为他只是一个IDS,如果我们使用nmap进行扫描，只看到一个ssh服务，这侧扫描会被记录，同时在MHN中显示</p><p><img alt="enter image description here" img-src="ee0b24a0bd5e062ed2addb0ae1a926c070cd8092.jpg"></p><p>Sensor Log:</p><p><img alt="enter image description here" img-src="3b60876145aeb040b4805817e49aa1d14bef78a9.jpg"></p><p>MHN Server:</p><p><img alt="enter image description here" img-src="ba3fc363336ae00daa3e78c1ca70408ceb878bb1.jpg"></p><p>Suricata只会把攻击报告给MHN服务，但是攻击细节存储在Suricata的日志中，不会被显示</p><pre><code>1./var/log/suricata.log:日志记录了Suricata进程相关的信息，如启动报错，错误的规则等等，这份日志由supervisor产生
+2./var/log/suricata/：设计到suricata操作的输入日志，报警日志，http请求日志，dns请求日志等等
+3./var/log/suricata/http.log：http请求，不是报警
+4./var/log/suricata/fast.log：一行存储一个报警
+5./var/log/suricata/eve.json：格式为json，包含报警和相关的事件
+6./var/log/suricata/unified2.alert：报警文件为Barnyard2格式
+（http://www.forensicswiki.org/wiki/Barnyard2）
+</code></pre><p>Suricata的配置文件</p><pre><code>1./opt/suricata/etc/suricata/classification.config :报警的优先级
+2./opt/suricata/etc/suricata/reference.config ：使用的漏洞数据库
+3./opt/suricata/etc/suricata/suricata.yaml ：suricata的配置文件
+4./opt/suricata/etc/suricata/reference.config ：通过配置来减少报警的数量，例如不想记录所有ICMP请求的来源为一样的ＩＰ
+</code></pre><p>IDS/IPS配置是很复杂的，这里只是简单的说明，需要详细了解suricata的，访问这里http://suricata-ids.org/docs/</p><h2>9.6 snort</h2><hr><p>snort是像Suricata一样的IDS/IPS，和Suricata使用类似的规则，同时工作方式也很像，同样部署脚本没有问题，通过crontab.daily来更新规则库，不会其他用来监听连接的服务</p><p>它的配置文件和Suricata使用的suricata.yaml很像，它的配置文件为snort.conf，日志存储在/var/log/snort/alert目录下.</p><p>想更加了解snort，访问https://www.snort.org/</p><h2>9.7 Amun</h2><hr><p>Amun蜜罐已经好久没有更新了，这里不做过多的讨论。</p><h2>9.8 Shockpot</h2><hr><p>Shockpot是一个web蜜罐，用来模拟破壳漏洞,CVE-2014-6271 http://web.nvd.nist.gov/view/vuln/detail?vulnId=CVE-2014-6271,破壳漏洞是一个影响很广泛的漏洞，影响Mac OsX,Linux和Unix，这个漏洞产生在GNU Bash(shell)上，允许远程命令执行，虽然已经出现了补丁，但不是所有的机器都有更新。使用这个蜜罐，可以用来捕获这个漏洞的利用代码，</p><p>关于这个漏洞的详情https://shellshocker.net/</p><p>部署脚本有一些问题，进入Deploy页面，选择Shockpot对期做一点修改,在＂#Config for supervisor. ＂和＂EOF＂中加入一下代码</p><pre><code>[fetch_public_ip]
+
+enabled = false
+
+urls = [“http://api.ipify.org",”
+http://bot.whatismyipaddress.com/”]
+</code></pre><p>如果服务器有公网IP，就加入上面这一段．</p><p>安装完成后重启服务</p><p>看到以下运行的进程，有一个新的服务在80上监听</p><p><img alt="enter image description here" img-src="5128a5637f22ba56ed150b4d1d19e2b73a702215.jpg"></p><p>如果通过浏览器去访问http://ip ，会看到"It Works!"这个默认的Apache页面</p><pre><code>telnet ip 80
+GET / HTTP/1.0
+</code></pre><p>返回以下头部</p><p><img alt="enter image description here" img-src="e055adc0a01ab994e89dc4c49dbcb683649cabd8.jpg"></p><p>显示这是一个Debian服务器，使用了PHP和OpenSSL</p><pre><code>nmap -A -p80 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="e2ff9a199da4394d30f6084d3798719e64a6a99a.jpg"></p><p>上面的这些操作MHN是不会记录的，下面我们来攻击蜜罐</p><pre><code>#!bash
+curl -H “User-Agent: () { :; }; /bin/ping -c 1 TARGET_HOST_IP” http://SHOCKPOT_IP     
+</code></pre><p>我看看到日志里输出/var/log/shockpot/shockpot.log report</p><p>MHN中的记录</p><p><img alt="enter image description here" img-src="43208ed8732454422cfbff12cb6d80c025d25a12.jpg"></p><p>更多关于破壳的利用https://blog.cloudflare.com/inside-shellshock/</p><h2>9.9 Conpot</h2><hr><p>Conpot是一个工业控制系统和Scada蜜罐，针对这些类型的攻击是在近几年快速增长，是因为安全在工业系统中要求较低，才造成了现在这种场面，安全专家们也在想办法保护这些脆弱的系统。</p><p>安装简单，安装完成后需要重启服务，使用supervisorctl status 可以看到一个进程，但是使用netsta 可以看到好几个监听的端口。</p><p>Conpot使用了一些模块，能够提供以下服务</p><pre><code>MODBUS TCP —&gt; tcp/502
+HTTP —&gt; tcp/80
+SNMP —&gt; udp/161
+S7COMM —&gt; tcp/102
+</code></pre><p>使用nmap扫描</p><pre><code>nmap -A -p1-1000 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="9d4d1a131336c29f4a848209ffa8dfb891d2d454.jpg"></p><pre><code>#!bash
+nmap -sU -p161–script snmp-sysdescr 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="2f8d12506c526668b2688e507a8d07e6ef706eb2.jpg"></p><p>产生的记录</p><p><img alt="enter image description here" img-src="a6ecba49a0a9eea78e9403805e65bab14254e747.jpg"></p><h2>9.10 Glastopf</h2><hr><p>Glastopf是最好的web蜜罐，它模拟了很多漏洞，特别是远程文件包含漏洞，可以捕获到攻击只插入的文件．部署依旧很简单，安装完成后重启服务，你会看到一个进程</p><p>netstat 会有以下输出</p><p><img alt="enter image description here" img-src="3b28ce89a0d8021e37234e9b37891321384684eb.jpg"></p><p>模拟的http,mongodb只在本地监听．</p><pre><code>#!bash
+nmap -A -p80 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="2c0e15a191de291744bf77e7eb2daa82d48284d1.jpg"></p><p>你能看到模拟的是apache，我们使用web漏洞扫瞄器像niko(https://cirt.net/Nikto2) nikto -h 192.168.10.21</p><p><img alt="enter image description here" img-src="f5bb2efe11ad4c2d30890e45f6ce9a4105f857ad.jpg"></p><p>nikto报告了5536个项目，显然蜜罐对攻击者很有吸引力，我们到MHN的web界面上看到所有的攻击报告，但是如果我们点击Payload，选择glastopf.events,我们可以看到很多记录，在“Regex term”中输入"rfi"会看到下面这些</p><p><img alt="enter image description here" img-src="de34cd8429a1d9547d67f0174e2a5e5e8900885e.jpg"></p><p>对于这些被下载的文件，我们能够看到它们的md5值，这些文件都保存在/opt/glastopf/data<br>Glastopf是很好配置的，/opt/glastopf/glastopf.cfg配置文件，日志/opt/glastopf/log/glastopf.log.</p><p>官网</p><p>https://www.honeynet.org/sites/default/files/files/KYT-Glastopf-Final_v1.pdf</p><h2>9.11 dionaea</h2><hr><p>dionaea将有漏洞的服务暴露出来，允许攻击者发送保存任何文件，安装简单</p><p>看到下面</p><p><img alt="enter image description here" img-src="dfd2e2e3ec8234434b51a0287304beb6d170f163.jpg"></p><p>暴露的服务</p><p><img alt="enter image description here" img-src="845214c5debfc6a471f29245171cb6d26b084932.jpg"></p><p>服务列表</p><pre><code>#!bash
+tcp/5060 —&gt; SIP Protocol
+tcp/5061 —&gt; SIP Protocol over TLS
+tcp/135 —&gt;  Remote procedure Call RPC
+tcp/3306 —&gt; MySQL Database
+tcp/42 —&gt;  WINS Protocol
+tcp/21 —&gt; FTP Protocol
+tcp/1433 —&gt; MSSQL
+tcp/445 —&gt; SMB over TCP
+udp/5060 —&gt; SIP Protocol
+udp/69 —&gt; TFTP
+
+nmap -sS -sV -p1-65535 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="591f16f1e73823a7fcd61233740100026544f7b6.jpg"></p><p>在扫描结果中，我们看到ftp和smb服务的指纹是＂Dionaea Honeypot＂，这种扫描产生的记录都被记录了，扫描UDP</p><pre><code>#!bash
+nmap -sU -sV -p69,5060 192.168.10.21
+</code></pre><p><img alt="enter image description here" img-src="a7f883bacfd4fc6c5602e6d11265fca47742bf61.jpg"></p><p>我们没有修改banner，会被nmap识别，如果需要修改，编辑 /usr/lib/dionaea/python/dionaea这个python文件，需要更加了解他，访问http://www.securityartwork.es/2014/06/05/avoiding-dionaea-service-identification/?lang=en，配置文件在 /etc/dionaea/dionaea.conf,日志保存在/var/dionaea/log/dionaea.log</p><p>使用nessus进行扫描，发现了53个问题，45个info，３个紧急</p><p><img alt="enter image description here" img-src="adc3e7ed0b91851ac8615e96b631be61231cab06.jpg"></p><p><img alt="enter image description here" img-src="5ef100ca871677378f10f917661d8d2d5116d112.jpg"></p><p>我们看到有MS04-007漏洞，这个漏洞能够执行任意代码，通过向主机发送ASN.1编码后的数据包，Metasploit中使用的模块是 “MS04-007 Microsoft ASN.1 Library Bitstring Heap Overflow”，使用Metasploit发起攻击，会返回“The SMB server did not reply to our request”，这种攻击会报告给mhn,攻击的细节保存在/var/dionaea/bistreams/.</p><h1>0x10 总结</h1><hr><p>我们已经大概了解了mhn的总体概况，怎么安装和怎么去部署蜜罐节点，还有这些蜜罐大概的一些情况。如果你清楚你想做的，部署蜜网是很有用的．可以获取攻击者更准确的信息，然后来做防御。</p><p>在部署蜜罐节点是，尽可能的根据具体情况来组合部署，这样可以是攻击者花费更多的时间，从中获取更多的信息，争取到更多的响应时间。</p><p>例如snort,Glastopf,Dionaea和kippo，在具体部署之前先要好好测试，避免在真实环境中出现意想不到的问题。</p><p>个人的看法： 曾经做过类似的一个东西，不过相比这个来说就有些粗糙了，MHN中支持的开源蜜罐种类很多，基本已经涵盖了现有所有的开源蜜罐，可以根据具体的业务场景来组合。也可以根据具体的场景来做二次开发，因为回传的数据有些简单了。如果是放置在内网中，报警功能就很有必要性，内网中得蜜罐只是为了能够延缓攻击的进度，以及及时发现入侵，从而切断入口。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/20160511153641e236eafe19e2a9374c586ee768ad283e.jpg" style="width:200px;height:200px"></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/4578" rel="bookmark" id="re1">Kippo蜜罐指南</a></li><li><a href="http://drops.wooyun.org/tips/413" rel="bookmark" id="re2">CentOS 6.2下安装基于Suricata + Barnyard 2 + Base 的⼊侵检测系统</a></li><li><a href="http://drops.wooyun.org/tips/640" rel="bookmark" id="re3">Dionaea低交互式蜜罐部署详解</a></li><li><a href="http://drops.wooyun.org/papers/7480" rel="bookmark" id="re4">中间人攻击利用框架bettercap测试</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">A lonely heart孤心</span> <span class="reply-time">2016-05-14 18:26:38</span></div><p></p><p>还算可以吧，蜜罐搭建很容易，但是想要驾驭起来不让高级入侵者发现就难了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">番茄炒蛋</span> <span class="reply-time">2016-05-09 18:42:47</span></div><p></p><p>一定要翻墙安装 不然特么坑死了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CX_zhao</span> <span class="reply-time">2016-03-03 10:53:49</span></div><p></p><p>@Hxai11 577364979</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Hxai11</span> <span class="reply-time">2016-03-01 14:17:21</span></div><p></p><p>@CX_zhao 你好，有点问题问你，有联系方式吗</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">CX_zhao</span> <span class="reply-time">2016-02-26 16:56:37</span></div><p></p><p>安装完成了，但是怎么具体的配置每个蜜罐呢？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">boxrice</span> <span class="reply-time">2016-02-22 14:16:08</span></div><p></p><p>@胡一米 honeymap FATAL can&#039;t find command &#039;/opt/honeymap/server/server&#039; <a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="33db8caad78b99daa49dda91abd78bbed4ac96dab2a0d5b3bdd78abbdb9490d6b580d6a09573dbb092d78bb3d48280">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Fire ant</span> <span class="reply-time">2016-02-17 02:30:08</span></div><p></p><p>请教下楼主。。。。啥蜜罐能记录post。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">胡一米</span> <span class="reply-time">2015-11-24 12:29:52</span></div><p></p><p>@神秘de路人甲 @打酱油 看下install_honeymap的输出就晓得了，是go get时websocket被墙了。建议用浏览器下载好解压放在....\go\src\code.google.com\p\go.net\websocket...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">打酱油</span> <span class="reply-time">2015-11-18 13:26:15</span></div><p></p><p>@神秘de路人甲 我也是这个错误 麻烦问下怎么解决的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">神秘de路人甲</span> <span class="reply-time">2015-11-16 15:40:45</span></div><p></p><p>我安装完成之后查看服务状态，出现如下提示，但是我找不到解决的方法，问一下问题这个是什么原因造成的，如何去解决。谢谢！<br>honeymap FATAL can&#039;t find command &#039;/opt/honeymap/server/server&#039;</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">飘摇</span> <span class="reply-time">2015-11-12 23:22:54</span></div><p></p><p>费了好大功夫，终于搭好了，感觉不好玩啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">’‘Nome</span> <span class="reply-time">2015-05-08 15:15:02</span></div><p></p><p>目测感觉好难。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">_Evil</span> <span class="reply-time">2015-05-07 14:41:51</span></div><p></p><p>@园长 搭几个试试</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2015-05-07 10:33:50</span></div><p></p><p>看起来好好玩</p><p></p></div></div></div></div></div></main>

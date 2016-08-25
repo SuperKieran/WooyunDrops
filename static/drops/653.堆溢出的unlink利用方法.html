@@ -1,0 +1,171 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">堆溢出的unlink利用方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">藏在灌木丛中</a> <span class="bull">·</span> <time title="2015/07/22 14:18" ui-time="" datetime="2015/07/22 14:18" class="published ng-binding ng-isolate-scope">2015/07/22 14:18</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 背景</h1><hr><p>本文写给对堆溢出无的放矢的童鞋，分为如下几部分：</p><pre><code>一.经典的unlink利用方法简介
+二.在当今glibc的保护下如何绕过进行unlink利用
+</code></pre><p>建议阅读本文之前先对glibc的<code>malloc.c</code>有所了解</p><p><a href="http://code.woboq.org/userspace/glibc/malloc/malloc.c.html">你可以在这里在线看到所有的malloc.c的源码</a></p><h1>0x01 第一部分</h1><hr><p>首先简要介绍一下堆chunk的结构</p><p>我们可以在<code>malloc.c</code>中找到关于堆<code>chunk</code>结构的代码</p><pre><code>#!c
+struct malloc_chunk {
+
+      INTERNAL_SIZE_T      prev_size;  /* Size of previous chunk (if free).  */
+      INTERNAL_SIZE_T      size;       /* Size in bytes, including overhead. */
+
+      struct malloc_chunk* fd;         /* double links -- used only if free. */
+      struct malloc_chunk* bk;
+
+      /* Only used for large blocks: pointer to next larger size.  */
+      struct malloc_chunk* fd_nextsize; /* double links -- used only if free. */
+      struct malloc_chunk* bk_nextsize;
+    };
+</code></pre><p>这指明了一个<code>heap chunk</code>是如下的结构</p><pre><code>#!c
++-----------+---------+------+------+-------------+
+|           |         |      |      |             |
+|           |         |      |      |             |
+| prev_size |size&amp;Flag|  fd  |  bk  |             |
+|           |         |      |      |             |
+|           |         |      |      |             |
++-----------+---------+------+------+-------------+
+</code></pre><p>如果本<code>chunk</code>前面的<code>chunk</code>是空闲的，那么第一部分<code>prev_size</code>会记录前面一个<code>chunk</code>的大小，第二部分是本<code>chunk</code>的<code>size</code>,因为它的大小需要8字节对齐，所以<code>size</code>的低三位一定会空闲出来，这时候这三个位置就用作三个<code>Flag</code>(最低位:指示前一个<code>chunk</code>是否正在使用;倒数第二位:指示这个<code>chunk</code>是否是通过<code>mmap</code>方式产生的;倒数第三位:这个<code>chunk</code>是否属于一个线程的<code>arena</code>)。之后的FD和BK部分在此<code>chunk</code>是空闲状态时会发挥作用。FD指向下一个空闲的<code>chunk</code>，BK指向前一个空闲的<code>chunk</code>，由此串联成为一个空闲<code>chunk</code>的双向链表。如果不是空闲的。那么从fd开始，就是用户数据了。(详细信息请参考<code>glibc</code>的<code>malloc.c</code>部分，在此不再多做解释。)</p><p>首先，为了方便，我直接引用一位外国博主的漏洞示例程序，以便继续解释</p><pre><code>#!c
+/* 
+ Heap overflow vulnerable program. 
+ */
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+
+int main( int argc, char * argv[] )
+{
+        char * first, * second;
+
+/*[1]*/ first = malloc( 666 );
+/*[2]*/ second = malloc( 12 );
+        if(argc!=1)
+/*[3]*/         strcpy( first, argv[1] );
+/*[4]*/ free( first );
+/*[5]*/ free( second );
+/*[6]*/ return( 0 );
+}
+</code></pre><p>这个程序在[3]处有很明显的堆溢出漏洞，<code>argv[1]</code>中的内容若过长则会越界覆盖到second部分。</p><p>简单给出此程序的堆结构</p><pre><code>#!c
++---------------------+   &lt;--first chunk ptr
+|     prev_size       |
++---------------------+
+|     size=0x201      |          
++---------------------+   &lt;--first                  
+|                     |
+|     allocated       |         
+|      chunk          |      
++---------------------+   &lt;--second chunk ptr                
+|    prev_size        |         
++---------------------+                     
+|    size=0x11        |         
++---------------------+   &lt;--second                  
+|     Allocated       |         
+|       chunk         |     
++---------------------+   &lt;-- top                  
+|     prev_size       |            
++---------------------+                     
+|    size=0x205d1     |           
++---------------------+                      
+|                     |
+|                     |
+|                     |
+|        TOP          |   
+|                     |
+|       CHUNK         |    
+|                     |
++---------------------+
+</code></pre><p>此处不赘余介绍exploit具体代码，只介绍利用方法.</p><p>只要我们通过溢出构造，使得second chunk</p><pre><code>#!c
+prev_size=任意值
+size=-4(因为最低位的flag没有设置，所以prev_size是什么值是无所谓了)
+<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e28486df84908787a2858d96cfd3d0">[email&#160;protected]</a>(<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="95712a3b73012cf2fae1720f11701b0a720513712d18732d1073300f720f11700519703833701a3a712e30730a307c0d10712d15712d1e771509702e237d2a0a722e">[email&#160;protected]</a>定技术”)
+bk=shellcode地址
+</code></pre><p>在我们的payload将指定位置的数值改好后。下面介绍在&#91;4&#93;&#91;5&#93;行代码执行时发生的详细情况。</p><p>第四行执行<code>free(first)</code>发生如下操作</p><p>1).检查是否可以向后合并</p><p>首先需要检查<code>previous chunk</code>是否是空闲的（通过当前<code>chunk size</code>部分中的<code>flag</code>最低位去判断），当然在这个例子中，前一个<code>chunk</code>是正在使用的，不满足向后合并的条件。</p><p>2).检查是否可以向前合并</p><p>在这里需要检查<code>next chunk</code>是否是空闲的(通过下下个<code>chunk</code>的flag的最低位去判断)，在找下下个chunk(这里的下、包括下下都是相对于<code>chunk first</code>而言的)的过程中，首先当前<code>chunk+</code>当前<code>size</code>可以引导到下个<code>chunk</code>，然后从下个<code>chunk</code>的开头加上下个<code>chunk</code>的<code>size</code>就可以引导到下下个<code>chunk</code>。但是我们已经把下个<code>chunk</code>的<code>size</code>覆盖为了-4，那么它会认为下个<code>chunk</code>从<code>prev_size</code>开始就是下下个chunk了，既然已经找到了下下个<code>chunk</code>，那就就要去看看<code>size</code>的最低位以确定下个<code>chunk</code>是否在使用，当然这个<code>size</code>是<code>-4</code>，所以它指示下个<code>chunk</code>是空闲的。</p><p>在这个时候，就要发生向前合并了。即<code>first chunk</code>会和 <code>first chunk</code>的下个<code>chunk</code>(即<code>second chunk</code>)发生合并。在此时会触发<code>unlink(second)</code>宏，想将<code>second</code>从它所在的<code>bin list</code>中解引用。</p><p>具体如下</p><pre><code>#!c
+BK=second-&gt;bk（在例子中bk实际上是shellcode的地址）
+FD=second-&gt;fd (<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="16f38abef2a89df3bb86f2aebb7072f3b888ff8f93f2ae9cf08eb97064737356717962f18c92f38aa6f38b96">[email&#160;protected]</a> - 12)
+FD-&gt;bk=BK
+/*shellcode的地址被写进了FD+12的位置，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fa1e477c1c6255bcbe1c62559c889f9fba9d958e1d607e1f664a1f677ad7cbc8">[email&#160;protected]</a>，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="ab4d222b4f100e4e053542322e4f13214d233a4f10074e1c194c10244d2121d8c3cec7c7c8c4cfce4e371b4e362b4e2d324e2e0e4f112dcdd9ceceebccc4df">[email&#160;protected]</a>*/
+BK-&gt;fd=FD 
+</code></pre><p>执行<code>unlink</code>宏之后，再调用<code>free</code>其实就是调用<code>shellcode</code>，这时就可以执行任意命令了。</p><p>但是，在现如今，<code>glibc</code>已经不这么简单了，为了使堆溢出不那么容易就被利用，它加入了许多新的保护措施，如何绕过也就是要在第二部分中讨论的内容。</p><h1>0x02 第二部分</h1><hr><p>以glibc中的代码作为示例，首先拿出最新版本的unlink宏。</p><pre><code>#!c
+1413    /* Take a chunk off a bin list */
+1414    #define unlink(AV, P, BK, FD) {                                            
+1415        FD = P-&gt;fd;                                                                      
+1416        BK = P-&gt;bk;                                                                      
+1417        if (__builtin_expect (FD-&gt;bk != P || BK-&gt;fd != P, 0))                      
+1418          malloc_printerr (check_action, "corrupted double-linked list", P, AV);  
+1419        else {                                                                      
+1420            FD-&gt;bk = BK;                                                              
+1421            BK-&gt;fd = FD;                                                              
+1422            if (!in_smallbin_range (P-&gt;size)                                      
+1423                &amp;&amp; __builtin_expect (P-&gt;fd_nextsize != NULL, 0)) {                      
+1424                if (__builtin_expect (P-&gt;fd_nextsize-&gt;bk_nextsize != P, 0)              
+1425                    || __builtin_expect (P-&gt;bk_nextsize-&gt;fd_nextsize != P, 0))    
+1426                  malloc_printerr (check_action,                                      
+1427                                   "corrupted double-linked list (not small)",    
+1428                                   P, AV);                                              
+1429                if (FD-&gt;fd_nextsize == NULL) {                                      
+1430                    if (P-&gt;fd_nextsize == P)                                      
+1431                      FD-&gt;fd_nextsize = FD-&gt;bk_nextsize = FD;                      
+1432                    else {                                                              
+1433                        FD-&gt;fd_nextsize = P-&gt;fd_nextsize;                              
+1434                        FD-&gt;bk_nextsize = P-&gt;bk_nextsize;                              
+1435                        P-&gt;fd_nextsize-&gt;bk_nextsize = FD;                              
+1436                        P-&gt;bk_nextsize-&gt;fd_nextsize = FD;                              
+1437                      }                                                              
+1438                  } else {                                                              
+1439                    P-&gt;fd_nextsize-&gt;bk_nextsize = P-&gt;bk_nextsize;                      
+1440                    P-&gt;bk_nextsize-&gt;fd_nextsize = P-&gt;fd_nextsize;                      
+1441                  }                                                                      
+1442              }                                                                      
+1443          }                                                                              
+1444    }
+1445    
+1446    /*
+</code></pre><p>我们可以看到我们最大的阻碍是下面的这部分代码</p><pre><code>#!c
+if (__builtin_expect (FD-&gt;bk != P || BK-&gt;fd != P, 0))                     
+      malloc_printerr (check_action, "corrupted double-linked list", P);
+</code></pre><p>这段代码被添加到了<code>unlink</code>宏中，所以现在再调用<code>unlink</code>宏的时候，<code>chunk</code>指针<code>P-&gt;fd-&gt;bk</code>(即代码中的大写<code>FD-&gt;bk</code>)应该还是p指针自己。对于<code>BK-&gt;fd != p</code>这部分也是同样的道理。</p><p>在第一部分的利用方法中，我们修改了</p><pre><code>#!c
+p-&gt;<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="1e787a23786c7b7b5e79716a332f2c">[email&#160;protected]</a>
+p-&gt;bk=shellcode_adress
+</code></pre><p>我们在此记<code>FD=p-&gt;fd</code> , <code>BK=p-&gt;bk</code>,再去看<code>FD-&gt;bk</code>已经是<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="503622353510373f24">[email&#160;protected]</a></code>了，这部分是不能满足要求的。再看<code>BK-&gt;fd</code>已经是<code>shellcode+16</code>了,所以如上文的利用方法已经不能成功了。之所以还加以介绍，是因为这会使我们理解第二部分变得又快又好。</p><p>如果绕过还是要根据这段保护代码来谈。我们势必需要构造合适的条件的来过掉这行代码，那么就要找一个指向<code>p</code>的的已知的地址，然后根据这个地址去设置伪造的fd和bk指针就能改掉原<code>p</code>指针。</p><p>以64bit为例,假设找到了一个已知地址的ptr是指向p(p指向堆上的某个地方)的，通过堆溢出，我们可以做如下的修改。</p><pre><code>#!c
+p-&gt;fd=ptr-0x18
+p-&gt;bk=ptr-0x10
+</code></pre><p>布置好如此结构后，再触发unlink宏，会发生如下情况。</p><pre><code>#!c
+1.FD=p-&gt;fd(实际是ptr-0x18)
+2.BK=p-&gt;bk(实际是ptr-0x10)
+3.检查是否满足上文所示的限制，由于FD-&gt;bk和BK-&gt;fd均为*ptr(即p)，由此可以过掉这个限制
+4.FD-&gt;bk=BK
+5.BK-&gt;fd=FD(p=ptr-0x18)
+</code></pre><p>这时候再对p进行写入，可以覆盖掉p原来的值，例如我们用合适的<code>payload</code>将<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="046276616144636b70">[email&#160;protected]</a></code>写入。p就变成了<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="563024333316313922">[email&#160;protected]</a></code>，那么再改一次p，把<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="244256414164434b50">[email&#160;protected]</a></code>改为<code>shellcode</code>的地址或者说<code>system</code>的地址都可以。之后再调用free功能，就可以任意命令执行。</p><p>为了方便，在这边拿出一个最近的<code>wargame</code>出现的一个逻辑非常简单的程序作为漏洞示例程序,<a href="https://www.dropbox.com/s/ifjua544gd4js41/shellman?dl=0">可以在此下载</a></p><p>首先简单介绍这个Binary的功能以及基本情况</p><h5>开启的保护</h5><pre><code>RELRO    STACK CANARY    NX          PIE     RPATH    RUNPATH    FILE
+No RELRO No canary found NX enabled  No PIE  No RPATH No RUNPATH shellman
+</code></pre><h5>基本功能</h5><pre><code>1.显示已经建立的堆块中存储的内容
+2.建立一个新的堆块，大小和内容又用户决定
+3.对一个已经分配的堆块做编辑，这个地方没有限制大小，若太长可造成堆溢出
+4.释放一个已经分配的堆块
+</code></pre><h5>存放的堆块的基本逻辑结构</h5><pre><code>.bss:00000000006016C0 ; __int64 usingFLAG[]
+.bss:00000000006016C0 usingFLAG       dq ?                    ; DATA XREF: main+38o
+.bss:00000000006016C0                                         ; .text:0000000000400A90o ...
+.bss:00000000006016C8 ; __int64 LEN[]
+.bss:00000000006016C8 LEN             dq ?                    ; DATA XREF: new+B5w
+.bss:00000000006016C8                                         ; delete+79w
+.bss:00000000006016D0 ; __int64 content[]
+.bss:00000000006016D0 content         dq ?                    ; DATA XREF: new+BCw
+</code></pre><p>程序有一个全局数组会存储好每一个经过malloc分配的堆块返回的指针。以及在全局数组中存储长度以及本块是否正在使用的标志。</p><h5>如何利用</h5><p>按照前文所介绍的，我们希望使用Unlink的方法去利用这个堆溢出漏洞。首先，我们要找一个指向堆上某处的指针。因为存储malloc返回指针的全局数组的存在，这让我们的利用变得异常的简单。因为bss段的地址也是固定的，我们可以知道，从而设置满足需要的bk和fd指针，下面介绍具体步骤。</p><p>1.我们可以首先分配两个长度合适的堆块。(如下图所示)</p><pre><code>chunk0                malloc返回的ptr        chunk1        malloc返回的ptr
+|                     |                     |             |
++-----------+---------+---+---+-------------+------+------+----+----+------+
+|           |         |   |   |             |      |      |    |    |      |
+|           |         |   |   |             | prev | size&amp;|    |    |      |
+| prev_size |size&amp;Flag|   |   |             | size | flag |    |    |      |
+|           |         |   |   |             |      |      |    |    |      |
+|           |         |   |   |             |      |      |    |    |      |
++-----------+---------+---+---+-------------+------+------+----+----+------+
+</code></pre><p>这时候这两块的fd和bk区域其实都是空的，因为他们都是正在使用的</p><p>2.对第一块进行编辑，编辑的过程中设置好第零块的bk和fd指针并溢出第一块，改好第一块的chunk头的控制信息(如下图所示)</p><pre><code>chunk0                malloc返回的ptr           chunk1        malloc返回的pt
+|                     |                        |             |
++-----------+---------+----+----+----+----+----+------+------+----+----+------+
+|           |         |fake|fake|fake|fake| D  | fake | fake |    |    |      |
+|           |         |prev|size| FD | BK | A  | prev | size&amp;|    |    |      |
+| prev_size |size&amp;Flag|size|    |    |    | T  | size | flag |    |    |      |
+|           |         |    |    |    |    | A  |      |      |    |    |      |
+|           |         |    |    |    |    |    |      |      |    |    |      |
++-----------+---------+----+----+----+----+----+------+------+----+----+------+
+                      |--------new_size--------|
+</code></pre><p>我们为了欺骗glibc，让它以为堆块零malloc返回的指针(我们后文中简记为p)出就是chunk0指针，所以我们伪造了prev&#95;size和size的部分，然后溢出堆块1，改掉第1个堆块的prev&#95;size,数值应该是上图所示<code>new_size</code>的大小；另外第1块的size部分还要把prev_inuse的flag给去掉。如此就做好了unlink触发之前的准备工作</p><p>3.删掉chunk1,触发unlink(p)，将p给改写。</p><p>在删除堆块1时，glib会检查一下自己的size部分的prev_inuse FLAG，发现到到比较早的一个chunk是空闲的(实际是我们伪造的)，glibc希望将即将出现的两个空闲块合并。glibc会先将chunk0从它的Binlist中解引用，所以触发unlink(p)。</p><pre><code>1).FD=p-&gt;fd(实际是0x6016D0-0x18,因为全局数组里面指向p的那个指针就是0x6016D0)
+2).BK=p-&gt;bk(实际是6016D0-0x10)
+3).检查是否满足上文所示的限制，由于FD-&gt;bk和BK-&gt;fd均为*6016D0(即p)，由此可以过掉这个限制
+4).FD-&gt;bk=BK
+5).BK-&gt;fd=FD(p=0x6016D0-0x18)
+</code></pre><p>4.对p再次写入，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="22c69d8cc4b69b52c69a984450474762454d56c7be92c7bfa2">[email&#160;protected]</a></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f8cdd61f76481d6450881d4f4a1f43771e60579e8a9d9db89f978c1c427e">[email&#160;protected]</a>，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="24c2acb5c09f88c1ab8ecc82a5c0999bc3b08cc09ca4c28885684d5750c1aebbcca799c09a9bc1ab8bc09f81c3bb81cda5b742564141c1a399c2b194c3bea0c3b8bb">[email&#160;protected]</a>实地址，进而算出libc的基址来过掉ASLR。</p><p>6.根据已经算出的libc基址再次算出system函数的真实<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="a1443d11443c21422123443130d144272c470d00442738442404451f1e442e0e451a04441127c7d3c4c4e1c6ced547351845191bd2d8d2d5c4cc44261c4734114221">[email&#160;protected]</a> (如果没有libc，可以考虑简历多个chunk，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e401784c02705d94005c5e82968181a4838b9002735201647d015462016152005f72037e60014462017973037e600268630d766c005d7b02705d005c5e888d86870d">[email&#160;protected]</a>面的函数，这样在list时，我们可以得到两个libc函数的真实地址，根据其偏移，便可以找出服务器上的libc，若保护再够复杂无法改got，我们还可以构造ropchain，同样利用这样的方式，把ropchain丢进全局数组中)</p><p>7.因为free已经变成了system，只要再建立一个内容为<code>/bin/sh</code>的块，再删掉，就可以得到shell，由此全部利用完成。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/binary/7958" rel="bookmark" id="re1">Double Free浅析</a></li><li><a href="http://drops.wooyun.org/tips/1621" rel="bookmark" id="re2">堆溢出学习笔记</a></li><li><a href="http://drops.wooyun.org/papers/4780" rel="bookmark" id="re3">CVE 2015-0235: GNU glibc gethostbyname 缓冲区溢出漏洞</a></li><li><a href="http://drops.wooyun.org/tips/6595" rel="bookmark" id="re4">深入理解 glibc malloc</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">skysider</span> <span class="reply-time">2016-05-30 18:51:46</span></div><p></p><p>first chunk 的size是0x2b1吧，<a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="6782fcd98ee0eb80fde3140e1d0280f3dc8ef3fe83dde182f7c027250b06040c3413080902">[email&#160;protected]</a></p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cxm</span> <span class="reply-time">2016-05-19 16:02:46</span></div><p></p><p>我是作者的粉丝我是作者的粉丝我是作者的粉丝我是作者的粉丝我是作者的粉丝我是作者的粉丝我是作者的粉丝我是作者的粉丝Orz</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">BlackStone</span> <span class="reply-time">2015-12-24 11:09:53</span></div><p></p><p>比栈溢出绕多了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wrfly</span> <span class="reply-time">2015-07-24 05:37:07</span></div><p></p><p>消灭2回复</p><p></p></div></div></div></div></div></main>

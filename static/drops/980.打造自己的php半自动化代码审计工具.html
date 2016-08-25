@@ -1,0 +1,170 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">打造自己的php半自动化代码审计工具</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">Matt</a> <span class="bull">·</span> <time title="2016/01/04 10:00" ui-time="" datetime="2016/01/04 10:00" class="published ng-binding ng-isolate-scope">2016/01/04 10:00</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 PHP扩展进行代码分析（动态分析）</h1><hr><h3>一.基础环境</h3><pre><code>#!bash
+apt-get install php5
+apt-get install php5-dev
+apt-get install apache
+apt-get install mysql
+</code></pre><h3>二.使用PHPTracert</h3><pre><code>#!bash
+mkdir godhead
+wget https://github.com/Qihoo360/phptrace/archive/v0.3.0.zip
+unzip v0.3.0.zip
+cd ./phptrace-0.3.0/extension
+phpize5
+./configure --with-php-config=/usr/bin/php-config
+make &amp; make install
+cd ../cmdtool
+make 
+</code></pre><p>编辑<code>php.ini</code>，增加:</p><pre><code>#!bash
+extension=trace.so
+</code></pre><h3>三.测试</h3><pre><code>#!php
+&lt;?php 
+for($i=0;$i&lt;100;$i++){
+    echo $I;
+    sleep(1);
+}
+?&gt;
+</code></pre><p><strong>CLI</strong></p><pre><code>#!shell
+php test.php &amp;
+ps -axu|grep php
+./phptrace -p pid
+</code></pre><p><strong>apache</strong></p><pre><code>#!bash
+curl 127.0.0.1/test.php
+ps -aux|grep apache
+./phptrace -p pid
+</code></pre><h3>四.phptrace分析</h3><p>执行的代码如下:</p><pre><code>#!php
+&lt;?php
+function c(){
+    echo 1;
+}
+function b(){
+    c();
+}
+function a(){
+    b();
+}
+a();
+?&gt;
+</code></pre><p>执行顺序是:</p><pre><code>#!bash
+a&gt;b&gt;c&gt;echo
+</code></pre><p>参数含义:</p><table><thead><tr><th align="left">名称</th><th align="left">值</th><th align="left">意义</th></tr></thead><tbody><tr><td align="left">seq</td><td align="left"></td><td align="left">int|执行的函数的次数</td></tr><tr><td align="left">type</td><td align="left">1/2</td><td align="left">1是代表调用函数，2是代表该函数返回</td></tr><tr><td align="left">level</td><td align="left">-10</td><td align="left">执行深度，比如a函数调用b，那么a的level就是1，b的level就是2，依次递增</td></tr><tr><td align="left">func</td><td align="left">eval</td><td align="left">调用的函数名称</td></tr><tr><td align="left">st</td><td align="left">1448387651119460</td><td align="left">时间戳</td></tr><tr><td align="left">params</td><td align="left">string</td><td align="left">函数的参数</td></tr><tr><td align="left">file</td><td align="left">c.php</td><td align="left">执行的文件</td></tr><tr><td align="left">lineno</td><td align="left">1</td><td align="left">此函数对应的行号</td></tr></tbody></table><p>日志输出:</p><pre><code>#!js
+{"seq":0, "type":1, "level":1, "func":"{main}", "st":1448387651119445, "params":"", "file":"/var/www/html/2.php", "lineno":11 }
+{"seq":1, "type":1, "level":2, "func":"a", "st":1448387651119451, "params":"", "file":"/var/www/html/2.php", "lineno":11 }
+{"seq":2, "type":1, "level":3, "func":"b", "st":1448387651119452, "params":"", "file":"/var/www/html/2.php", "lineno":9 }
+{"seq":3, "type":1, "level":4, "func":"c", "st":1448387651119453, "params":"", "file":"/var/www/html/2.php", "lineno":6 }
+{"seq":4, "type":2, "level":4, "func":"c, "st":1448387651119457, "return":"NULL", "wt":4, "ct":4, "mem":48, "pmem":144 }
+{"seq":5, "type":2, "level":3, "func":"b, "st":1448387651119459, "return":"NULL", "wt":7, "ct":6, "mem":48, "pmem":144 }
+{"seq":6, "type":2, "level":2, "func":"a, "st":1448387651119459, "return":"NULL", "wt":8, "ct":8, "mem":80, "pmem":176 }
+{"seq":7, "type":2, "level":1, "func":"{main}, "st":1448387651119460, "return":"1", "wt":15, "ct":14, "mem":112, "pmem":208 }
+</code></pre><h3>五.逻辑分析</h3><p><strong>1.解析监控进程</strong></p><p>开一个后台进程一直刷新进程列表，如果出现没有tracer的进程就立即进行托管</p><p><strong>2.json提取</strong></p><p>通过对每一个文件的json进行提取，提取过程如下:</p><ol><li>便利所有文件</li><li>读读取文件</li><li>提取json，按照seq排序</li><li>提取<code>type=2</code>的与<code>type=1</code>的进行合并</li><li>按照level梳理上下级关系存储同一个字典</li><li>按照seq排序，取出头函数进行输出</li><li>提取恶意函数往上提取level直到<code>level=0</code></li></ol><p>函数对应如下:</p><pre><code>#!python
+list1={
+     level1:[seq,type,func,param,return]
+     level2:[seq,type,func,param,return]
+     level3:[seq,type,func,param,return] #eval 
+     level4:[seq,type,func,param,return]
+
+}
+list2=
+</code></pre><p><strong>3.数据查看</strong></p><p>通过追踪危险函数，然后将其函数执行之前的关系梳理出来进行输出，然后再进行人工审查。</p><p>放上demo</p><p><img alt="p1" img-src="80bbd80b052c16a5977f6f775ae41c11a8e0dfb7.jpg"></p><p><img alt="p2" img-src="b329c13b23702e705dbfe1e6ec13367ecf47e693.jpg"></p><h3>六.使用XDEBUG</h3><p>安装</p><pre><code>#!bash
+apt-get install php5-xdebug
+</code></pre><p>修改<code>php.ini</code></p><pre><code>#!bash
+[xdebug]
+zend_extension = "/usr/lib/php5/20131226/xdebug.so"
+xdebug.auto_trace = on
+xdebug.auto_profile = on
+xdebug.collect_params = on
+xdebug.collect_return = on
+xdebug.profiler_enable = on
+xdebug.trace_output_dir = "/tmp/ad/xdebug_log"
+xdebug.profiler_output_dir = "/tmp/ad/xdebug_log"
+</code></pre><p>放上几个demo图片:</p><p><img alt="p3" img-src="6dcc234f8f6dd45a8327989fa68cbacc31636178.jpg"></p><h3>七.优缺点</h3><p><strong>缺点</strong></p><p>人为参与力度较大，无法进行脱离人工的操作进行独立执行。</p><p><strong>优点</strong></p><p>精准度高，对于面向对象和面向过程的代码都可以进行分析。</p><h1>0x01 语法分析（静态分析）</h1><hr><p>案例：</p><ul><li><a href="http://php-grinder.com/">http://php-grinder.com/</a></li><li><a href="http://rips-scanner.sourceforge.net/">http://rips-scanner.sourceforge.net/</a></li></ul><h3>一.使用php-parser</h3><p>介绍：</p><ul><li><a href="http://www.oschina.net/p/php-parser">http://www.oschina.net/p/php-parser</a></li><li><a href="https://github.com/nikic/PHP-Parser/">https://github.com/nikic/PHP-Parser/</a></li></ul><h3>二.安装</h3><pre><code>#!shell
+git clone https://github.com/nikic/PHP-Parser.git &amp; cd PHP-Parser
+curl -sS https://getcomposer.org/installer | php
+</code></pre><p>PHP >= 5.3; for parsing PHP 5.2 to PHP 5.6</p><pre><code>#!bash
+php composer.phar require nikic/php-parser
+</code></pre><p>PHP >= 5.4; for parsing PHP 5.2 to PHP 7.0</p><pre><code>#!bash
+php composer.phar require nikic/php-parser 2.0.x-dev
+</code></pre><h3>三.测试</h3><pre><code>#!php
+&lt;?php
+include 'autoload.php';
+use PhpParser\Error;
+use PhpParser\ParserFactory;
+
+$code = '&lt;?php  eval($_POST[c][/c])?&gt;';
+$parser = (new ParserFactory)-&gt;create(ParserFactory::PREFER_PHP7);
+
+try {
+    $stmts = $parser-&gt;parse($code);
+    print_r($stmts);
+    // $stmts is an array of statement nodes
+} catch (Error $e) {
+    echo 'Parse Error: ', $e-&gt;getMessage();
+}
+</code></pre><p>输出如下:</p><pre><code>#!js
+Array
+(
+    [0] =&gt; PhpParser\Node\Expr\Eval_ Object
+        (
+            [expr] =&gt; PhpParser\Node\Expr\ArrayDimFetch Object
+                (
+                    [var] =&gt; PhpParser\Node\Expr\Variable Object
+                        (
+                            [name] =&gt; _POST
+                            [attributes:protected] =&gt; Array
+                                (
+                                    [startLine] =&gt; 1
+                                    [endLine] =&gt; 1
+                                )
+
+                        )
+
+                    [dim] =&gt; PhpParser\Node\Expr\ConstFetch Object
+                        (
+                            [name] =&gt; PhpParser\Node\Name Object
+                                (
+                                    [parts] =&gt; Array
+                                        (
+                                            [0] =&gt; c
+                                        )
+
+                                    [attributes:protected] =&gt; Array
+                                        (
+                                            [startLine] =&gt; 1
+                                            [endLine] =&gt; 1
+                                        )
+
+                                )
+
+                            [attributes:protected] =&gt; Array
+                                (
+                                    [startLine] =&gt; 1
+                                    [endLine] =&gt; 1
+                                )
+
+                        )
+
+                    [attributes:protected] =&gt; Array
+                        (
+                            [startLine] =&gt; 1
+                            [endLine] =&gt; 1
+                        )
+
+                )
+
+            [attributes:protected] =&gt; Array
+                (
+                    [startLine] =&gt; 1
+                    [endLine] =&gt; 1
+                )
+
+        )
+
+)
+</code></pre><p>由此可见，我们需要提取出</p><pre><code>#!js
+[0] =&gt; PhpParser\Node\Expr\Eval_ Object
+[name] =&gt; _POST
+[parts] =&gt; Array
+                                        (
+                                            [0] =&gt; c
+                                        )
+</code></pre><p>然后进行拼接之后即可发现原始语句是:</p><pre><code>#!php
+eval($_POST[c][/c])
+</code></pre><h3>四.逻辑分析</h3><p><strong>代码解析</strong></p><ol><li>通过该库进行语法分析</li><li>提取结果</li><li>提取危险函数</li><li>提取危险函数中存在的变量</li><li>从上文中提取此变量的赋值方式</li><li>分析出可控结果</li><li>输出结果</li></ol><h3>五.优缺点</h3><p><strong>缺点</strong></p><p>对于面向对象的程序进行分析比较弱。</p><p><strong>优点</strong></p><p>适合大批量的自动化分析，可以脱离人工操作进行独立执行</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/papers/1015" rel="bookmark" id="re1">linux渗透测试技巧2则</a></li><li><a href="http://drops.wooyun.org/tips/2031" rel="bookmark" id="re2">上传文件的陷阱</a></li><li><a href="http://drops.wooyun.org/papers/974" rel="bookmark" id="re3">Google Chrome 开发者工具漏洞利用</a></li><li><a href="http://drops.wooyun.org/papers/3197" rel="bookmark" id="re4">Drupal - pre Auth SQL Injection Vulnerability</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">adfa</span> <span class="reply-time">2016-01-07 16:59:24</span></div><p></p><p>日志是phptrace生成的还是自己用脚本跑的？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">m-33</span> <span class="reply-time">2016-01-06 19:05:23</span></div><p></p><p>半自动化工具</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">sm0nk</span> <span class="reply-time">2016-01-04 14:26:55</span></div><p></p><p>沙发</p><p></p></div></div></div></div></div></main>

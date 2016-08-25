@@ -1,0 +1,61 @@
+<main class="main-container ng-scope" ng-view=""><div class="main receptacle post-view ng-scope"><article class="entry ng-scope" ng-controller="EntryCtrl" ui-lightbox=""><header><h1 class="entry-title ng-binding">撞库扫号防范</h1><div class="entry-meta"><a target="_blank" class="author name ng-binding">小胖胖要减肥</a> <span class="bull">·</span> <time title="2014/08/16 18:58" ui-time="" datetime="2014/08/16 18:58" class="published ng-binding ng-isolate-scope">2014/08/16 18:58</time></div></header><section class="entry-content ng-binding" ng-bind-html="postContentTrustedHtml"><p></p><h2>0x00 背景</h2><hr><p>撞库扫号攻击已经是Top 10 Security Risks for 2014之一，不管你的网站密码保存的额多好，但是面试已经泄露的账号密码，撞库扫号防御还是一个相当重要的环节。之前一篇普及了扫号的基本防止防范和危害。</p><p>本篇讲详细解决面对技术同步在进步的黑色产品如何更好地防止撞库扫号。由于涉及相关内部策略，也只是抛砖引玉。</p><p>撞库扫号，无非是自动化或者脚本化执行用户名密码来进行登陆，通过页面跳转302状态或者返回特征及包的大小，是否重新set-cookies来判断是否登陆成功。 那么可以通过哪些方式来缓解恶意用户的批量行为？</p><h2>0x01 细节</h2><hr><p>一般，传统企业会在登陆页面直接增加验证码，不过由于自动化验证码识别脚本早已出现，简单的验证码识别已经不是什么问题。这种方式很难作为防止有针对性的恶意攻击。</p><p>其次，一些考虑用户体验的企业会在用户账户或者密码输入错误几次后，跳出一个比较难脚本识别的验证码（当然用户也不太好识别），由于维度较少，也比较容易绕过。</p><p>那么我们就需要更多的维度去做策略，来提高攻击者的成本防止恶意撞库扫号行为。</p><p>我们可以捕获识别用户的唯一参数来控制。</p><p>基本要求为：难伪造，易获取，保留时间较长等。</p><p>当前帆布指纹识别炙手可热，同一机器，相同浏览器Canvas都是一样的，甚至是重装。详见http://security.tencent.com/index.php/blog/msg/59，具体是用就看各自需求。</p><p><img alt="enter image description here" img-src="937d106be43cb4a336b5bdc7289b3ed9d9e003ce.jpg"></p><p>相关测试代码：</p><pre><code>#!html
+&lt;html&gt;
+&lt;head&gt;
+&lt;script type="text/javascript"&gt;
+function bin2hex(s) {
+  //  discuss at: http://phpjs.org/functions/bin2hex/
+  // original by: Kevin van Zonneveld (http://kevin.vanzonneveld.net)
+  // bugfixed by: Onno Marsman
+  // bugfixed by: Linuxworld
+  // improved by: ntoniazzi (http://phpjs.org/functions/bin2hex:361#comment_177616)
+  //   example 1: bin2hex('Kev');
+  //   returns 1: '4b6576'
+  //   example 2: bin2hex(String.fromCharCode(0x00));
+  //   returns 2: '00'
+
+  var i, l, o = '',
+    n;
+
+  s += '';
+
+  for (i = 0, l = s.length; i &lt; l; i++) {
+    n = s.charCodeAt(i)
+      .toString(16);
+    o += n.length &lt; 2 ? '0' + n : n;
+  }
+
+  return o;
+}
+
+var canvas = document.createElement('canvas');
+var ctx = canvas.getContext('2d');
+var txt = 'http://security.tencent.com/';
+ctx.textBaseline = "top";
+ctx.font = "14px 'Arial'";
+ctx.textBaseline = "tencent";
+ctx.fillStyle = "#f60";
+ctx.fillRect(125,1,62,20);
+ctx.fillStyle = "#069";
+ctx.fillText(txt, 2, 15);
+ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+ctx.fillText(txt, 4, 17);
+var b64 = canvas.toDataURL().replace("data:image/png;base64,","");
+var bin = atob(b64);
+var crc = bin2hex(bin.slice(-16,-12));
+console.log(crc);
+document.write(crc)
+&lt;/script&gt;
+
+&lt;/head&gt;
+&lt;body&gt;
+&lt;/body&gt;
+</code></pre><p>Flash cookies是很多防止撞库扫号经常是用的一个方式，但有一个缺点，safari不支持flash。不过可以作为一个重要的维度之一。</p><p>Cookies的话不用多说，最多是用的一个方式，且有多种玩法，如是否含有cookies，对cookies的某个值进行验证等。</p><p>(1) Flash Cookies和Cookies有什么区别？</p><pre><code>1、存储大小不同 cookies仅允许存储4KB，而flash cookies则存储100KB—这只是默认的，还可以调整大小。
+2、存储时长不同 一般来说，cookies是有消亡期的，它会在一段时间后自动消失；而flash cookies并不，如果你没有删除它，它就永远保留在你的电脑上。
+3、存储位置不同 普通cookies的位置人们并不需要知道，因为他们可以通过许多软件进行删除，甚至浏览器本身都内置了这一功能。而flash cookies则是存储在C:\Documents and Settings\用户名\Application Data\Macromedia\Flash Player文件夹下。其中#sharedobjects文件夹用于存储flash cookies，macromedia.com存储flash cookies的全局设置。
+</code></pre><p>(2) 要实现Flash Cookie永远存储的功能，显然，首先要实现Flash Cookie与Http Cookie的互通，所以，在技术上使用JavaScript与ActionScript的来进行沟通显然是最好的选择，因为在这两种语言之间，除了语法上相近，从沟通上也有着完美的实现。下面我们来看看实现流程（如图所示）：</p><p><img alt="enter image description here" img-src="e2c0116134077bb0e4aa7384860b1992d28ed660.jpg"></p><p>ActionScript实现实现参考：http://www.biaodianfu.com/flash-cookies.html</p><p>最后还有一些js获取用户相关数据的方法，如用户行为轨迹，用户点击事件等来判断人机行为。</p><p>这块可以根据不同需要使用js相关keydown，keyup，mousedown，mouseup等事件记录即可。</p><p>当然，有了那么多维度参数的同时还有一个参数不可忘记，就是ip，虽然对于现在的用户，这个限制已经是亡羊补牢，但是运用的好也会有出奇的效果。</p><p>下面我就对撞库扫号规则的制定稍微涉及下，具体还需要大家以自己的实际业务，通过数据分析，去制定符合自己业务的策略。</p><p>不过我们要了解攻防是2个不断持续，不断改进的过程，策略也是要应势而变，不断优化。</p><pre><code>1 针对用户输入密码错误，输入账号不存在制定相关策略，以不同层级出现不同等级验证码，和进行相应阻断。
+2 针对同一个ip的请求数和时间维度，，以不同层级出现不同等级验证码，和进行相应阻断。
+3 如使用帆布指纹识，则判断请求是否提交该参数，如没有考虑相应不同安全措施。（此项在未成熟应用情况下只是维度之一）
+4 使用flash cookies，则判断请求提交是否含有该参数，并且统计单一flash cookies请求量给予合理的安全策略。
+5 使用cookies，则判断请求是否含有cookies，或者cookies某个值，并统计单一cookies或cookies某值请求量，给予合理的安全策略。
+6 使用js获取参数提交，则判断请求是否含有该参数，比如是否有鼠标位置移动，键盘输入，输入等待等，给予合理的安全策略。
+</code></pre><h2>0x02 总结</h2><hr><p>上面所说的策略也只是抛砖引玉，具体的还是要根据当前自己的日志从实际出发，慢慢进行策略调优，达到一个可接受点。</p><p>扫号风险会一直持续，之前刚刚公布某国外黑客有用12亿人登陆密码。互联网账户安全事件频发，更让我们应该关注到扫号撞库这个本非属于漏洞的漏洞。</p><p></p></section></article><div class="entry-controls clearfix"><div style="float:left;color:#9d9e9f;font-size:15px"><span>&copy;乌云知识库版权所有 未经许可 禁止转载</span></div></div><div class="yarpp-related"><h3>为您推荐了适合您的技术文章:</h3><ol id="recommandsystem"><li><a href="http://drops.wooyun.org/tips/127" rel="bookmark" id="re1">浅谈互联网中劫持的一些事情</a></li><li><a href="http://drops.wooyun.org/papers/382" rel="bookmark" id="re2">闲扯下午引爆乌云社区“盗窃”乌云币事件</a></li><li><a href="http://drops.wooyun.org/papers/104" rel="bookmark" id="re3">Clickjacking简单介绍</a></li><li><a href="http://drops.wooyun.org/tips/688" rel="bookmark" id="re4">Flash CSRF</a></li></ol></div><div id="comments" class="comment-list clearfix"><div id="comment-list"><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">黑吃黑</span> <span class="reply-time">2014-09-28 12:44:51</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">wangy3e</span> <span class="reply-time">2014-08-24 10:55:39</span></div><p></p><p>能有深入点么</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">Vicent</span> <span class="reply-time">2014-08-18 20:48:32</span></div><p></p><p>面对文章中出现的错别字，还是最后一句亮了。<br>很关注是哪个国外黑客，哪12亿人登录密码。。</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">看风者</span> <span class="reply-time">2014-08-17 23:05:20</span></div><p></p><p>学习了</p><p></p></div></div><div class="note-comment"><img class="avatar" alt="30" src="http://wooyun.b0.upaiyun.com/wooyun_job/avatar/default.png"><div class="content"><div class="comment-header"><span class="author-link">HackBraid</span> <span class="reply-time">2014-08-17 12:32:35</span></div><p></p><p>前排mark！</p><p></p></div></div></div></div></div></main>
