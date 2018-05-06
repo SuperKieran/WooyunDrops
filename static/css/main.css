@@ -6744,30 +6744,30 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
       font-size: 14px;
       color: #4094c7;
     }
-    
+
     .comment-list .note-comment .content p a {
       color: #4094c7;
     }
-    
+
     .comment-list .comment-head {
       margin-bottom: 10px;
     }
-    
+
     .comment-list .comment-head input {
       border-radius: 4px;
       border: 1px solid #cccccc;
       margin-right: 10px;
       margin-top: 10px;
     }
-    
+
     .comment-list .comment-head img {
       margin-bottom: 4px;
     }
-    
+
     .content .author-link {
       font-weight: 700;
     }
-    
+
     .navbar-wooyun {
       position: fixed;
       width: 45px;
@@ -6777,17 +6777,17 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
       left: 0;
       background: #2f2f2f;
     }
-    
+
     .home-wooyun {
       font-size: 18px;
     }
-    
+
     .navbar-wooyun div {
       /*  font-size: 26px;*/
       color: #999999;
       text-align: center;
     }
-    
+
     .navbar-wooyun a {
       color: #999999;
       display: block;
@@ -6796,66 +6796,66 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
       line-height: 25px;
       text-align: center;
     }
-    
+
     .navbar-wooyun a:hover {
       background-color: #e78170;
       color: white;
       text-shadow: 0 1px 0 #de533a;
     }
-    
+
     .home-author-wooyun {
       //  position: absolute;
       top: 0;
       width: 100%;
       padding-top: 5px;
     }
-    
+
     .bottom-author-wooyun {
       position: absolute;
       bottom: 0;
       width: 100%;
       padding-bottom: 5px;
     }
-    
+
     .navbar-title {
       display: none;
     }
-    
+
     .popover-content {
       font-weight: 900;
       width: 60;
     }
-    
+
     .container:before {
       content: '';
     }
-    
+
     table {
       border-top: #e0e0e0 1px solid;
       border-left: #e0e0e0 1px solid;
       border-collapse: separate;
       border-spacing: 0;
     }
-    
+
     table th,
     table td {
       border-bottom: #e0e0e0 1px solid;
       border-right: #e0e0e0 1px solid;
       padding: 0 3px;
     }
-    
+
     .column-about {
       text-align: center;
     }
-    
+
     .receptacle {
       width: 750px;
     }
-    
+
     .entry-content h1 {
       margin-top: 60px;
     }
-    
+
     @media screen and (max-width: 600px) {
       .navbar-wooyun {
         display: none!important;
@@ -6873,18 +6873,18 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
         width: auto;
       }
     }
-    
+
     .weibo {
       display: inline-block;
       width: 18px;
       height: 14px;
       background: url(http://image.3001.net/images/new/icon-weibo.jpg);
     }
-    
+
     .navbar-mobile-show {
       padding-top: 60px;
     }
-    
+
     .navbar-mobile {
       position: fixed;
       z-index: 1000;
@@ -6894,12 +6894,12 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
       height: 60px;
       background-color: #222;
     }
-    
+
     .navbar-mobile-home {
       display: block;
       overflow: hidden;
     }
-    
+
     .navbar-mobile-logo {
       float: left;
       width: 60px;
@@ -6910,7 +6910,7 @@ html.lt-ie9 .invited-but-not-in-list .author-link {
       background-position: center;
       background-size: 58px 47px;
     }
-    
+
     .navbar-mobile-logo-text {
       font-size: 20px;
       font-weight: bold;
